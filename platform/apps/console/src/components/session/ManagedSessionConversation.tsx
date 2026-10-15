@@ -637,7 +637,7 @@ export function ManagedSessionConversation({
           renderScrollButton,
           wrapConversationContent: (children) => (
             <div
-              className="mx-auto w-full max-w-[752px] min-w-0 [--chat-message-padding-inline:16px]"
+              className="mx-auto flex w-full max-w-[752px] min-w-0 flex-col gap-8 [--chat-message-padding-inline:16px]"
               data-session-column
               ref={columnRef}
             >

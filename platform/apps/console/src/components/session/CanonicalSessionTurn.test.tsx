@@ -10,6 +10,7 @@ import {
 import { buildTranscriptBlocks, type SessionEvent } from "../../lib/session-stats";
 import {
   CanonicalSessionTurn,
+  projectCanonicalSessionTurn,
   sessionErrorMessages,
   type CanonicalSessionTurnProps,
 } from "./CanonicalSessionTurn";
@@ -915,5 +916,28 @@ describe("sessionErrorMessages", () => {
     ];
 
     expect(sessionErrorMessages(events)).toEqual(["boom", "другое"]);
+  });
+});
+
+describe("projectCanonicalSessionTurn", () => {
+  it("переносит id и статус хода в состояние оболочки чата", () => {
+    const state = projectCanonicalSessionTurn(turnFrom(helloWorldEvents()));
+
+    expect(state.id).toBe(turnFrom(helloWorldEvents()).id);
+    expect(state.status).toBe("completed");
+  });
+
+  it("берёт причину ошибки из событий, а не английскую подпись пакета", () => {
+    const state = projectCanonicalSessionTurn(
+      turnFrom([
+        { type: "user.message", id: "u1", content: text("привет"), processed_at: at(0) },
+        { type: "session.error", id: "e1", error: { type: "unknown_error", message: "Песочница упала" }, processed_at: at(1) },
+        { type: "session.status_idle", id: "i", processed_at: at(2) },
+      ]),
+    );
+
+    expect(state.status).toBe("failed");
+    expect(JSON.stringify(state)).toContain("Песочница упала");
+    expect(JSON.stringify(state)).not.toContain("Session error");
   });
 });

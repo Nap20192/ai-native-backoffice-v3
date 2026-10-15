@@ -23,21 +23,33 @@
   display: none;
 }
 
-/* ---------- Блок разговора ---------- */
-
-/* Фон карточки, под который затухает длинный текст. */
+/* ---------- Карточка блока разговора ----------
+   Фон карточки лежит в переменной, чтобы под него же затухал длинный
+   текст. Порядок правил важен: выбранная карточка перебивает наведённую. */
 [data-session-card] {
   --session-card-bg: var(--ddc-surface);
+  background-color: var(--session-card-bg);
+}
+
+/* Блок «Задан результат» стоит на сером фоне. */
+[data-session-card][data-tone="muted"] {
+  --session-card-bg: var(--ddc-surface-muted);
+}
+
+/* Наведение на отрезок мини-карты: блок в ленте чуть темнее. Метку
+   наведения ставит либо сама карточка, либо обёртка вокруг неё. */
+[data-session-card][data-hovered="true"]:not([data-selected="true"]),
+[data-hovered="true"] [data-session-card]:not([data-selected="true"]) {
+  --session-card-bg: var(--ddc-surface-muted);
+}
+
+[data-session-card][data-tone="muted"][data-hovered="true"]:not([data-selected="true"]),
+[data-hovered="true"] [data-session-card][data-tone="muted"]:not([data-selected="true"]) {
+  --session-card-bg: var(--ddc-surface-sunken);
 }
 
 [data-session-card][data-selected="true"] {
   --session-card-bg: var(--ddc-selected-bg);
-}
-
-/* Блок сразу после перехода по ссылке или поиску: рамку даёт data-selected,
-   а наведение с мини-карты даёт data-hovered. */
-[data-session-card][data-hovered="true"]:not([data-selected="true"]) {
-  --session-card-bg: var(--ddc-surface-muted);
 }
 
 /* ---------- Читать дальше ---------- */

@@ -2,6 +2,7 @@ import { ChartColumnIcon, RefreshCwIcon, TriangleAlertIcon, XIcon, ChevronLeftIc
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
 
 import { EmptyState } from "../../components/EmptyState";
 import { LoadError } from "../../components/LoadError";
@@ -130,15 +131,14 @@ export function LogsPage() {
             {state.session_id && (
               <span className="chip tone-brand h-8 gap-1.5 rounded-lg pr-1 pl-3 text-xs">
                 <span className="truncate">Сессия: {state.session_id}</span>
-                <button
-                  type="button"
+                <PlainButton
                   aria-label="Убрать фильтр по сессии"
                   title="Убрать фильтр по сессии"
                   onClick={() => patch({ session_id: "" })}
                   className="inline-flex size-6 items-center justify-center rounded-md hover:bg-ddc-tone-brand-ring"
                 >
                   <XIcon className="size-3.5" aria-hidden="true" />
-                </button>
+                </PlainButton>
               </span>
             )}
           </FilterBar>

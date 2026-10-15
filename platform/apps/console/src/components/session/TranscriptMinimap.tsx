@@ -366,11 +366,11 @@ export function TranscriptMinimap({
           onMouseMove={onTrackMove}
           style={{ width: scale.width }}
         >
-          <div aria-hidden="true" className="absolute inset-x-0 top-3 h-6 rounded-md bg-ddc-surface-sunken" />
+          <div aria-hidden="true" className="absolute inset-x-0 top-2 h-6 rounded-md bg-ddc-surface-sunken" />
           {visibleFrame ? (
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute top-2.5 h-7 rounded-md border border-ddc-border-strong bg-ddc-surface/40"
+              className="pointer-events-none absolute top-1.5 h-7 rounded-md border border-ddc-border-strong bg-ddc-surface/40"
               data-minimap-window
               style={{ left: visibleFrame.left, width: visibleFrame.width }}
             />
@@ -383,7 +383,7 @@ export function TranscriptMinimap({
                 aria-current={selected ? "true" : undefined}
                 aria-label={`${segment.label}, ${formatClockRu(segment.startMs)}`}
                 className={cn(
-                  "absolute top-3 h-6 rounded-[3px] transition-colors",
+                  "absolute top-2 h-6 rounded-[3px] transition-colors",
                   KIND_CLASS[segment.kind],
                   selected && "ring-2 ring-ddc-ring",
                   segment.kind === "request" && hovered && !selected && "bg-sky-500",
@@ -408,7 +408,7 @@ export function TranscriptMinimap({
             matchBlockIds.has(segment.blockId) ? (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute top-9 h-1 rounded-full bg-amber-400"
+                className="pointer-events-none absolute top-[33px] h-1 rounded-full bg-amber-400"
                 data-block-id={segment.blockId}
                 data-minimap-match
                 key={`match:${segment.blockId}`}
@@ -420,13 +420,13 @@ export function TranscriptMinimap({
             <>
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute top-1 h-8 w-px bg-ddc-text"
+                className="pointer-events-none absolute top-0.5 h-8 w-px bg-ddc-text"
                 data-minimap-cursor
                 style={{ left: cursorLineX }}
               />
               {cursorMs !== null ? (
                 <span
-                  className="pointer-events-none absolute top-8 rounded bg-ddc-surface px-1 text-2xs leading-4 whitespace-nowrap tabular-nums text-ddc-text-muted"
+                  className="pointer-events-none absolute top-[35px] rounded bg-ddc-surface px-1 text-2xs leading-3 whitespace-nowrap tabular-nums text-ddc-text-muted"
                   data-testid="minimap-cursor-label"
                   style={{ left: Math.min(cursorLineX + 4, Math.max(scale.width - 96, 0)) }}
                 >

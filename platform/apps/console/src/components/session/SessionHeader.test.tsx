@@ -292,6 +292,7 @@ describe("SessionHeader: чипы", () => {
     await userEvent.hover(screen.getByText("411,1 тыс. / 20,1 тыс."));
 
     const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent("Токены вход / выход");
     expect(tip).toHaveTextContent("Чтение кэша 328,6 тыс.");
     expect(tip).toHaveTextContent("Запись кэша 82,4 тыс.");
     expect(tip).toHaveTextContent("Без кэша 76");

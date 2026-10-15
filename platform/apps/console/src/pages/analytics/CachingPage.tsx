@@ -1,6 +1,17 @@
 import { ArrowDownIcon, ArrowUpIcon, ChartColumnIcon, TriangleAlertIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { PlainButton } from "@/components/ui/plain-button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+
 import { EmptyState } from "../../components/EmptyState";
 import { LoadError } from "../../components/LoadError";
 import { Page } from "../../components/Page";
@@ -26,7 +37,7 @@ import { LineChart, type LineSeries } from "../../components/analytics/LineChart
 import { MultiSelectFilter } from "../../components/analytics/MultiSelectFilter";
 import { RangeFilter } from "../../components/analytics/RangeFilter";
 import { assignSeriesColors, TOKEN_TYPE_COLORS } from "../../components/analytics/series-colors";
-import { SeriesTable } from "../../components/analytics/SeriesTable";
+import { ROW_HEAD, SeriesTable, TABLE_HEAD } from "../../components/analytics/SeriesTable";
 import { SingleSelectFilter } from "../../components/analytics/SingleSelectFilter";
 import { StackedBarChart } from "../../components/analytics/StackedBarChart";
 import { StatTiles, type StatTile } from "../../components/analytics/StatTiles";
@@ -190,30 +201,36 @@ function LowCacheCard({ report, loading }: { report: CacheReport | undefined; lo
           Все агенты с заметным входом читают из кэша больше половины.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-max text-sm tabular-nums">
-            <thead>
-              <tr className="border-b border-ddc-divider text-xs text-ddc-text-muted">
-                <th scope="col" className="sticky left-0 bg-ddc-surface px-3 py-2 text-left font-medium">Агент</th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">Модель</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">Вход</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">Доля чтения</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.low_cache_agents.map((agent) => (
-                <tr key={`${agent.agent_id}:${agent.model}`} className="border-b border-ddc-divider last:border-b-0">
-                  <th scope="row" className="sticky left-0 bg-ddc-surface px-3 py-2 text-left font-normal">
-                    {agent.agent_name}
-                  </th>
-                  <td className="px-3 py-2 font-mono text-xs">{agent.model}</td>
-                  <td className="px-3 py-2 text-right">{formatCompact(agent.total_input_tokens)}</td>
-                  <td className="px-3 py-2 text-right">{formatPercent(agent.read_ratio)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table className="min-w-max tabular-nums">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead scope="col" className={cn(TABLE_HEAD, "sticky left-0 bg-ddc-surface")}>
+                Агент
+              </TableHead>
+              <TableHead scope="col" className={TABLE_HEAD}>
+                Модель
+              </TableHead>
+              <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+                Вход
+              </TableHead>
+              <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+                Доля чтения
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {report.low_cache_agents.map((agent) => (
+              <TableRow key={`${agent.agent_id}:${agent.model}`}>
+                <TableHead scope="row" className={cn(ROW_HEAD, "sticky left-0 bg-ddc-surface")}>
+                  {agent.agent_name}
+                </TableHead>
+                <TableCell className="font-mono text-xs">{agent.model}</TableCell>
+                <TableCell className="text-right">{formatCompact(agent.total_input_tokens)}</TableCell>
+                <TableCell className="text-right">{formatPercent(agent.read_ratio)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </section>
   );
@@ -248,23 +265,23 @@ function BreakdownCard({
   }, [report?.rows, direction]);
 
   const line = (row: CacheRow | (CacheTotals & { key: string; label: string }), bold = false) => (
-    <tr key={row.key} className="border-b border-ddc-divider last:border-b-0">
-      <th
+    <TableRow key={row.key}>
+      <TableHead
         scope="row"
-        className={`sticky left-0 max-w-56 truncate bg-ddc-surface px-3 py-2 text-left ${bold ? "font-semibold" : "font-normal"}`}
+        className={cn(ROW_HEAD, "sticky left-0 max-w-56 truncate bg-ddc-surface", bold && "font-semibold")}
         title={row.label}
       >
         {row.label}
-      </th>
-      <td className={`px-3 py-2 text-right ${bold ? "font-semibold" : ""}`}>{formatTokens(row.total_input_tokens)}</td>
-      <td className="px-3 py-2">
+      </TableHead>
+      <TableCell className={cn("text-right", bold && "font-semibold")}>{formatTokens(row.total_input_tokens)}</TableCell>
+      <TableCell>
         <CompositionBar segments={compositionSegments(row)} />
-      </td>
-      <td className={`px-3 py-2 text-right ${bold ? "font-semibold" : ""}`}>{formatPercent(row.read_ratio)}</td>
-      <td className={`px-3 py-2 text-right ${bold ? "font-semibold" : ""}`}>
+      </TableCell>
+      <TableCell className={cn("text-right", bold && "font-semibold")}>{formatPercent(row.read_ratio)}</TableCell>
+      <TableCell className={cn("text-right", bold && "font-semibold")}>
         {formatAmortization(row.write_amortization)}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 
   return (
@@ -276,53 +293,50 @@ function BreakdownCard({
         <SkeletonRows count={4} height={32} />
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm tabular-nums">
-              <thead>
-                <tr className="border-b border-ddc-divider text-xs text-ddc-text-muted">
-                  <th scope="col" className="sticky left-0 bg-ddc-surface px-3 py-2 text-left font-medium">
-                    {groupLabel}
-                  </th>
-                  <th
-                    scope="col"
-                    aria-sort={direction === "desc" ? "descending" : "ascending"}
-                    className="px-3 py-2 text-right font-medium"
+          <Table className="min-w-[640px] tabular-nums">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead scope="col" className={cn(TABLE_HEAD, "sticky left-0 bg-ddc-surface")}>
+                  {groupLabel}
+                </TableHead>
+                <TableHead
+                  scope="col"
+                  aria-sort={direction === "desc" ? "descending" : "ascending"}
+                  className={cn(TABLE_HEAD, "text-right")}
+                >
+                  <PlainButton
+                    onClick={() => setDirection((d) => (d === "desc" ? "asc" : "desc"))}
+                    className="inline-flex items-center gap-1 hover:text-ddc-text"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setDirection((d) => (d === "desc" ? "asc" : "desc"))}
-                      className="inline-flex items-center gap-1 hover:text-ddc-text"
-                    >
-                      Вход
-                      {direction === "desc" ? (
-                        <ArrowDownIcon className="size-3.5" aria-hidden="true" />
-                      ) : (
-                        <ArrowUpIcon className="size-3.5" aria-hidden="true" />
-                      )}
-                    </button>
-                  </th>
-                  <th scope="col" className="w-64 px-3 py-2 text-left font-medium">
-                    Состав входа
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">
-                    Доля чтения
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">
-                    <span className="inline-flex items-center gap-1">
-                      Окупаемость записи
-                      <InfoHint subject="Окупаемость записи">
-                        Сколько токенов прочитано из кэша на один записанный. Чем больше, тем лучше окупается запись.
-                      </InfoHint>
-                    </span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {line({ ...report.totals, key: "__total", label: TEXT.common.total }, true)}
-                {rows.map((row) => line(row))}
-              </tbody>
-            </table>
-          </div>
+                    Вход
+                    {direction === "desc" ? (
+                      <ArrowDownIcon className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <ArrowUpIcon className="size-3.5" aria-hidden="true" />
+                    )}
+                  </PlainButton>
+                </TableHead>
+                <TableHead scope="col" className={cn(TABLE_HEAD, "w-64")}>
+                  Состав входа
+                </TableHead>
+                <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+                  Доля чтения
+                </TableHead>
+                <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+                  <span className="inline-flex items-center gap-1">
+                    Окупаемость записи
+                    <InfoHint subject="Окупаемость записи">
+                      Сколько токенов прочитано из кэша на один записанный. Чем больше, тем лучше окупается запись.
+                    </InfoHint>
+                  </span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {line({ ...report.totals, key: "__total", label: TEXT.common.total }, true)}
+              {rows.map((row) => line(row))}
+            </TableBody>
+          </Table>
           <Legend
             items={[
               { key: "cache_read", label: TOKEN_TYPE_LABELS.cache_read, color: TOKEN_TYPE_COLORS.cache_read },

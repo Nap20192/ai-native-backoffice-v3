@@ -327,7 +327,7 @@ export function CanonicalSessionTurn({
 
   return (
     <article
-      className="flex min-w-0 flex-col gap-3 py-1.5"
+      className="flex min-w-0 flex-col gap-3 py-2"
       data-session-turn-status={turn.status}
       data-turn-id={turn.id}
     >

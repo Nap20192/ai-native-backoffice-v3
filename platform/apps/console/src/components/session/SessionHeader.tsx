@@ -79,10 +79,13 @@ function InfoChip({
   icon,
   tip,
   children,
+  card = false,
 }: {
   icon: ReactNode;
   tip: ReactNode;
   children: ReactNode;
+  /** Подсказка белой карточкой с таблицей, как у токенов в образце. */
+  card?: boolean;
 }) {
   return (
     <Tooltip>
@@ -95,7 +98,14 @@ function InfoChip({
           {children}
         </span>
       </TooltipTrigger>
-      <TooltipContent className="flex-col items-start gap-0.5" side="bottom">
+      <TooltipContent
+        side="bottom"
+        className={
+          card
+            ? "min-w-44 flex-col items-stretch gap-1 border border-ddc-border bg-ddc-surface p-3 text-ddc-text shadow-card [&>svg]:hidden"
+            : "flex-col items-start gap-0.5"
+        }
+      >
         {tip}
       </TooltipContent>
     </Tooltip>
@@ -338,14 +348,14 @@ export function SessionHeader({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <SessionTitle key={session.id} session={session} onRename={onRename} />
           <StatusPill status={status} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <div data-chip-group="resources" className="flex min-w-0 flex-wrap items-center gap-2">
+          <div
+            data-chip-group="resources"
+            className="flex min-w-0 flex-wrap items-center gap-2 max-sm:basis-full"
+          >
             <AgentChip agent={session.agent} />
             <EnvironmentChip id={session.environment_id} environment={environment} />
           </div>
-          <div data-chip-group="usage" className="flex flex-wrap items-center gap-1">
+          <div data-chip-group="usage" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
             {elapsedMs !== null && (
               <InfoChip
                 icon={<DurationIcon className="size-3.5" />}
@@ -362,20 +372,29 @@ export function SessionHeader({
               </InfoChip>
             )}
             <InfoChip
+              card
               icon={<LayersIcon className="size-3.5" />}
               tip={
                 <>
-                  <div>Чтение кэша {formatTokensRu(usage.cacheRead)}</div>
-                  <div>Запись кэша {formatTokensRu(usage.cacheWrite)}</div>
-                  <div>Без кэша {formatTokensRu(usage.input)}</div>
-                  <div>Выход {formatTokensRu(usage.output)}</div>
+                  <div className="font-medium text-ddc-heading">Токены вход / выход</div>
+                  {[
+                    ["Чтение кэша", usage.cacheRead],
+                    ["Запись кэша", usage.cacheWrite],
+                    ["Без кэша", usage.input],
+                    ["Выход", usage.output],
+                  ].map(([name, value]) => (
+                    <div key={name} className="flex justify-between gap-6">
+                      <span className="text-ddc-text-muted">{name}</span>{" "}
+                      <span className="tabular-nums">{formatTokensRu(value as number)}</span>
+                    </div>
+                  ))}
                 </>
               }
             >
               <span>{`${formatTokensRu(totalInput(usage))} / ${formatTokensRu(usage.output)}`}</span>
             </InfoChip>
           </div>
-          <div data-chip-group="cost" className="flex flex-wrap items-center gap-1">
+          <div data-chip-group="cost" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
             <InfoChip
               icon={<WalletIcon className="size-3.5" />}
               tip={

@@ -1,6 +1,23 @@
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 import type { SeriesColor } from "./series-colors";
+
+/** Заголовок колонки аналитики: тише базового (без заглавных и разрядки), высота по тексту. */
+export const TABLE_HEAD =
+  "h-auto px-3 py-2 text-xs font-medium tracking-normal text-ddc-text-muted normal-case";
+
+/** Ячейка-заголовок строки: обычный текст, а не заголовок колонки. */
+export const ROW_HEAD =
+  "h-auto px-3 py-2.5 text-sm font-normal tracking-normal text-ddc-text normal-case";
 
 export interface SeriesTableColumn {
   key: string;
@@ -45,57 +62,54 @@ export function SeriesTable({
   return (
     <div className="relative">
       <div className="max-h-[300px] overflow-auto rounded-xl border border-ddc-divider">
-        <table className="w-full min-w-max border-collapse text-sm tabular-nums">
-          <caption className="sr-only">{caption}</caption>
-          <thead className="sticky top-0 z-10 bg-ddc-surface">
-            <tr className="border-b border-ddc-divider text-xs text-ddc-text-muted">
-              <th scope="col" className="sticky left-0 bg-ddc-surface px-3 py-2 text-left font-medium">
+        <Table container={false} className="w-full min-w-max border-collapse tabular-nums">
+          <TableCaption className="sr-only">{caption}</TableCaption>
+          <TableHeader className="sticky top-0 z-10 bg-ddc-surface">
+            <TableRow className="hover:bg-transparent">
+              <TableHead scope="col" className={cn(TABLE_HEAD, "sticky left-0 bg-ddc-surface")}>
                 {firstColumnLabel}
-              </th>
+              </TableHead>
               {columns.map((column) => (
-                <th key={column.key} scope="col" className="px-3 py-2 text-right font-medium">
+                <TableHead key={column.key} scope="col" className={cn(TABLE_HEAD, "text-right")}>
                   <span className="inline-flex items-center justify-end gap-1.5">
                     {column.color && (
                       <span aria-hidden="true" className={cn("size-2 rounded-sm", column.color.bg)} />
                     )}
                     {column.label}
                   </span>
-                </th>
+                </TableHead>
               ))}
               {showTotal && (
-                <th scope="col" className="px-3 py-2 text-right font-semibold text-ddc-text">
+                <TableHead scope="col" className={cn(TABLE_HEAD, "text-right font-semibold text-ddc-text")}>
                   {totalLabel}
-                </th>
+                </TableHead>
               )}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((row) => (
-              <tr key={row.key} className="border-b border-ddc-divider last:border-b-0">
-                <th
-                  scope="row"
-                  className="sticky left-0 whitespace-nowrap bg-ddc-surface px-3 py-2 text-left font-normal"
-                >
+              <TableRow key={row.key} className="hover:bg-ddc-surface-muted">
+                <TableHead scope="row" className={cn(ROW_HEAD, "sticky left-0 bg-ddc-surface whitespace-nowrap")}>
                   {row.label}
-                </th>
+                </TableHead>
                 {row.values.map((value, i) => (
-                  <td key={columns[i]?.key ?? i} className="px-3 py-2 text-right">
+                  <TableCell key={columns[i]?.key ?? i} className="text-right">
                     {value === null ? (
                       <span className="text-ddc-text-muted">{emptyLabel}</span>
                     ) : (
                       formatValue(value)
                     )}
-                  </td>
+                  </TableCell>
                 ))}
                 {showTotal && (
-                  <td className="px-3 py-2 text-right font-semibold text-ddc-heading">
+                  <TableCell className="text-right font-semibold text-ddc-heading">
                     {formatValue(row.values.reduce<number>((sum, v) => sum + (v ?? 0), 0))}
-                  </td>
+                  </TableCell>
                 )}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       <div
         aria-hidden="true"

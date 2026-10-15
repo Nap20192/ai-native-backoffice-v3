@@ -2,6 +2,15 @@ import { SearchIcon, TimerIcon, TriangleAlertIcon } from "lucide-react";
 import { useMemo, type KeyboardEvent } from "react";
 import { Link } from "react-router";
 
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 import { EmptyState } from "../../components/EmptyState";
@@ -12,6 +21,7 @@ import { formatCompact, formatPercent } from "../../components/analytics/analyti
 import { AnalyticsHeader } from "../../components/analytics/AnalyticsHeader";
 import { FilterBar } from "../../components/analytics/FilterBar";
 import { InfoHint } from "../../components/analytics/InfoHint";
+import { ROW_HEAD, TABLE_HEAD } from "../../components/analytics/SeriesTable";
 import { UsageMeter } from "../../components/analytics/UsageMeter";
 import { useAnalyticsParams } from "../../components/analytics/use-analytics-params";
 import {
@@ -75,10 +85,10 @@ function QuotaCells({ quota, group }: { quota: Quota; group: Group }) {
   const label = METRIC_LABELS[quota.metric];
   return (
     <>
-      <th scope="row" className="px-3 py-2.5 text-left font-normal">
+      <TableHead scope="row" className={cn(ROW_HEAD, "whitespace-normal")}>
         {label}
-      </th>
-      <td className="px-3 py-2.5">
+      </TableHead>
+      <TableCell>
         {quota.utilization !== null && (
           <div className="flex items-center gap-3">
             <UsageMeter
@@ -91,12 +101,12 @@ function QuotaCells({ quota, group }: { quota: Quota; group: Group }) {
             </span>
           </div>
         )}
-      </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
         <span className="font-semibold text-ddc-heading">{formatCompact(quota.peak)}</span>
         {" / "}
         <span>{quota.limit === null ? "не задан" : formatCompact(quota.limit)}</span>
-      </td>
+      </TableCell>
     </>
   );
 }
@@ -167,14 +177,13 @@ export function LimitsPage() {
                 className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-ddc-icon-muted"
                 aria-hidden="true"
               />
-              <input
+              <Input
                 type="search"
-                role="searchbox"
                 aria-label="Найти квоту"
                 placeholder="Найти квоту"
                 value={state.q}
                 onChange={(e) => patch({ q: e.target.value })}
-                className="input input-xs w-52 pl-8"
+                className="h-8 w-52 rounded-lg py-[7px] pr-2.5 pl-8 text-xs leading-4"
               />
             </div>
           </FilterBar>
@@ -210,76 +219,72 @@ export function LimitsPage() {
           <EmptyState icon={<SearchIcon />} size="sm" title="Квоты по запросу не найдены." />
         ) : (
           <div className="card min-w-0 p-2">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-ddc-divider text-xs text-ddc-text-muted">
-                    <th scope="col" className="sticky left-0 z-10 w-[42%] bg-ddc-surface px-3 py-2 text-left font-medium">
-                      Квота
-                    </th>
-                    <th scope="col" className="w-[34%] px-3 py-2 text-left font-medium">
-                      <span className="inline-flex items-center gap-1">
-                        Пиковая загрузка
-                        <InfoHint subject="Пиковая загрузка">
-                          Наибольшая загрузка одной минуты за 24 часа, делённая на лимит карточки.
-                        </InfoHint>
+            <Table className="min-w-[640px] border-collapse">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead scope="col" className={cn(TABLE_HEAD, "sticky left-0 z-10 w-[42%] bg-ddc-surface")}>
+                    Квота
+                  </TableHead>
+                  <TableHead scope="col" className={cn(TABLE_HEAD, "w-[34%]")}>
+                    <span className="inline-flex items-center gap-1">
+                      Пиковая загрузка
+                      <InfoHint subject="Пиковая загрузка">
+                        Наибольшая загрузка одной минуты за 24 часа, делённая на лимит карточки.
+                      </InfoHint>
+                    </span>
+                  </TableHead>
+                  <TableHead scope="col" className={cn(TABLE_HEAD, "w-[24%] text-right")}>
+                    Использовано / лимит
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              {cards.map((group) => (
+                <TableBody key={group.id} className="border-b border-ddc-divider last:border-b-0">
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableHead scope="rowgroup" colSpan={3} className="h-auto pt-4 pb-1.5 normal-case tracking-normal">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-sm font-semibold text-ddc-heading">{group.title}</span>
+                        <span className="font-mono text-xs font-normal text-ddc-text-muted">{group.handle}</span>
+                        {group.card?.is_default && <span className="chip tone-brand">По умолчанию</span>}
+                      </div>
+                    </TableHead>
+                  </TableRow>
+                  {group.quotas.map((quota) => {
+                    const id = `${group.id}:${quota.metric}`;
+                    const selected = state.focus === id;
+                    return (
+                      <TableRow
+                        key={id}
+                        data-row-id={id}
+                        data-state={selected ? "selected" : undefined}
+                        tabIndex={0}
+                        aria-selected={selected}
+                        onClick={() => open(id)}
+                        onKeyDown={(e) => onRowKey(e, id)}
+                        className="cursor-pointer border-0 hover:bg-ddc-surface-muted data-[state=selected]:hover:bg-ddc-selected-bg"
+                      >
+                        <QuotaCells quota={quota} group={group} />
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              ))}
+              {uncarded.length > 0 && (
+                <TableBody data-uncarded>
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableHead scope="rowgroup" colSpan={3} className="h-auto pt-5 pb-1 normal-case tracking-normal">
+                      <span className="inline-flex items-center gap-1 text-sm font-semibold text-ddc-heading">
+                        {NO_CARD_LABEL}
+                        <InfoHint subject={NO_CARD_LABEL}>{UNCARDED_HINT}</InfoHint>
                       </span>
-                    </th>
-                    <th scope="col" className="w-[24%] px-3 py-2 text-right font-medium">
-                      Использовано / лимит
-                    </th>
-                  </tr>
-                </thead>
-                {cards.map((group) => (
-                  <tbody key={group.id} className="border-b border-ddc-divider last:border-b-0">
-                    <tr>
-                      <th scope="rowgroup" colSpan={3} className="px-3 pt-4 pb-1.5 text-left">
-                        <div className="flex flex-wrap items-baseline gap-2">
-                          <span className="text-sm font-semibold text-ddc-heading">{group.title}</span>
-                          <span className="font-mono text-xs font-normal text-ddc-text-muted">{group.handle}</span>
-                          {group.card?.is_default && <span className="chip tone-brand">По умолчанию</span>}
-                        </div>
-                      </th>
-                    </tr>
-                    {group.quotas.map((quota) => {
-                      const id = `${group.id}:${quota.metric}`;
-                      const selected = state.focus === id;
-                      return (
-                        <tr
-                          key={id}
-                          data-row-id={id}
-                          tabIndex={0}
-                          aria-selected={selected}
-                          onClick={() => open(id)}
-                          onKeyDown={(e) => onRowKey(e, id)}
-                          className={cn(
-                            "cursor-pointer rounded-lg transition-colors hover:bg-ddc-surface-muted",
-                            selected && "bg-ddc-selected-bg hover:bg-ddc-selected-bg",
-                          )}
-                        >
-                          <QuotaCells quota={quota} group={group} />
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                ))}
-                {uncarded.length > 0 && (
-                  <tbody data-uncarded>
-                    <tr>
-                      <th scope="rowgroup" colSpan={3} className="px-3 pt-5 pb-1 text-left">
-                        <span className="inline-flex items-center gap-1 text-sm font-semibold text-ddc-heading">
-                          {NO_CARD_LABEL}
-                          <InfoHint subject={NO_CARD_LABEL}>{UNCARDED_HINT}</InfoHint>
-                        </span>
-                      </th>
-                    </tr>
-                    {uncarded.map((group) => (
-                      <UncardedGroup key={group.id} group={group} />
-                    ))}
-                  </tbody>
-                )}
-              </table>
-            </div>
+                    </TableHead>
+                  </TableRow>
+                  {uncarded.map((group) => (
+                    <UncardedGroup key={group.id} group={group} />
+                  ))}
+                </TableBody>
+              )}
+            </Table>
           </div>
         )}
 
@@ -301,18 +306,18 @@ export function LimitsPage() {
 function UncardedGroup({ group }: { group: Group }) {
   return (
     <>
-      <tr>
-        <th scope="rowgroup" colSpan={3} className="px-3 pt-3 pb-1 text-left">
+      <TableRow className="border-0 hover:bg-transparent">
+        <TableHead scope="rowgroup" colSpan={3} className="h-auto pt-3 pb-1 normal-case tracking-normal">
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="text-sm font-medium text-ddc-heading">{group.title}</span>
             <span className="font-mono text-xs font-normal text-ddc-text-muted">{group.handle}</span>
           </div>
-        </th>
-      </tr>
+        </TableHead>
+      </TableRow>
       {group.quotas.map((quota) => (
-        <tr key={`${group.id}:${quota.metric}`}>
+        <TableRow key={`${group.id}:${quota.metric}`} className="border-0 hover:bg-transparent">
           <QuotaCells quota={quota} group={group} />
-        </tr>
+        </TableRow>
       ))}
     </>
   );

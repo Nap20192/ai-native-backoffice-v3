@@ -4,6 +4,17 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PlainButton } from "@/components/ui/plain-button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 import { LoadError } from "../../components/LoadError";
@@ -18,7 +29,7 @@ import {
 import { LineChart } from "../../components/analytics/LineChart";
 import { RowInspector } from "../../components/analytics/RowInspector";
 import { SERIES_PALETTE } from "../../components/analytics/series-colors";
-import { SeriesTable } from "../../components/analytics/SeriesTable";
+import { ROW_HEAD, SeriesTable, TABLE_HEAD } from "../../components/analytics/SeriesTable";
 import { UsageMeter } from "../../components/analytics/UsageMeter";
 import { ViewToggle, type ChartView } from "../../components/analytics/ViewToggle";
 import {
@@ -119,18 +130,18 @@ function LimitForm({
   return (
     <form onSubmit={submit} className="mt-3 space-y-3" noValidate>
       {FIELDS.map((field) => (
-        <label key={field.key} className="block">
+        <Label key={field.key} className="block font-normal leading-normal">
           <span className="label">{field.label}</span>
-          <input
+          <Input
             type="text"
             inputMode="numeric"
             value={values[field.key]}
             placeholder="Без лимита"
             onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
             aria-invalid={error?.startsWith(`Лимит ${field.label.toLowerCase()}`) ? true : undefined}
-            className="input input-sm"
+            className="h-9"
           />
-        </label>
+        </Label>
       ))}
       <p className="text-xs text-ddc-text-muted">Пустое поле значит без лимита. Платформа не останавливает вызовы.</p>
       {error && (
@@ -153,44 +164,52 @@ function LimitForm({
 function BreakdownTable({ detail, by }: { detail: LimitDetail; by: LimitBreakdownBy }) {
   const total = detail.breakdown;
   return (
-    <div className="overflow-x-auto">
-      <table aria-label="Разбивка на момент пика" className="w-full min-w-[420px] text-sm tabular-nums">
-        <thead>
-          <tr className="border-b border-ddc-divider text-xs text-ddc-text-muted">
-            <th scope="col" className="sticky left-0 bg-ddc-surface px-3 py-2 text-left font-medium">
-              {by === "agent" ? "Агент" : "Сессия"}
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">Пик</th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">% лимита</th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">Доля</th>
-          </tr>
-        </thead>
-        <tbody>
-          {total.rows.map((row) => (
-            <tr key={row.key} className="border-b border-ddc-divider">
-              <th scope="row" className="sticky left-0 max-w-56 truncate bg-ddc-surface px-3 py-2 text-left font-normal">
-                {by === "session" ? (
-                  <Link to={`/sessions/${encodeURIComponent(row.key)}`} className="link font-mono text-xs">
-                    {row.label}
-                  </Link>
-                ) : (
-                  <span title={row.label}>{row.label}</span>
-                )}
-              </th>
-              <td className="px-3 py-2 text-right">{formatTokens(row.value)}</td>
-              <td className="px-3 py-2 text-right">{formatPercent(row.utilization, 0)}</td>
-              <td className="px-3 py-2 text-right">{formatPercent(row.share, 0)}</td>
-            </tr>
-          ))}
-          <tr className="font-semibold">
-            <th scope="row" className="sticky left-0 bg-ddc-surface px-3 py-2 text-left">{TEXT.common.total}</th>
-            <td className="px-3 py-2 text-right">{formatTokens(total.total)}</td>
-            <td className="px-3 py-2 text-right">{formatPercent(detail.peak_24h.utilization, 0)}</td>
-            <td className="px-3 py-2 text-right">{total.rows.length > 0 ? formatPercent(1, 0) : formatPercent(null)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <Table aria-label="Разбивка на момент пика" className="min-w-[420px] tabular-nums">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead scope="col" className={cn(TABLE_HEAD, "sticky left-0 bg-ddc-surface")}>
+            {by === "agent" ? "Агент" : "Сессия"}
+          </TableHead>
+          <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+            Пик
+          </TableHead>
+          <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+            % лимита
+          </TableHead>
+          <TableHead scope="col" className={cn(TABLE_HEAD, "text-right")}>
+            Доля
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {total.rows.map((row) => (
+          <TableRow key={row.key}>
+            <TableHead scope="row" className={cn(ROW_HEAD, "sticky left-0 max-w-56 truncate bg-ddc-surface")}>
+              {by === "session" ? (
+                <Link to={`/sessions/${encodeURIComponent(row.key)}`} className="link font-mono text-xs">
+                  {row.label}
+                </Link>
+              ) : (
+                <span title={row.label}>{row.label}</span>
+              )}
+            </TableHead>
+            <TableCell className="text-right">{formatTokens(row.value)}</TableCell>
+            <TableCell className="text-right">{formatPercent(row.utilization, 0)}</TableCell>
+            <TableCell className="text-right">{formatPercent(row.share, 0)}</TableCell>
+          </TableRow>
+        ))}
+        <TableRow className="font-semibold">
+          <TableHead scope="row" className={cn(ROW_HEAD, "sticky left-0 bg-ddc-surface font-semibold")}>
+            {TEXT.common.total}
+          </TableHead>
+          <TableCell className="text-right">{formatTokens(total.total)}</TableCell>
+          <TableCell className="text-right">{formatPercent(detail.peak_24h.utilization, 0)}</TableCell>
+          <TableCell className="text-right">
+            {total.rows.length > 0 ? formatPercent(1, 0) : formatPercent(null)}
+          </TableCell>
+        </TableRow>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -373,15 +392,14 @@ export function LimitDrawer({
                       ["session", "По сессиям"],
                     ] as const
                   ).map(([id, label]) => (
-                    <button
+                    <PlainButton
                       key={id}
-                      type="button"
                       aria-pressed={by === id}
                       onClick={() => setBy(id)}
-                      className={cn("segmented-item px-3 text-xs")}
+                      className="segmented-item px-3 text-xs"
                     >
                       {label}
-                    </button>
+                    </PlainButton>
                   ))}
                 </div>
               </div>

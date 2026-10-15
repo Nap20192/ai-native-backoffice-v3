@@ -1,0 +1,3 @@
+#!/bin/sh
+# Тексты по правилам unslop: проверка добавленных строк индекса.
+exec node "$(git rev-parse --show-toplevel)/scripts/unslop-check.mjs" --staged

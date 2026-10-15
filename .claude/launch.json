@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "oma-server-try",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd platform/apps/main-node && eval \"$(fnm env)\" && fnm use 24 >/dev/null && mkdir -p data-preview && set -a && . ../../.env && set +a && unset DATABASE_URL && export DATABASE_PATH=./data-preview/oma.db PORT=8788 PUBLIC_BASE_URL=http://localhost:8788 && exec nice -n 15 pnpm start"],
+      "port": 8788
+    },
+    {
+      "name": "console-try",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd platform/apps/console && eval \"$(fnm env)\" && fnm use 24 >/dev/null && export VITE_API_TARGET=http://localhost:8788 && exec nice -n 15 pnpm dev --port 5174 --strictPort"],
+      "port": 5174
+    },
+    {
+      "name": "oma-server-preview",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd platform/apps/main-node && eval \"$(fnm env)\" && fnm use 24 >/dev/null && mkdir -p data-preview && set -a && . ../../.env && set +a && unset DATABASE_URL && export DATABASE_PATH=./data-preview/oma.db AUTH_DISABLED=1 && exec nice -n 15 pnpm start"],
+      "port": 8787
+    },
+    {
+      "name": "console-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd platform/apps/console && eval \"$(fnm env)\" && fnm use 24 >/dev/null && export VITE_API_TARGET=http://localhost:8787 && exec nice -n 15 pnpm dev --port 5173 --strictPort"],
+      "port": 5173
+    }
+  ]
+}

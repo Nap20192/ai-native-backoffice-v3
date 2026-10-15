@@ -2,7 +2,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@
 import { Button } from "@/components/ui/button";
 import { useState, type ReactNode } from "react";
 import { ArrowRightIcon, CheckIcon, CopyIcon } from "lucide-react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { StatusPill } from "../components/Badge";
@@ -12,10 +12,13 @@ import {
   KpiCard,
 } from "../components/ConsoleSurface";
 import { EmptyState } from "../components/EmptyState";
+import { NAV_ICONS } from "../components/nav-icons";
+import { PageHeader } from "../components/PageHeader";
 import { Skeleton } from "../components/Skeleton";
 import { useI18n } from "../i18n";
 import { useBranding } from "../lib/branding";
 import { useApiQuery } from "../lib/useApiQuery";
+import { formatDate } from "./ru-format";
 import type { BetaManagedAgentsSession } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
 
 interface Stats {
@@ -28,6 +31,7 @@ interface Stats {
   api_keys: number;
 }
 
+/** Шаг быстрого старта: слева номер и название, справа пояснение и действие. */
 function QuickstartStep({
   number,
   title,
@@ -38,12 +42,51 @@ function QuickstartStep({
   children: ReactNode;
 }) {
   return (
-    <div className="console-quickstart-step">
+    <div className="grid gap-2 border-t border-ddc-divider px-5 py-4 first:border-t-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4">
       <div>
-        <div className="console-step-index">STEP {number}</div>
-        <div className="console-step-title">{title}</div>
+        <div className="eyebrow text-brand">Шаг {number}</div>
+        <div className="mt-0.5 text-sm font-semibold text-ddc-heading">{title}</div>
       </div>
-      <div className="console-step-body">{children}</div>
+      <div className="min-w-0 space-y-2 text-sm text-muted">{children}</div>
+    </div>
+  );
+}
+
+/** Текст для копирования: вложенная панель `rounded-xl` и кнопка-иконка. */
+function CopyBlock({
+  text,
+  label,
+  copied,
+  onCopy,
+  mono = false,
+}: {
+  text: string;
+  label: string;
+  copied: boolean;
+  onCopy: () => void;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2 rounded-xl border border-ddc-border-strong bg-ddc-surface-muted py-1.5 pr-1.5 pl-3.5">
+      <code
+        className={
+          mono
+            ? "min-w-0 flex-1 py-1 font-mono text-xs leading-5 break-all text-ddc-text"
+            : "min-w-0 flex-1 py-1 font-sans text-sm leading-5 break-words text-ddc-text"
+        }
+      >
+        {text}
+      </code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={label}
+        title={label}
+        onClick={onCopy}
+      >
+        {copied ? <CheckIcon className="text-ddc-success-text" /> : <CopyIcon />}
+      </Button>
     </div>
   );
 }
@@ -63,6 +106,7 @@ export function Dashboard() {
     { limit: "5" },
   );
   const stats = statsQuery.data;
+  const statsLoading = statsQuery.isLoading;
   const recentSessions = sessionsQuery.data?.data.slice(0, 5) ?? [];
 
   const copy = async (text: string, key: string) => {
@@ -73,10 +117,10 @@ export function Dashboard() {
   };
 
   const primaryKpis = [
-    { label: t.nav.agents, value: stats?.agents, to: "/agents" },
-    { label: t.nav.sessions, value: stats?.sessions, to: "/sessions" },
-    { label: t.nav.environments, value: stats?.environments, to: "/environments" },
-    { label: t.nav.credentialVaults, value: stats?.vaults, to: "/vaults" },
+    { label: t.nav.agents, value: stats?.agents, to: "/agents", icon: NAV_ICONS.agents },
+    { label: t.nav.sessions, value: stats?.sessions, to: "/sessions", icon: NAV_ICONS.sessions },
+    { label: t.nav.environments, value: stats?.environments, to: "/environments", icon: NAV_ICONS.environments },
+    { label: t.nav.credentialVaults, value: stats?.vaults, to: "/vaults", icon: NAV_ICONS.vaults },
   ];
   const secondaryStats = [
     { label: t.nav.skills, value: stats?.skills, to: "/skills" },
@@ -86,65 +130,64 @@ export function Dashboard() {
   const command = "npx -y -p @openma/cli oma";
   const globalCommand = "npm i -g @openma/cli";
   const examplePrompt =
-    "Use oma to create a research agent that monitors arXiv for new ML papers daily";
-
-  const copyIcon = (key: string) =>
-    copied === key ? <CheckIcon className="size-3.5 text-success" /> : <CopyIcon className="size-3.5" />;
+    "Используй oma, чтобы создать исследовательского агента, который каждый день следит за новыми статьями по машинному обучению на arXiv";
 
   return (
     <DashboardLayout
       intro={
-        <header>
-          <h1>Get started with {branding.productName}</h1>
-          <p>{t.dashboard.handPlatformToAgent}</p>
-        </header>
+        <PageHeader
+          className="mb-0"
+          title={`Начало работы с ${branding.productName}`}
+          description={t.dashboard.handPlatformToAgent}
+        />
       }
       kpis={primaryKpis.map((kpi) => (
         <KpiCard
           key={kpi.to}
           label={kpi.label}
           value={kpi.value}
+          icon={kpi.icon}
+          loading={statsLoading}
           onClick={() => navigate(kpi.to)}
         />
       ))}
       secondary={
-        <div className="console-secondary-stats" data-testid="dashboard-secondary-stats">
+        <div
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+          data-testid="dashboard-secondary-stats"
+        >
           {secondaryStats.map((stat) => (
-            <Button
+            <KpiCard
               key={stat.to}
-              variant="ghost"
-              type="button"
-              className="console-secondary-stat"
+              compact
+              label={stat.label}
+              value={stat.value}
+              loading={statsLoading}
               onClick={() => navigate(stat.to)}
-            >
-              <span>{stat.label}</span>
-              <strong>{stat.value ?? "–"}</strong>
-            </Button>
+            />
           ))}
         </div>
       }
     >
       <ConsolePanel
-        title="Launch an agent"
-        description="A short path from an empty workspace to a managed run."
+        title="Запуск агента"
+        description="Короткий путь от пустого рабочего пространства до первого запуска."
       >
-        <QuickstartStep number="01" title={t.dashboard.installCli}>
+        <QuickstartStep number="1" title={t.dashboard.installCli}>
           <p>{t.dashboard.installCliDesc}</p>
-          <Button
-            variant="ghost"
-            type="button"
-            className="console-copy-control"
-            onClick={() => void copy(command, "command")}
-          >
-            <span>{command}</span>
-            {copyIcon("command")}
-          </Button>
-          <p className="mt-1.5 text-xs text-fg-subtle">
-            or globally:{" "}
+          <CopyBlock
+            mono
+            text={command}
+            label="Скопировать команду"
+            copied={copied === "command"}
+            onCopy={() => void copy(command, "command")}
+          />
+          <p className="text-xs">
+            или глобально:{" "}
             <Button
-              variant="ghost"
+              variant="link"
               type="button"
-              className="font-mono text-fg-muted hover:text-brand"
+              className="h-auto px-0 py-0 font-mono text-xs"
               onClick={() => void copy(globalCommand, "global-command")}
             >
               {globalCommand}
@@ -152,91 +195,105 @@ export function Dashboard() {
           </p>
         </QuickstartStep>
 
-        <QuickstartStep number="02" title={t.dashboard.mintApiKey}>
+        <QuickstartStep number="2" title={t.dashboard.mintApiKey}>
           <p>{t.dashboard.mintApiKeyDesc}</p>
-          <Button variant="ghost"
-            type="button"
-            className="mt-2 inline-flex h-[var(--control-h)] items-center gap-1.5 rounded-md bg-brand px-3 text-sm font-medium text-brand-fg hover:bg-brand-hover"
-            onClick={() => navigate("/api-keys")}
-          >
+          <Button type="button" onClick={() => navigate("/api-keys")}>
             {t.dashboard.generateApiKey}
-            <ArrowRightIcon className="size-3.5" />
+            <ArrowRightIcon />
           </Button>
         </QuickstartStep>
 
-        <QuickstartStep number="03" title={t.dashboard.handItReins}>
+        <QuickstartStep number="3" title={t.dashboard.handItReins}>
           <p>{t.dashboard.handItReinsDesc}</p>
-          <Button variant="ghost"
-            type="button"
-            className="console-copy-control"
-            onClick={() => void copy(examplePrompt, "prompt")}
-          >
-            <span>{examplePrompt}</span>
-            {copyIcon("prompt")}
-          </Button>
+          <CopyBlock
+            text={examplePrompt}
+            label="Скопировать запрос"
+            copied={copied === "prompt"}
+            onCopy={() => void copy(examplePrompt, "prompt")}
+          />
         </QuickstartStep>
       </ConsolePanel>
 
       <ConsolePanel
         title={t.dashboard.recentSessions}
-        description="Latest activity across the current workspace."
+        description="Последняя активность в рабочем пространстве."
         action={
-          <Button variant="ghost"
+          <Button
+            variant="ghost"
+            size="sm"
             type="button"
-            className="text-sm text-fg-muted hover:text-brand"
             onClick={() => navigate("/sessions")}
           >
             {t.common.viewAll}
+            <ArrowRightIcon />
           </Button>
         }
       >
         {sessionsQuery.isLoading ? (
-          <div>
+          <div aria-busy="true">
+            <span className="sr-only">Загрузка…</span>
             {Array.from({ length: 5 }).map((_, index) => (
               <div
                 key={index}
-                className="flex h-[var(--data-row-h)] items-center gap-3 border-t border-border first:border-t-0 px-3"
+                className="flex h-10 items-center gap-3 border-t border-ddc-divider px-5 first-of-type:border-t-0"
               >
-                <Skeleton className="h-3 w-[42%]" rounded="sm" />
-                <Skeleton className="ml-auto h-3 w-16" rounded="sm" />
+                <Skeleton className="h-4 w-[42%]" />
+                <Skeleton className="ml-auto h-5 w-20" rounded="md" />
               </div>
             ))}
           </div>
         ) : recentSessions.length === 0 ? (
-          <div className="p-3">
-            <EmptyState
-              title={t.dashboard.noSessionsYet}
-              body={t.dashboard.visitSessionsPage}
-            />
-          </div>
+          <EmptyState
+            size="sm"
+            kind="session"
+            className="rounded-none border-0 shadow-none"
+            title={t.sessions.noSessionsYet}
+            body="Созданные сессии появятся здесь."
+            action={
+              <Button type="button" variant="outline" onClick={() => navigate("/sessions")}>
+                {t.dashboard.visitSessionsPage}
+              </Button>
+            }
+          />
         ) : (
           <div className="console-dashboard-table-wrap">
             <Table className="console-dashboard-table">
-              <colgroup>
-                <col style={{ width: "40%" }} />
-                <col style={{ width: "20%" }} />
-                <col style={{ width: "24%" }} />
-                <col style={{ width: "16%" }} />
-              </colgroup>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t.dashboard.title}</TableHead>
-                  <TableHead>{t.common.status}</TableHead>
-                  <TableHead>{t.dashboard.agent}</TableHead>
-                  <TableHead>{t.common.created}</TableHead>
+                  <TableHead className="w-full">{t.dashboard.title}</TableHead>
+                  <TableHead className="w-px">{t.common.status}</TableHead>
+                  <TableHead className="hidden w-px 2xl:table-cell">{t.dashboard.agent}</TableHead>
+                  <TableHead className="w-px">{t.common.created}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {recentSessions.map((session) => (
-                  <TableRow key={session.id} onClick={() => navigate(`/sessions/${session.id}`)}>
-                    <TableCell className="text-fg">{session.title || t.dashboard.untitled}</TableCell>
-                    <TableCell><StatusPill status={session.status || "idle"} /></TableCell>
-                    <TableCell className="font-mono text-xs text-fg-muted">{session.agent.id}</TableCell>
-                    <TableCell className="text-xs text-fg-muted">
-                      {new Date(session.created_at).toLocaleDateString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {recentSessions.map((session) => {
+                  const title = session.title || t.dashboard.untitled;
+                  const agentName = session.agent.name || "–";
+                  return (
+                    <TableRow key={session.id} onClick={() => navigate(`/sessions/${session.id}`)}>
+                      <TableCell className="max-w-0 truncate text-ddc-text" title={title}>
+                        <Link
+                          to={`/sessions/${session.id}`}
+                          className="link-hover"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {title}
+                        </Link>
+                      </TableCell>
+                      <TableCell><StatusPill status={session.status || "idle"} /></TableCell>
+                      <TableCell
+                        className="hidden max-w-48 truncate text-xs text-ddc-label 2xl:table-cell"
+                        title={agentName}
+                      >
+                        {agentName}
+                      </TableCell>
+                      <TableCell className="text-xs text-ddc-label tabular-nums">
+                        {formatDate(session.created_at)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

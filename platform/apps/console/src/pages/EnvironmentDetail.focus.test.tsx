@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -39,7 +39,7 @@ vi.mock("../lib/useApiQuery", () => {
 });
 
 describe("EnvironmentDetail focus treatment", () => {
-  it("does not override the shared one-pixel focus treatment on switches", async () => {
+  it("does not override the shared DDC focus ring on switches", async () => {
     render(
       <MemoryRouter initialEntries={["/environments/env-1"]}>
         <Routes>
@@ -49,10 +49,13 @@ describe("EnvironmentDetail focus treatment", () => {
     );
 
     const toggle = await screen.findByRole("switch", {
-      name: "Allow MCP server network access",
+      name: "Разрешить сетевой доступ MCP-серверам",
     });
-    expect(toggle.className).toContain("focus-visible:ring-1");
-    expect(toggle.className).not.toContain("focus-visible:ring-2");
+    // Переключатель DDC: класс `switch`, а кольцо фокуса рисует общее правило
+    // `:focus-visible`. Своих колец и снятия outline на нём быть не должно.
+    expect(toggle).toHaveClass("switch");
+    expect(toggle.className).not.toContain("focus-visible:ring");
+    expect(toggle.className).not.toContain("outline-none");
     expect(toggle.className).not.toContain("focus-visible:ring-brand");
   });
 
@@ -74,5 +77,43 @@ describe("EnvironmentDetail focus treatment", () => {
     expect(screen.getByTestId("settings-actions")).toHaveClass(
       "console-settings-actions",
     );
+  });
+
+  it("shows Russian section titles and keeps the switch state in aria-checked", async () => {
+    render(
+      <MemoryRouter initialEntries={["/environments/env-1"]}>
+        <Routes>
+          <Route path="/environments/:id" element={<EnvironmentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const titles = (await screen.findAllByTestId("settings-section")).map(
+      (section) => section.querySelector("h2")?.textContent,
+    );
+    expect(titles).toEqual(["Сеть", "Пакеты", "Метаданные"]);
+
+    const toggle = screen.getByRole("switch", {
+      name: "Разрешить сетевой доступ менеджерам пакетов",
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("labels icon-only buttons and form rows in Russian", async () => {
+    render(
+      <MemoryRouter initialEntries={["/environments/env-1"]}>
+        <Routes>
+          <Route path="/environments/:id" element={<EnvironmentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId("settings-layout");
+    fireEvent.click(screen.getByRole("button", { name: "Добавить пакет" }));
+    expect(screen.getByRole("button", { name: "Удалить строку пакетов" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Добавить метку" }));
+    expect(screen.getByRole("button", { name: "Удалить строку метаданных" })).toBeInTheDocument();
   });
 });

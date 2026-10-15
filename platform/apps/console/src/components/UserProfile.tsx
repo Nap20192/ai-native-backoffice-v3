@@ -25,24 +25,21 @@ import { Avatar } from "./Avatar";
 import { useI18n, AVAILABLE_LOCALES } from "../i18n";
 
 /**
- * Bottom-of-sidebar user profile menu. Single click target opens a
- * dropdown grouping the three account-scoped chrome items:
+ * Меню пользователя внизу бокового меню. Одна точка нажатия открывает список
+ * из трёх групп настроек учётной записи:
  *
- *   - Documentation (opens docs site in a new tab)
- *   - Theme picker (light / dark / system)
- *   - Sign out
+ *   - документация (сайт документации в новой вкладке);
+ *   - язык интерфейса (русский, английский, китайский);
+ *   - тема (светлая, тёмная, системная) и выход.
  *
- * The trigger row uses the SAME custom recipe the brand row in
- * SidebarHeader uses — `h-11 px-3 flex items-center gap-2` with the
- * avatar fixed at x=12 and the text collapsing via
- * `group-data-[collapsible=icon]:hidden`. When the sidebar narrows to
- * icon mode the avatar stays put and the openma-style row visually
- * mirrors the brand row at the top.
+ * Строка-триггер использует тот же класс `console-sidebar-row`, что и пункты
+ * меню и блок рабочего пространства: знак стоит в колонке иконок, подпись
+ * обрезается многоточием.
  */
 const THEME_OPTIONS = [
-  { value: "light" as const, label: "Light", Icon: SunIcon },
-  { value: "dark" as const, label: "Dark", Icon: MoonIcon },
-  { value: "system" as const, label: "System", Icon: MonitorIcon },
+  { value: "light" as const, Icon: SunIcon },
+  { value: "dark" as const, Icon: MoonIcon },
+  { value: "system" as const, Icon: MonitorIcon },
 ];
 
 export function UserProfile() {
@@ -57,25 +54,27 @@ export function UserProfile() {
     window.location.href = "/login";
   };
 
-  const label = user.name || user.email || "Account";
+  const label = user.name || user.email || t.profile.account;
+  const title = user.name || user.email;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost"
+        <Button
+          variant="ghost"
           type="button"
           aria-label={t.profile.accountMenu}
-          className="console-sidebar-row"
+          className="console-sidebar-row console-user-trigger"
         >
           <span data-sidebar-slot data-sidebar-track="icon">
             <Avatar name={label} size="sm" />
           </span>
-          <div className="min-w-0 text-left leading-tight" data-sidebar-track="label">
-            <div className="text-sm text-sidebar-foreground truncate">
-              {user.name || user.email}
+          <div className="console-user-text" data-sidebar-track="label">
+            <div className="console-user-name" title={title}>
+              {title}
             </div>
             {user.email && user.name && (
-              <div className="text-xs text-fg-subtle truncate">
+              <div className="console-user-email" title={user.email}>
                 {user.email}
               </div>
             )}
@@ -86,20 +85,18 @@ export function UserProfile() {
       <DropdownMenuContent
         side="top"
         align="start"
-        className="w-56"
+        className="console-user-menu w-56"
         collisionPadding={8}
       >
-        <DropdownMenuLabel className="font-normal">
-          <div className="leading-tight">
-            <div className="text-sm font-medium text-fg truncate">
-              {user.name || user.email}
-            </div>
-            {user.email && user.name && (
-              <div className="text-xs text-fg-subtle truncate">
-                {user.email}
-              </div>
-            )}
+        <DropdownMenuLabel className="console-menu-head font-normal">
+          <div className="console-menu-head-name" title={title}>
+            {title}
           </div>
+          {user.email && user.name && (
+            <div className="console-menu-head-email" title={user.email}>
+              {user.email}
+            </div>
+          )}
         </DropdownMenuLabel>
 
         <DropdownMenuSeparator />
@@ -111,7 +108,7 @@ export function UserProfile() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <BookOpenIcon className="size-4 opacity-80" />
+              <BookOpenIcon className="size-4" />
               {t.profile.documentation}
             </a>
           </DropdownMenuItem>
@@ -119,11 +116,11 @@ export function UserProfile() {
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuLabel className="text-xs uppercase tracking-wider text-fg-subtle font-medium">
-          Language
+        <DropdownMenuLabel className="console-menu-eyebrow">
+          {t.profile.language}
         </DropdownMenuLabel>
         <DropdownMenuGroup>
-          {AVAILABLE_LOCALES.map(({ value, label, flag }) => {
+          {AVAILABLE_LOCALES.map(({ value, label: localeLabel, flag }) => {
             const active = locale === value;
             return (
               <DropdownMenuItem
@@ -131,11 +128,9 @@ export function UserProfile() {
                 onClick={() => setLocale(value)}
                 onSelect={(e) => e.preventDefault()}
               >
-                <span className="size-4 inline-flex items-center justify-center text-xs font-mono opacity-80">
-                  {flag}
-                </span>
-                {label}
-                {active && <CheckIcon className="ml-auto size-4 text-brand" />}
+                <span className="console-menu-flag">{flag}</span>
+                {localeLabel}
+                {active && <CheckIcon className="console-menu-check size-4" />}
               </DropdownMenuItem>
             );
           })}
@@ -143,11 +138,11 @@ export function UserProfile() {
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuLabel className="text-xs uppercase tracking-wider text-fg-subtle font-medium">
+        <DropdownMenuLabel className="console-menu-eyebrow">
           {t.profile.theme}
         </DropdownMenuLabel>
         <DropdownMenuGroup>
-          {THEME_OPTIONS.map(({ value, label: optLabel, Icon }) => {
+          {THEME_OPTIONS.map(({ value, Icon }) => {
             const active = theme === value;
             return (
               <DropdownMenuItem
@@ -155,9 +150,9 @@ export function UserProfile() {
                 onClick={() => setTheme(value)}
                 onSelect={(e) => e.preventDefault()}
               >
-                <Icon className="size-4 opacity-80" />
-                {optLabel}
-                {active && <CheckIcon className="ml-auto size-4 text-brand" />}
+                <Icon className="size-4" />
+                {t.profile[value]}
+                {active && <CheckIcon className="console-menu-check size-4" />}
               </DropdownMenuItem>
             );
           })}
@@ -165,10 +160,7 @@ export function UserProfile() {
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem
-          onClick={handleSignOut}
-          className="text-danger focus:text-danger focus:bg-danger/10"
-        >
+        <DropdownMenuItem onClick={handleSignOut} className="console-menu-danger">
           <LogOutIcon className="size-4" />
           {t.profile.signOut}
         </DropdownMenuItem>

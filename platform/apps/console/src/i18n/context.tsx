@@ -1,23 +1,44 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { Locale, Messages } from "./types";
 import { en } from "./en";
+import { ru } from "./ru";
 import { zhCN } from "./zh-CN";
 
 const dictionaries: Record<Locale, Messages> = {
+  ru,
   en,
   "zh-CN": zhCN,
 };
 
 const STORAGE_KEY = "oma-locale";
 
+/** Язык по умолчанию: русский. Язык браузера не учитывается. */
+export const DEFAULT_LOCALE: Locale = "ru";
+
+function isLocale(value: unknown): value is Locale {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(dictionaries, value)
+  );
+}
+
 function getInitialLocale(): Locale {
-  if (typeof window === "undefined") return "en";
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored && stored in dictionaries) return stored as Locale;
-  // Browser language detection
-  const lang = navigator.language;
-  if (lang.startsWith("zh")) return "zh-CN";
-  return "en";
+  if (typeof window === "undefined") return DEFAULT_LOCALE;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (isLocale(stored)) return stored;
+  } catch {
+    // Хранилище недоступно: остаётся язык по умолчанию.
+  }
+  return DEFAULT_LOCALE;
 }
 
 interface I18nContextValue {
@@ -32,11 +53,18 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(getInitialLocale);
 
   const setLocale = useCallback((next: Locale) => {
-    localStorage.setItem(STORAGE_KEY, next);
+    try {
+      localStorage.setItem(STORAGE_KEY, next);
+    } catch {
+      // Выбор действует до перезагрузки страницы.
+    }
     setLocaleState(next);
-    // Update document lang attribute for accessibility and font rendering
-    document.documentElement.lang = next;
   }, []);
+
+  // Атрибут lang нужен читалкам с экрана и подбору шрифта.
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
 
@@ -46,9 +74,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Hook to access translations and locale controls.
+ * Хук доступа к переводам и выбору языка.
  *
- * Usage:
  * ```tsx
  * const { t, locale, setLocale } = useI18n();
  * return <h1>{t.nav.dashboard}</h1>;
@@ -62,10 +89,9 @@ export function useI18n(): I18nContextValue {
   return ctx;
 }
 
-/**
- * Available locales for the locale switcher UI.
- */
+/** Языки для переключателя в меню профиля. */
 export const AVAILABLE_LOCALES: { value: Locale; label: string; flag: string }[] = [
+  { value: "ru", label: "Русский", flag: "RU" },
   { value: "en", label: "English", flag: "EN" },
   { value: "zh-CN", label: "简体中文", flag: "中" },
 ];

@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useApi } from "./api";
+import { ApiError, localizeApiError, useApi } from "./api";
 
 const CONSOLE_API_BETAS = [
   "managed-agents-2026-04-01",
@@ -103,27 +103,94 @@ describe("useApi Managed Agents negotiation", () => {
 
     await act(async () => {
       await expect(result.current.api("/v1/agents")).rejects.toThrow(
-        "HTTP 500",
+        "Ошибка сервера. Повторите попытку.",
       );
       await expect(result.current.api("/v1/environments")).rejects.toThrow(
-        "HTTP 500",
+        "Ошибка сервера. Повторите попытку.",
       );
     });
 
     expect(toastError).toHaveBeenNthCalledWith(
       1,
-      "Server error. Please try again.",
+      "Ошибка сервера. Повторите попытку.",
       {
         id: "api-error:500:HTTP 500",
       },
     );
     expect(toastError).toHaveBeenNthCalledWith(
       2,
-      "Server error. Please try again.",
+      "Ошибка сервера. Повторите попытку.",
       {
         id: "api-error:500:HTTP 500",
       },
     );
     expect(consoleError).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows server errors in Russian and keeps the English text for the console only", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        { type: "error", error: { type: "permission_error", message: "Insufficient workspace permissions" } },
+        { status: 403 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const toastError = vi.spyOn(toast, "error");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { result } = renderHook(() => useApi());
+
+    let caught: unknown;
+    await act(async () => {
+      caught = await result.current.api("/v1/oma/tenants/t/members").catch((e: unknown) => e);
+    });
+
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).message).toBe("Недостаточно прав в рабочем пространстве.");
+    expect((caught as ApiError).serverMessage).toBe("Insufficient workspace permissions");
+    expect(toastError.mock.calls[0]?.[0]).toBe("Недостаточно прав в рабочем пространстве.");
+    expect(consoleError.mock.calls.join(" ")).toContain("Insufficient workspace permissions");
+  });
+
+  it("does not toast a failed request that the page reports itself (quiet)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "Forbidden" }, { status: 403 })),
+    );
+    const toastError = vi.spyOn(toast, "error");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { result } = renderHook(() => useApi());
+
+    await act(async () => {
+      await expect(
+        result.current.api("/v1/oma/tenants/t/members", { quiet: true }),
+      ).rejects.toThrow("Недостаточно прав в рабочем пространстве.");
+    });
+
+    expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("localizeApiError", () => {
+  it("prefers the stable error code, then the status, and never returns English text", () => {
+    expect(localizeApiError({ code: "not_a_member", message: "Not a member" }, 403)).toBe(
+      "Вы не состоите в этом рабочем пространстве.",
+    );
+    expect(localizeApiError({ code: "", message: "Invitation expired" }, 410)).toBe(
+      "Срок действия истёк или запись больше недоступна.",
+    );
+    expect(localizeApiError({ code: "", message: "Boom" }, 502)).toBe(
+      "Ошибка сервера. Повторите попытку.",
+    );
+    expect(localizeApiError({ code: "", message: "Teapot" }, 418)).toBe(
+      "Не удалось выполнить запрос (HTTP 418).",
+    );
+  });
+
+  it("keeps a server message that is already in Russian", () => {
+    expect(localizeApiError({ code: "", message: "Название уже занято" }, 409)).toBe(
+      "Название уже занято",
+    );
   });
 });

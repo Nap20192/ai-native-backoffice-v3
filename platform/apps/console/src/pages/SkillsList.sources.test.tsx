@@ -122,34 +122,67 @@ describe("SkillsList skill sources", () => {
   it("labels skills installed from a URL with their source", async () => {
     show();
     expect((await screen.findByText("skills.example.com/team")).parentElement).toHaveAttribute("title", SOURCE);
-    expect(screen.getByRole("button", { name: "Install from URL" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check for updates" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Установить по ссылке" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Проверить обновления" })).toBeInTheDocument();
+  });
+
+  it("opens with the page header: title, description and the main action first", async () => {
+    show();
+    const title = await screen.findByRole("heading", { level: 1, name: "Навыки" });
+    expect(title).toBeInTheDocument();
+    expect(screen.getByText("Готовые и пользовательские навыки для ваших агентов.")).toBeInTheDocument();
+
+    const header = screen.getByRole("banner");
+    const actions = within(header)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(actions[0]).toBe("Новый навык");
+    expect(actions).toContain("Установить по ссылке");
+  });
+
+  it("searches the loaded skills by title", async () => {
+    const user = userEvent.setup();
+    show();
+    await screen.findByText("code-review");
+    expect(screen.getByText("Uploaded")).toBeInTheDocument();
+
+    await user.type(screen.getByRole("searchbox"), "upload");
+
+    expect(screen.queryByText("code-review")).toBeNull();
+    expect(screen.getByText("Uploaded")).toBeInTheDocument();
+  });
+
+  it("shows the skill version as a readable value, never as a 16-digit number", async () => {
+    show();
+    await screen.findByText("code-review");
+    expect(screen.getByText("v1001")).toBeInTheDocument();
+    expect(screen.queryByText(/^v\d{12,}$/)).toBeNull();
   });
 
   it("hides the controls when the deployment has no skill-source routes", async () => {
     state.sourcesAvailable = false;
     show();
     await waitFor(() => expect(state.calls.some((c) => c.path.endsWith("/installed"))).toBe(true));
-    expect(screen.queryByRole("button", { name: "Install from URL" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Check for updates" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Установить по ссылке" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Проверить обновления" })).toBeNull();
   });
 
   it("discovers a source, preselects new skills, and installs the selection", async () => {
     const user = userEvent.setup();
     show();
-    await user.click(await screen.findByRole("button", { name: "Install from URL" }));
+    await user.click(await screen.findByRole("button", { name: "Установить по ссылке" }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Source URL"), `${SOURCE}/`);
-    await user.click(within(dialog).getByRole("button", { name: "Find skills" }));
+    await user.type(within(dialog).getByLabelText("Адрес источника"), `${SOURCE}/`);
+    await user.click(within(dialog).getByRole("button", { name: "Найти навыки" }));
 
     expect(await within(dialog).findByText("Write release notes")).toBeInTheDocument();
-    expect(within(dialog).getByText("installed")).toBeInTheDocument();
+    expect(within(dialog).getByText("Установлен")).toBeInTheDocument();
     // New skills are preselected; installed ones are left for an explicit reinstall.
     expect(within(dialog).getByRole("checkbox", { name: "release-notes" })).toHaveAttribute("data-state", "checked");
     expect(within(dialog).getByRole("checkbox", { name: "code-review" })).toHaveAttribute("data-state", "unchecked");
 
-    await user.click(within(dialog).getByRole("button", { name: "Install 1" }));
-    expect(await within(dialog).findByText("Installed")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Установить 1" }));
+    expect(await within(dialog).findByText("Установлен")).toBeInTheDocument();
     expect(state.calls.find((c) => c.path.endsWith("/install"))?.body).toEqual({
       url: SOURCE,
       skills: ["release-notes"],
@@ -159,25 +192,26 @@ describe("SkillsList skill sources", () => {
   it("shows why a source could not be read", async () => {
     const user = userEvent.setup();
     show();
-    await user.click(await screen.findByRole("button", { name: "Install from URL" }));
+    await user.click(await screen.findByRole("button", { name: "Установить по ссылке" }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Source URL"), "https://bad.example");
-    await user.click(within(dialog).getByRole("button", { name: "Find skills" }));
-    expect(await within(dialog).findByText(/No Agent Skills index found/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Install" })).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("Адрес источника"), "https://bad.example");
+    await user.click(within(dialog).getByRole("button", { name: "Найти навыки" }));
+    expect(await within(dialog).findByText(/Индекс навыков по этому адресу не найден/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/No Agent Skills index found/)).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Установить" })).toBeDisabled();
   });
 
   it("checks for updates and updates a skill to the source's latest version", async () => {
     const user = userEvent.setup();
     show();
-    await user.click(await screen.findByRole("button", { name: "Check for updates" }));
+    await user.click(await screen.findByRole("button", { name: "Проверить обновления" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByText("Update available")).toBeInTheDocument();
-    expect(within(dialog).getByText(/1 more skill available from skills.example.com\/team: triage/)).toBeInTheDocument();
+    expect(await within(dialog).findByText("Есть обновление")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Ещё 1 навык в источнике skills\.example\.com\/team: triage/)).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: "Update all (1)" }));
-    expect(await within(dialog).findByText("Updated")).toBeInTheDocument();
-    expect(await within(dialog).findByText("Up to date")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Обновить все (1)" }));
+    expect(await within(dialog).findByText("Обновлён")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Актуален")).toBeInTheDocument();
     expect(state.calls.find((c) => c.path.endsWith("/update"))?.body).toEqual({ skill_ids: ["skill_review"] });
   });
 });

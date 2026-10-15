@@ -42,13 +42,13 @@ export function FacetedFilter({
   options,
   value,
   onValueChange,
-  searchPlaceholder = "Search...",
+  searchPlaceholder = "Поиск…",
 }: FacetedFilterProps) {
   return (
     <Command>
       <CommandInput placeholder={searchPlaceholder} />
       <CommandList>
-        <CommandEmpty>No matches.</CommandEmpty>
+        <CommandEmpty>Ничего не найдено</CommandEmpty>
         <CommandGroup>
           {options.map((opt) => {
             const selected = opt.value === value;
@@ -60,13 +60,13 @@ export function FacetedFilter({
               >
                 <div
                   className={cn(
-                    "mr-2 flex size-4 items-center justify-center rounded-sm border",
+                    "mr-2 flex size-4 items-center justify-center rounded border-2",
                     selected
-                      ? "bg-brand border-brand text-bg"
-                      : "border-border opacity-50 [&_svg]:invisible",
+                      ? "border-ddc-primary bg-ddc-primary text-ddc-on-primary"
+                      : "border-ddc-icon-muted [&_svg]:invisible",
                   )}
                 >
-                  <CheckIcon className="size-3.5" />
+                  <CheckIcon className="size-3" />
                 </div>
                 <span>{opt.label}</span>
               </CommandItem>

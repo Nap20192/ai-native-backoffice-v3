@@ -55,8 +55,8 @@ export const MessageContent = ({
   <div
     className={cn(
       "is-user:dark flex w-fit min-w-0 max-w-full flex-col gap-2 overflow-hidden text-sm",
-      "group-[.is-user]:ml-auto group-[.is-user]:rounded-lg group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground",
-      "group-[.is-assistant]:text-foreground",
+      "group-[.is-user]:ml-auto group-[.is-user]:rounded-xl group-[.is-user]:bg-ddc-selected-bg group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-ddc-text",
+      "group-[.is-assistant]:text-ddc-text",
       className
     )}
     {...props}
@@ -262,7 +262,8 @@ export const MessageBranchPrevious = ({
 
   return (
     <Button
-      aria-label="Previous branch"
+      aria-label="Предыдущая ветка"
+      title="Предыдущая ветка"
       disabled={totalBranches <= 1}
       onClick={goToPrevious}
       size="icon-sm"
@@ -285,7 +286,8 @@ export const MessageBranchNext = ({
 
   return (
     <Button
-      aria-label="Next branch"
+      aria-label="Следующая ветка"
+      title="Следующая ветка"
       disabled={totalBranches <= 1}
       onClick={goToNext}
       size="icon-sm"
@@ -309,12 +311,12 @@ export const MessageBranchPage = ({
   return (
     <ButtonGroupText
       className={cn(
-        "border-none bg-transparent text-muted-foreground shadow-none",
+        "border-none bg-transparent text-ddc-text-muted shadow-none tabular-nums",
         className
       )}
       {...props}
     >
-      {currentBranch + 1} of {totalBranches}
+      {currentBranch + 1} из {totalBranches}
     </ButtonGroupText>
   );
 };

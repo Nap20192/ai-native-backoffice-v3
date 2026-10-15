@@ -21,12 +21,12 @@ const SIZE: Record<"sm" | "md" | "lg", { text: string; gap: string; weight: stri
 
 interface BrandLoaderProps {
   size?: keyof typeof SIZE;
-  /** Optional accessible label. Defaults to "Loading". */
+  /** Optional accessible label. По умолчанию "Загрузка". */
   label?: string;
   className?: string;
 }
 
-export function BrandLoader({ size = "md", label = "Loading", className = "" }: BrandLoaderProps) {
+export function BrandLoader({ size = "md", label = "Загрузка", className = "" }: BrandLoaderProps) {
   const s = SIZE[size];
   return (
     <span

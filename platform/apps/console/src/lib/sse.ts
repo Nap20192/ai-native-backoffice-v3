@@ -25,7 +25,7 @@ export async function* iterateJsonSseStream<T>(
         "error" in value &&
         typeof value.error?.message === "string"
           ? value.error.message
-          : "Managed Agents event stream failed";
+          : "Поток событий агента прервался";
       throw new Error(message);
     }
     yield value as T;

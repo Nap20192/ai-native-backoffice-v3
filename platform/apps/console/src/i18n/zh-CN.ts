@@ -31,7 +31,7 @@ export const zhCN: Messages = {
     terminated: "已终止",
     rescheduling: "重新调度中",
     copied: "已复制",
-    viewAll: "查看全部 →",
+    viewAll: "查看全部",
     nothingHereYet: "这里还没有内容",
     loadingMore: "加载更多…",
     columns: "列",
@@ -57,6 +57,17 @@ export const zhCN: Messages = {
     apiKeys: "API 密钥",
     localRuntimes: "本地运行时",
     integrations: "集成",
+    members: "成员",
+  },
+
+  shell: {
+    workspaceNavigation: "工作区导航",
+    sections: "控制台分区",
+    breadcrumb: "面包屑导航",
+    showSidebar: "显示侧边栏",
+    closeSidebar: "关闭侧边栏",
+    resizeSidebar: "调整侧边栏宽度",
+    loadingSession: "正在加载会话",
   },
 
   login: {
@@ -124,6 +135,10 @@ export const zhCN: Messages = {
     description: "跳转到控制台中的任意页面。",
     jumpTo: "跳转到…",
     noMatches: "没有匹配项。",
+    recent: "最近",
+    actions: "操作",
+    navigate: "导航",
+    search: "搜索",
   },
 
   profile: {
@@ -141,10 +156,15 @@ export const zhCN: Messages = {
     workspaceName: "名称",
     workspacePlaceholder: "例如：Acme 生产环境",
     creating: "创建中…",
+    language: "语言",
+    account: "账户",
+    roleOwner: "所有者",
+    roleAdmin: "管理员",
+    roleMember: "成员",
   },
 
   agents: {
-    newAgent: "+ 新建智能体",
+    newAgent: "新建智能体",
     editAgent: "编辑",
     newAgentTitle: "新建智能体",
     editAgentTitle: "编辑智能体",
@@ -154,7 +174,7 @@ export const zhCN: Messages = {
     noMatchingAgents: "没有匹配的智能体",
     noAgentsYet: "还没有智能体",
     createFirstAgent: "创建你的第一个智能体以开始使用。",
-    getStartedGuide: "查看快速入门指南 →",
+    getStartedGuide: "查看快速入门指南",
     tryDifferentSearch: "试试其他搜索词。",
     archiveAgent: "归档",
     deleteAgent: "删除",
@@ -162,7 +182,7 @@ export const zhCN: Messages = {
   },
 
   sessions: {
-    newSession: "+ 新建会话",
+    newSession: "新建会话",
     searchSessions: "搜索会话…",
     noMatchingSessions: "没有匹配的会话",
     noSessionsYet: "还没有会话",
@@ -172,7 +192,7 @@ export const zhCN: Messages = {
   },
 
   vaults: {
-    newVault: "+ 新建保险库",
+    newVault: "新建保险库",
     searchVaults: "搜索保险库…",
     noMatchingVaults: "没有匹配的保险库",
     noVaultsYet: "还没有保险库",
@@ -186,7 +206,7 @@ export const zhCN: Messages = {
   },
 
   environments: {
-    newEnvironment: "+ 新建环境",
+    newEnvironment: "新建环境",
     searchEnvironments: "搜索环境…",
     noMatchingEnvironments: "没有匹配的环境",
     noEnvironmentsYet: "还没有环境",
@@ -200,21 +220,21 @@ export const zhCN: Messages = {
   },
 
   skills: {
-    newSkill: "+ 新建技能",
+    newSkill: "新建技能",
     searchSkills: "搜索技能…",
     noMatchingSkills: "没有匹配的技能",
     noSkillsYet: "还没有技能",
   },
 
   modelCards: {
-    newModelCard: "+ 新建模型卡",
+    newModelCard: "新建模型卡",
     searchModelCards: "搜索模型卡…",
     noMatchingModelCards: "没有匹配的模型卡",
     noModelCardsYet: "还没有模型卡",
   },
 
   apiKeys: {
-    newApiKey: "+ 新建 API 密钥",
+    newApiKey: "新建 API 密钥",
     noApiKeysYet: "还没有 API 密钥",
     revokeKey: "撤销",
     confirmRevoke: "撤销此 API 密钥？此操作无法撤销。",
@@ -222,14 +242,14 @@ export const zhCN: Messages = {
   },
 
   evals: {
-    newEvalRun: "+ 新建评估任务",
+    newEvalRun: "新建评估任务",
     searchEvalRuns: "搜索评估任务…",
     noMatchingEvalRuns: "没有匹配的评估任务",
     noEvalRunsYet: "还没有评估任务",
   },
 
   memory: {
-    newMemoryStore: "+ 新建记忆存储",
+    newMemoryStore: "新建记忆存储",
     searchMemoryStores: "搜索记忆存储…",
     noMatchingMemoryStores: "没有匹配的记忆存储",
     noMemoryStoresYet: "还没有记忆存储",

@@ -31,7 +31,9 @@ describe("FilterChip Linear pill contract", () => {
     const pill = screen.getByTestId("filter-chip");
     expect(pill).toHaveAttribute("data-active", "true");
     expect(pill).toContainElement(screen.getByRole("button", { name: /^Status:Active$/ }));
-    expect(pill).toContainElement(screen.getByRole("button", { name: "Clear Status filter" }));
+    // Двоеточие стоит сразу за подписью: «Статус: Активные», а не «Статус : Активные».
+    expect(screen.getByText("Status:")).toBeInTheDocument();
+    expect(pill).toContainElement(screen.getByRole("button", { name: "Сбросить фильтр «Status»" }));
   });
 
   it("consumes the template's shared pill texture rather than nested button surfaces", () => {

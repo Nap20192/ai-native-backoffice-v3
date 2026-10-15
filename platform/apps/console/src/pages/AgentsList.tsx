@@ -1,27 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, PencilIcon } from "lucide-react";
+import { ArchiveIcon, ArrowRightIcon, PencilIcon, PlusIcon } from "lucide-react";
 
 import { useApi } from "../lib/api";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
 import type { RowAction } from "../components/RowContextMenu";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
 import type { ModelCard } from "@open-managed-agents/api-types";
 import type { AgentRecord as Agent } from "../types/agent";
 import { AgentFormDialog } from "./agents/AgentFormDialog";
+import { formatDate } from "./agents/format";
 import { useI18n } from "../i18n";
 
 type StatusValue = "any" | "active" | "archived";
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
+  { value: "any", label: "Все" },
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
 ];
 
 export function AgentsList() {
@@ -37,6 +40,8 @@ export function AgentsList() {
   const [, setAuxLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [archivingAgent, setArchivingAgent] = useState<Agent | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
 
   // Managed Agents exposes include_archived plus RFC3339 created-at bounds.
   // Archived-only and text search remain feed presentation filters; they do
@@ -123,6 +128,23 @@ export function AgentsList() {
 
   const modelStr = (m: Agent["model"]) => (typeof m === "string" ? m : m?.id || "");
 
+  // Архивация необратима, поэтому перед ней спрашиваем (правило 11 DDC), как и
+  // на странице агента. Ошибку API показывает useApi, здесь окно просто
+  // остаётся открытым до новой попытки или отмены.
+  const confirmArchive = async () => {
+    if (!archivingAgent) return;
+    setArchiveBusy(true);
+    try {
+      await managedApi.agents.archive(archivingAgent.id);
+      setArchivingAgent(null);
+      refreshAgents();
+    } catch {
+      // Сообщение об ошибке уже показано.
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
   const getAgentActions = (agent: Agent): RowAction[] => {
     const archived = Boolean(agent.archived_at);
     return [
@@ -136,12 +158,7 @@ export function AgentsList() {
         label: archived ? t.common.unarchive : t.common.archive,
         icon: <ArchiveIcon className="size-4" />,
         disabled: archived,
-        onSelect: async () => {
-          try {
-            await managedApi.agents.archive(agent.id);
-            refreshAgents();
-          } catch {}
-        },
+        onSelect: () => setArchivingAgent(agent),
       },
     ];
   };
@@ -153,59 +170,63 @@ export function AgentsList() {
   const columns = useMemo<ColumnDef<Agent>[]>(
     () => [
       {
-        id: "id",
-        accessorKey: "id",
-        header: t.common.id,
+        id: "name",
+        accessorKey: "name",
+        header: t.common.name,
+        size: 240,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
-            {row.original.id}
+          <span className="min-w-0 truncate font-medium text-ddc-heading" title={row.original.name}>
+            {row.original.name}
           </span>
         ),
         enableHiding: false,
       },
       {
-        id: "name",
-        accessorKey: "name",
-        header: t.common.name,
-        cell: ({ row }) => <span className="font-medium text-fg">{row.original.name}</span>,
-        enableHiding: false,
+        id: "id",
+        accessorKey: "id",
+        header: t.common.id,
+        cell: ({ row }) => (
+          <span title={row.original.id} className="font-mono text-xs text-ddc-text-muted">
+            {row.original.id}
+          </span>
+        ),
       },
       {
         id: "model",
         accessorFn: (a) => modelStr(a.model),
         header: t.common.model,
+        size: 200,
+        meta: { priority: 1 },
         cell: ({ row }) => (
-          <span className="text-fg-muted">{modelStr(row.original.model)}</span>
+          <span className="min-w-0 truncate text-ddc-text-muted" title={modelStr(row.original.model)}>
+            {modelStr(row.original.model)}
+          </span>
         ),
       },
       {
         id: "status",
         accessorFn: (a) => (a.archived_at ? "archived" : "active"),
         header: t.common.status,
-        cell: ({ row }) => (
-          <span
-            className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full ${
-              row.original.archived_at
-                ? "bg-bg-surface text-fg-subtle"
-                : "bg-success-subtle text-success"
-            }`}
-          >
-            {row.original.archived_at ? t.common.archived : t.common.active}
-          </span>
-        ),
+        cell: ({ row }) =>
+          row.original.archived_at ? (
+            <Badge variant="neutral">{t.common.archived}</Badge>
+          ) : (
+            <Badge variant="success">{t.common.active}</Badge>
+          ),
       },
       {
         id: "created",
         accessorFn: (a) => a.created_at,
         header: t.common.created,
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-ddc-text-muted tabular-nums">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
     ],
-    [api, refreshAgents],
+    [api, refreshAgents, t],
   );
 
   // Active-filter chip displays — kept null when matching the default so
@@ -217,7 +238,7 @@ export function AgentsList() {
   const filters = (
     <>
       <FilterChip
-        label="Status"
+        label="Статус"
         active={status !== "any"}
         display={statusDisplay}
         onClear={() => setStatus("any")}
@@ -236,7 +257,7 @@ export function AgentsList() {
             options={STATUS_OPTIONS}
             value={status}
             onValueChange={(v) => setStatus(v as StatusValue)}
-            searchPlaceholder="Status..."
+            searchPlaceholder="Найти статус…"
           />
         </PopoverContent>
       </FilterChip>
@@ -247,6 +268,8 @@ export function AgentsList() {
 
   return (
     <DataTable<Agent>
+      title={t.nav.agents}
+      subtitle="Агенты выполняют задачи по вашим инструкциям: у каждого своя модель, навыки и набор инструментов."
       createLabel={t.agents.newAgent}
       onCreate={() => setShowCreate(true)}
       searchPlaceholder={t.agents.searchAgents}
@@ -264,7 +287,12 @@ export function AgentsList() {
       emptyTitle={search ? t.agents.noMatchingAgents : t.agents.noAgentsYet}
       emptyKind="agent"
       emptyAction={
-        !search && <Button onClick={() => setShowCreate(true)}>{t.agents.newAgent}</Button>
+        !search && (
+          <Button onClick={() => setShowCreate(true)}>
+            <PlusIcon />
+            {t.agents.newAgentTitle}
+          </Button>
+        )
       }
       emptySubtitle={
         search ? (
@@ -272,11 +300,9 @@ export function AgentsList() {
         ) : (
           <>
             <p>{t.agents.createFirstAgent}</p>
-            <Button variant="ghost"
-              onClick={() => nav("/")}
-              className="inline-flex items-center min-h-11 sm:min-h-0 mt-3 text-sm text-brand hover:underline"
-            >
+            <Button variant="link" onClick={() => nav("/")} className="mt-3">
               {t.agents.getStartedGuide}
+              <ArrowRightIcon />
             </Button>
           </>
         )
@@ -303,6 +329,16 @@ export function AgentsList() {
         allAgents={allAgents}
         customSkills={customSkills}
         modelCards={modelCards}
+      />
+      <ConfirmDialog
+        open={!!archivingAgent}
+        title="Отправить агента в архив?"
+        message={`Агент станет доступен только для чтения, новые сессии с ним создать нельзя. ${t.agents.confirmDelete}`}
+        confirmLabel={t.common.archive}
+        destructive
+        busy={archiveBusy}
+        onConfirm={() => void confirmArchive()}
+        onCancel={() => setArchivingAgent(null)}
       />
     </DataTable>
   );

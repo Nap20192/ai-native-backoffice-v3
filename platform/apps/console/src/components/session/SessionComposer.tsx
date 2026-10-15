@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useState, type CSSProperties, type FormEvent } from "react";
 import {
   CornerDownLeftIcon,
   LoaderCircleIcon,
@@ -31,6 +31,10 @@ export interface SessionComposerProps {
   sending: boolean;
 }
 
+/** Кнопки поля ввода 32px вместо 28px общего стиля: цель нажатия не меньше
+ *  32px (правило 13 DDC), высоту карточки она не меняет. */
+const COMPOSER_VARS = { "--composer-control-height": "32px" } as CSSProperties;
+
 /**
  * Managed-session composer with the same interaction shape as Backchat:
  * one compact card, a 48px writing area, a bottom tool row, and one primary
@@ -58,6 +62,7 @@ export function SessionComposer({
     <PromptInput
       accept="image/*"
       className="session-composer"
+      style={COMPOSER_VARS}
       globalDrop
       maxFiles={10}
       maxFileSize={25 * 1024 * 1024}
@@ -67,11 +72,11 @@ export function SessionComposer({
     >
       <ComposerAttachmentStrip disabled={sending || interrupting} />
       <PromptInputTextarea
-        aria-label="Message"
+        aria-label="Сообщение"
         className="session-composer-textarea"
         disabled={sending || interrupting}
         onChange={(event) => setDraft(event.currentTarget.value)}
-        placeholder="Send a message…"
+        placeholder="Напишите сообщение…"
         rows={1}
       />
       <PromptInputFooter className="session-composer-footer">
@@ -95,12 +100,12 @@ function ComposerAttachButton({ disabled }: { disabled: boolean }) {
 
   return (
     <PromptInputButton
-      aria-label="Add image"
+      aria-label="Добавить изображение"
       className="session-composer-control"
       disabled={disabled}
       onClick={() => attachments.openFileDialog()}
       size="icon-sm"
-      title="Add image"
+      title="Добавить изображение"
       type="button"
     >
       <PlusIcon aria-hidden="true" className="size-4" />
@@ -114,15 +119,18 @@ function ComposerAttachmentStrip({ disabled }: { disabled: boolean }) {
   if (attachments.files.length === 0) return null;
 
   return (
-    <div className="session-composer-attachments" aria-label="Attachments">
+    <div className="session-composer-attachments" aria-label="Вложения">
       {attachments.files.map((file) => (
         <div className="session-composer-attachment" key={file.id}>
           {file.url ? (
             <img alt="" aria-hidden="true" src={file.url} />
           ) : null}
-          <span title={file.filename}>{file.filename ?? "Image"}</span>
+          <span title={file.filename}>{file.filename ?? "Изображение"}</span>
+          {/* Видимая кнопка 20px, зона нажатия расширена до 32px (правило 13). */}
           <Button variant="ghost"
-            aria-label={`Remove ${file.filename ?? "image"}`}
+            className="relative after:absolute after:-inset-1.5 after:content-['']"
+            aria-label={`Убрать ${file.filename ?? "изображение"}`}
+            title="Убрать вложение"
             disabled={disabled}
             onClick={() => attachments.remove(file.id)}
             type="button"
@@ -152,10 +160,10 @@ function ComposerPrimaryAction({
   const canSend = draft.trim().length > 0 || attachments.files.length > 0;
   const stopIsPrimary = running && !canSend;
   const busy = sending || interrupting;
-  let label = running ? "Queue message" : "Send message";
-  if (stopIsPrimary) label = "Stop response";
-  if (sending) label = running ? "Queueing message" : "Sending message";
-  if (interrupting) label = "Stopping response";
+  let label = running ? "Поставить сообщение в очередь" : "Отправить сообщение";
+  if (stopIsPrimary) label = "Остановить ответ";
+  if (sending) label = running ? "Сообщение ставится в очередь" : "Сообщение отправляется";
+  if (interrupting) label = "Ответ останавливается";
 
   return (
     <PromptInputSubmit

@@ -1,16 +1,19 @@
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, TrashIcon } from "lucide-react";
+import { ArchiveIcon, SearchXIcon, TrashIcon, PlusIcon } from "lucide-react";
 import type { BetaManagedAgentsMemoryStore as MemoryStore } from "@anthropic-ai/sdk/resources/beta/memory-stores/memory-stores";
 
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type ColumnDef } from "../components/DataTable";
+import { Field } from "../components/Field";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
 import { Modal } from "../components/Modal";
+import { StatusPill } from "../components/Badge";
+import { formatDate } from "../components/knowledge-format";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
 import { useI18n } from "../i18n";
@@ -18,9 +21,9 @@ import { useI18n } from "../i18n";
 type StatusValue = "any" | "active" | "archived";
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
+  { value: "any", label: "Все" },
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
 ];
 
 export function MemoryStoresList() {
@@ -28,19 +31,24 @@ export function MemoryStoresList() {
   const nav = useNavigate();
   const { t } = useI18n();
 
-  // Server-driven filter state. Each piece flows into storesParams below
-  // → useApiQuery refetches on params change → the list reflects exactly
-  // what the server returned (no client-side faking).
+  // Фильтры на стороне сервера. Каждое значение попадает в storesParams →
+  // useApiQuery перезапрашивает список при смене параметров → список
+  // показывает ровно то, что вернул сервер (без подмены на клиенте).
   const [status, setStatus] = useState<StatusValue>("active");
   const [created, setCreated] = useState<{ after?: number; before?: number }>({});
-  // The Managed list contract has no text-search parameter. Search and the
-  // archived-only view are feed presentation filters over loaded pages.
+  // У списка Managed нет параметра текстового поиска. Поиск и режим «только
+  // архив» это фильтры представления поверх уже загруженных страниц.
   const [search, setSearch] = useState("");
 
   const [showCreate, setShowCreate] = useState(false);
   const [formName, setFormName] = useState("");
   const [formDesc, setFormDesc] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  // Удаление через ConfirmDialog (правило 11 DDC): window.confirm запрещён.
+  const [deleteTarget, setDeleteTarget] = useState<MemoryStore | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const storesParams = useMemo(
     () => ({
@@ -75,8 +83,15 @@ export function MemoryStoresList() {
     });
   }, [search, status, stores]);
 
+  const closeCreate = () => {
+    if (creating) return;
+    setShowCreate(false);
+    setFormError(null);
+  };
+
   const createStore = async () => {
     setFormError(null);
+    setCreating(true);
     try {
       await managedApi.memoryStores.create({
         name: formName,
@@ -88,20 +103,39 @@ export function MemoryStoresList() {
       refreshStores();
     } catch (e) {
       setFormError(errMsg(e));
+    } finally {
+      setCreating(false);
     }
   };
 
-  // TanStack column defs. Required columns (name) opt out of the Columns
-  // hide menu so the user can't end up with a table that has nothing
-  // identifying.
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await managedApi.memoryStores.delete(deleteTarget.id);
+      refreshStores();
+    } catch {
+      // Ошибку показывает общий обработчик запросов.
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  };
+
+  // Описание столбцов TanStack. Обязательный столбец (название) не входит в
+  // меню «Столбцы», чтобы нельзя было получить таблицу без идентификации строки.
   const columns = useMemo<ColumnDef<MemoryStore>[]>(
     () => [
       {
         id: "name",
         accessorKey: "name",
-        header: "Name",
+        header: "Название",
+        size: 240,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <span className="font-medium text-fg">{row.original.name}</span>
+          <span className="truncate font-medium text-ddc-heading" title={row.original.name}>
+            {row.original.name}
+          </span>
         ),
         enableHiding: false,
       },
@@ -109,8 +143,9 @@ export function MemoryStoresList() {
         id: "id",
         accessorKey: "id",
         header: "ID",
+        size: 300,
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
+          <span title={row.original.id} className="truncate font-mono text-xs text-ddc-text-muted">
             {row.original.id}
           </span>
         ),
@@ -118,42 +153,39 @@ export function MemoryStoresList() {
       {
         id: "status",
         accessorFn: (s) => (s.archived_at ? "archived" : "active"),
-        header: "Status",
-        cell: ({ row }) => (
-          <span
-            className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full ${
-              row.original.archived_at
-                ? "bg-bg-surface text-fg-subtle"
-                : "bg-success-subtle text-success"
-            }`}
-          >
-            {row.original.archived_at ? "archived" : "active"}
-          </span>
-        ),
+        header: "Статус",
+        size: 140,
+        cell: ({ row }) =>
+          row.original.archived_at ? (
+            <StatusPill status="idle" label="В архиве" />
+          ) : (
+            <StatusPill status="completed" label="Активно" />
+          ),
       },
       {
         id: "created",
         accessorFn: (s) => s.created_at,
-        header: "Created",
+        header: "Создано",
+        size: 140,
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-ddc-text-muted tabular-nums">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
     ],
-    [refreshStores],
+    [],
   );
 
-  // Active-filter chip display — kept undefined when matching the default
-  // so the chip reads "Status ▾" rather than "Status: All ▾".
+  // Подпись активного фильтра остаётся пустой, пока выбрано значение по
+  // умолчанию: чип читается «Статус ▾», а не «Статус: Все ▾».
   const statusDisplay =
     status === "any" ? undefined : STATUS_OPTIONS.find((o) => o.value === status)?.label;
 
   const filters = (
     <>
       <FilterChip
-        label="Status"
+        label="Статус"
         active={status !== "any"}
         display={statusDisplay}
         onClear={() => setStatus("any")}
@@ -168,7 +200,7 @@ export function MemoryStoresList() {
             options={STATUS_OPTIONS}
             value={status}
             onValueChange={(v) => setStatus(v as StatusValue)}
-            searchPlaceholder="Status..."
+            searchPlaceholder="Найти статус…"
           />
         </PopoverContent>
       </FilterChip>
@@ -177,16 +209,24 @@ export function MemoryStoresList() {
     </>
   );
 
-  const inputCls =
-    "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
+  const hasSearch = search.trim() !== "";
+  const filtered =
+    hasSearch ||
+    status !== "active" ||
+    created.after !== undefined ||
+    created.before !== undefined;
+
+  const openCreate = () => {
+    setShowCreate(true);
+    setFormError(null);
+  };
 
   return (
     <DataTable<MemoryStore>
+      title={t.nav.memoryStores}
+      subtitle="Память агентов: записи, которые сохраняются между сессиями и общие для нескольких агентов."
       createLabel={t.memory.newMemoryStore}
-      onCreate={() => {
-        setShowCreate(true);
-        setFormError(null);
-      }}
+      onCreate={openCreate}
       searchPlaceholder={t.memory.searchMemoryStores}
       searchValue={search}
       onSearchChange={setSearch}
@@ -197,107 +237,105 @@ export function MemoryStoresList() {
       onRowClick={(s) => nav(`/memory/${s.id}`)}
       rowActions={(store) => [
         {
-          label: "Archive",
+          label: t.common.archive,
           icon: <ArchiveIcon className="size-4" />,
           disabled: Boolean(store.archived_at),
           onSelect: async () => {
             try {
               await managedApi.memoryStores.archive(store.id);
               refreshStores();
-            } catch {}
+            } catch {
+              // Ошибку показывает общий обработчик запросов.
+            }
           },
         },
         {
-          label: "Delete",
+          label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
           destructive: true,
-          onSelect: async () => {
-            if (!confirm(`Delete memory store ${store.name}? This can't be undone.`)) return;
-            try {
-              await managedApi.memoryStores.delete(store.id);
-              refreshStores();
-            } catch {}
-          },
+          onSelect: () => setDeleteTarget(store),
         },
       ]}
       hasMore={hasMore}
       loadingMore={isLoadingMore}
       onLoadMore={loadMore}
-      emptyTitle={t.memory.noMemoryStoresYet}
+      emptyTitle={filtered ? t.memory.noMatchingMemoryStores : t.memory.noMemoryStoresYet}
       emptyKind="memory"
+      emptyIcon={filtered ? <SearchXIcon className="size-6" /> : undefined}
       emptyAction={
-        <Button
-          onClick={() => {
-            setShowCreate(true);
-            setFormError(null);
-          }}
-        >
-          {t.memory.newMemoryStore}
-        </Button>
+        filtered ? (
+          hasSearch ? (
+            <Button variant="outline" onClick={() => setSearch("")}>
+              Сбросить поиск
+            </Button>
+          ) : undefined
+        ) : (
+          <Button onClick={openCreate}><PlusIcon />{t.memory.newMemoryStore}</Button>
+        )
       }
-      emptySubtitle="Create a memory store to give your agents long-term context across sessions."
+      emptySubtitle={
+        filtered
+          ? "Измените поиск или фильтры."
+          : "Создайте хранилище памяти, чтобы агенты сохраняли контекст между сессиями."
+      }
       columns={columns}
     >
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={`Удалить хранилище «${deleteTarget?.name ?? ""}»?`}
+        message="Действие нельзя отменить."
+        confirmLabel="Удалить"
+        destructive
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
       <Modal
         open={showCreate}
-        onClose={() => {
-          setShowCreate(false);
-          setFormError(null);
-        }}
-        title="New Memory Store"
+        onClose={closeCreate}
+        closeDisabled={creating}
+        title="Новое хранилище памяти"
         footer={
           <>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowCreate(false);
-                setFormError(null);
-              }}
-            >
-              Cancel
+            <Button variant="ghost" onClick={closeCreate} disabled={creating}>
+              {t.common.cancel}
             </Button>
-            <Button onClick={createStore} disabled={!formName}>
-              Create
+            <Button onClick={createStore} disabled={!formName} loading={creating}>
+              {t.common.create}
             </Button>
           </>
         }
       >
-        <div className="space-y-3">
+        <div className="space-y-4">
           {formError && (
-            <div className="text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">
+            <div role="alert" className="callout-danger">
               {formError}
             </div>
           )}
-          <div>
-            <Label
-              htmlFor="memory-store-name"
-              className="text-sm text-fg-muted block mb-1"
-            >
-              Name
-            </Label>
+          <Field label={t.common.name}>
             <Input
               id="memory-store-name"
-              placeholder="e.g. User Preferences"
+              placeholder="Например, предпочтения пользователя"
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
-              className={inputCls}
             />
-          </div>
-          <div>
-            <Label
-              htmlFor="memory-store-description"
-              className="text-sm text-fg-muted block mb-1"
-            >
-              Description <span className="text-fg-subtle">(optional)</span>
-            </Label>
+          </Field>
+          <Field
+            label={
+              <>
+                {t.common.description}{" "}
+                <span className="font-normal text-ddc-text-muted">(необязательно)</span>
+              </>
+            }
+          >
             <Input
               id="memory-store-description"
-              placeholder="What's stored here?"
+              placeholder="Что здесь хранится?"
               value={formDesc}
               onChange={(e) => setFormDesc(e.target.value)}
-              className={inputCls}
             />
-          </div>
+          </Field>
         </div>
       </Modal>
     </DataTable>
@@ -307,5 +345,5 @@ export function MemoryStoresList() {
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "string") return e;
-  return "Unknown error";
+  return "Неизвестная ошибка";
 }

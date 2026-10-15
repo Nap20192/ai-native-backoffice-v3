@@ -1,25 +1,16 @@
 import type { ReactNode } from "react";
 
 /**
- * Standard page wrapper. Optional `header` slot renders before the
- * padded content so a sticky `PageHeader` can pin to the top of the
- * scroll context (`<SidebarInset>` → body scroll) without being offset
- * by Page's own padding.
+ * Стандартная обёртка страницы DDC (`.page`): поле 24px, от md 32px. Слот
+ * `header` стоит внутри поля, над содержимым: это `PageHeader` с заголовком,
+ * описанием и действиями на фоне страницы. Так заголовок у всех страниц
+ * записей стоит в одном месте, а колонка свойств начинается под ним.
  *
- * Padding is fixed (no responsive scaling) so the left edge stays
- * aligned with the SidebarTrigger icon glyph axis (12 px / `pl-3`) at
- * every viewport. PageHeader owns its own top padding (`pt-3`), so the
- * content area below adds only `pb-4` — no `pt-*` here or the
- * header→content gap would double up.
- *
- * Use for content/detail/list pages. Pages with custom chrome (chat-
- * style shells like SessionDetail) keep their own layout.
+ * Для страниц с собственной раскладкой (чат сессии) обёртка не нужна.
  */
 interface PageProps {
   children: ReactNode;
-  /** Sticky page header — usually a `<PageHeader />`. Rendered before
-   *  the padded content area so it can sit flush against the top of the
-   *  scroll context. */
+  /** Шапка страницы: `<PageHeader />`. */
   header?: ReactNode;
   className?: string;
   layout?: "single" | "rail";
@@ -34,7 +25,7 @@ export function Page({
   rail,
 }: PageProps) {
   return (
-    <>
+    <div className="console-detail-page">
       {header}
       <div
         className={`console-detail-layout console-detail-layout--${layout} ${className}`.trim()}
@@ -50,6 +41,6 @@ export function Page({
           </aside>
         )}
       </div>
-    </>
+    </div>
   );
 }

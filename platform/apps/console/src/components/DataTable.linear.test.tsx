@@ -136,19 +136,48 @@ describe("DataTable Linear list contract", () => {
     );
   });
 
-  it("draws each wireless row as one separated pill", () => {
+  it("draws flat 40px DDC rows separated by dividers instead of separated pills", () => {
     const styles = readFileSync(resolve(process.cwd(), "src/styles/console-list.css"), "utf8");
     const tokens = readFileSync(resolve(process.cwd(), "src/styles/console-tokens.css"), "utf8");
+    const ddc = readFileSync(resolve(process.cwd(), "src/styles/ddc-bridge.css"), "utf8");
 
+    // console-tokens.css keeps the original geometry; the DDC bridge overrides it.
     expect(tokens).toContain("--data-row-h: calc(var(--density-unit) * 36);");
-    expect(tokens).toContain("--data-head-body-gap: var(--console-gap-lg);");
+    expect(ddc).toContain("--data-row-h: 40px;");
+    expect(ddc).toContain("--table-head-h: 40px;");
+    expect(ddc).toContain("--data-row-gap: 0px;");
+    expect(ddc).toContain("--data-head-body-gap: 0px;");
+    expect(ddc).toContain("--data-row-bg: transparent;");
     expect(styles).toContain("border-spacing: 0 var(--data-row-gap)");
     expect(styles).toContain(
       "margin-top: calc(var(--data-head-body-gap) - var(--data-row-gap));",
     );
     expect(styles).toContain("background: var(--data-row-bg)");
-    expect(styles).toContain("border-radius: var(--console-radius-row) 0 0 var(--console-radius-row)");
-    expect(styles).toContain("border-radius: 0 var(--console-radius-row) var(--console-radius-row) 0");
+    expect(styles).toMatch(
+      /\.console-data-row td\s*\{[^}]*border-bottom: 1px solid var\(--border-chrome\);/,
+    );
+    expect(styles).not.toContain("border-radius: var(--console-radius-row) 0 0 var(--console-radius-row)");
+    expect(styles).not.toContain("border-radius: 0 var(--console-radius-row) var(--console-radius-row) 0");
+  });
+
+  it("styles column labels like the DDC table header: uppercase, 12px, semibold, muted", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/console-list.css"), "utf8");
+
+    expect(styles).toMatch(
+      /\.console-data-head\s*\{[^}]*font-weight: 600;[^}]*letter-spacing: 0\.05em;[^}]*text-transform: uppercase;/,
+    );
+  });
+
+  it("keeps toolbar controls in one 40px row and gives the filter chip a visible focus ring", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/console-list.css"), "utf8");
+    const ddc = readFileSync(resolve(process.cwd(), "src/styles/ddc-bridge.css"), "utf8");
+
+    expect(ddc).toContain("--control-h: 40px;");
+    expect(ddc).toContain("--chip-h: 40px;");
+    expect(styles).toMatch(
+      /\.console-list-toolbar button\s*\{[^}]*height: var\(--control-h\);/,
+    );
+    expect(styles).toContain(".console-filter-chip:has(> button:focus-visible)");
   });
 
   it("keeps list controls and column labels out of accidental text selection", () => {

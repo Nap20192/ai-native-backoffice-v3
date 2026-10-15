@@ -85,7 +85,7 @@ const LINE_NUMBER_CLASSES = cn(
   "before:w-8",
   "before:mr-4",
   "before:text-right",
-  "before:text-muted-foreground/50",
+  "before:text-ddc-text-muted/50",
   "before:font-mono",
   "before:select-none"
 );
@@ -309,7 +309,7 @@ export const CodeBlockContainer = ({
 }: HTMLAttributes<HTMLDivElement> & { language: string }) => (
   <div
     className={cn(
-      "group relative w-full overflow-hidden rounded-md border bg-background text-foreground",
+      "group relative w-full overflow-hidden rounded-xl border border-ddc-border bg-ddc-surface text-ddc-text",
       className
     )}
     data-language={language}
@@ -329,7 +329,7 @@ export const CodeBlockHeader = ({
 }: HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex items-center justify-between border-b bg-muted/80 px-3 py-2 text-muted-foreground text-xs",
+      "flex items-center justify-between border-b border-ddc-divider bg-ddc-surface-muted px-3 py-2 text-xs text-ddc-text-muted",
       className
     )}
     {...props}
@@ -469,7 +469,7 @@ export const CodeBlockCopyButton = ({
 
   const copyToClipboard = useCallback(async () => {
     if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {
-      onError?.(new Error("Clipboard API not available"));
+      onError?.(new Error("Буфер обмена недоступен"));
       return;
     }
 
@@ -499,6 +499,8 @@ export const CodeBlockCopyButton = ({
 
   return (
     <Button
+      aria-label={isCopied ? "Скопировано" : "Копировать"}
+      title={isCopied ? "Скопировано" : "Копировать"}
       className={cn("shrink-0", className)}
       onClick={copyToClipboard}
       size="icon"

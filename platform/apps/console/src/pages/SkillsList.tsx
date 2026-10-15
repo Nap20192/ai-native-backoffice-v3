@@ -2,7 +2,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMemo, useRef, useState } from "react";
-import { TrashIcon } from "lucide-react";
+import { PlusIcon, SearchXIcon, TrashIcon, UploadIcon } from "lucide-react";
 import type { SkillListResponse } from "@anthropic-ai/sdk/resources/beta/skills/skills";
 import type {
   VersionListResponse,
@@ -12,12 +12,22 @@ import { useApi } from "../lib/api";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { extractManagedSkillFiles } from "../lib/skill-upload";
+import { useI18n } from "../i18n";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
+import { Field } from "../components/Field";
+import { Skeleton } from "../components/Skeleton";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip } from "../components/FilterChip";
+import {
+  formatBytes,
+  formatDate,
+  formatDateTime,
+  formatSkillVersion,
+} from "../components/knowledge-format";
 import {
   InstallFromUrlModal,
   SkillUpdatesModal,
@@ -25,7 +35,7 @@ import {
   useSkillSources,
 } from "../components/SkillSources";
 
-/* ---------- types ---------- */
+/* ---------- типы ---------- */
 
 type Skill = SkillListResponse & { name?: string; description?: string };
 
@@ -44,26 +54,19 @@ type VersionDetail = VersionRetrieveResponse & {
 type SourceValue = "any" | "anthropic" | "custom";
 
 const SOURCE_OPTIONS: { value: SourceValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "custom", label: "Custom" },
+  { value: "any", label: "Все" },
+  { value: "anthropic", label: "Встроенные" },
+  { value: "custom", label: "Пользовательские" },
 ];
 
-/* ---------- constants ---------- */
+/* ---------- константы ---------- */
 
-// Mirrors the default UPLOAD_MAX_BYTES on the server (apps/main/src/quotas.ts).
-// Self-hosters who raised the server limit will lose this client-side
-// pre-rejection but the server will still enforce; that's an acceptable
-// degradation for an unusual config.
+// Совпадает с UPLOAD_MAX_BYTES по умолчанию на сервере (apps/main/src/quotas.ts).
+// Если сервер настроен на больший лимит, клиентская проверка отсечёт лишнее,
+// а сервер всё равно проверит сам. Для необычной настройки это допустимо.
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const SKILLS_API = "/v1/skills";
 const SKILLS_PREVIEW_API = "/v1/oma/skills";
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function isZipFile(file: File): boolean {
   const name = file.name.toLowerCase();
@@ -74,24 +77,32 @@ function isZipFile(file: File): boolean {
   );
 }
 
-/* ---------- component ---------- */
+/** Текст ошибки загрузки. Разбор архива уже отдаёт русские сообщения. */
+function uploadErrorText(e: unknown): string {
+  const message = e instanceof Error ? e.message : "";
+  return message || "Не удалось загрузить";
+}
+
+/* ---------- страница ---------- */
 
 export function SkillsList() {
   const { api } = useApi();
   const managedApi = useManagedApi();
+  const { t } = useI18n();
 
-  /* Server-driven filter state. `source` flows into skillsParams below
-   * → useApiQuery reruns when params change → list reflects exactly
-   * what the server returned (no client-side split on s.source). */
+  /* Фильтр на стороне сервера. `source` попадает в skillsParams → запрос
+   * перезапускается при смене параметров → список показывает ровно то, что
+   * вернул сервер (без разбиения на клиенте по s.source). */
   const [source, setSource] = useState<SourceValue>("any");
+  const [search, setSearch] = useState("");
   const skillsParams = useMemo(
     () => (source !== "any" ? { source } : {}),
     [source],
   );
 
-  /* list state — TQ owns the fetch lifecycle. `load()` becomes
-   * `refetch`, which kicks off a background refetch that leaves
-   * the prior items on screen until the new payload lands. */
+  /* Состояние списка ведёт TanStack Query. `load()` это `refetch`: он
+   * обновляет данные в фоне и оставляет прежние строки на экране, пока не
+   * придёт новый ответ. */
   const {
     items: skills,
     isLoading: loading,
@@ -100,7 +111,17 @@ export function SkillsList() {
     loadMore,
     refresh: refetchSkills,
   } = useInfiniteApiQuery<Skill>(SKILLS_API, { limit: 20, params: skillsParams });
-  /* skills installed from a URL (Agent Skills discovery index) */
+  /* Поиск по загруженным навыкам: название, имя, описание и id. */
+  const visibleSkills = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    if (!needle) return skills;
+    return skills.filter((skill) =>
+      `${skill.display_title ?? ""}\n${skill.name ?? ""}\n${skill.description ?? ""}\n${skill.id}`
+        .toLocaleLowerCase()
+        .includes(needle),
+    );
+  }, [search, skills]);
+  /* навыки, установленные по ссылке (индекс обнаружения Agent Skills) */
   const skillSources = useSkillSources();
   const [showInstallUrl, setShowInstallUrl] = useState(false);
   const [installUrl, setInstallUrl] = useState("");
@@ -111,7 +132,7 @@ export function SkillsList() {
     void skillSources.refresh();
   };
 
-  /* create dialog */
+  /* окно создания */
   const [showCreate, setShowCreate] = useState(false);
   const [createTitle, setCreateTitle] = useState("");
   const [createZip, setCreateZip] = useState<File | null>(null);
@@ -120,13 +141,13 @@ export function SkillsList() {
   const [createError, setCreateError] = useState("");
   const createInputRef = useRef<HTMLInputElement>(null);
 
-  /* detail dialog */
+  /* окно навыка */
   const [detail, setDetail] = useState<Skill | null>(null);
   const [detailFiles, setDetailFiles] = useState<SkillFile[]>([]);
   const [detailVersions, setDetailVersions] = useState<VersionSummary[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  /* new version sub-form inside detail */
+  /* форма новой версии внутри окна навыка */
   const [showNewVersion, setShowNewVersion] = useState(false);
   const [nvZip, setNvZip] = useState<File | null>(null);
   const [nvUploading, setNvUploading] = useState(false);
@@ -134,9 +155,11 @@ export function SkillsList() {
   const [nvError, setNvError] = useState("");
   const nvInputRef = useRef<HTMLInputElement>(null);
 
-  /* ---- loaders ---- */
+  /* подтверждение удаления: из окна навыка или из меню строки */
+  const [deleteTarget, setDeleteTarget] = useState<{ skill: Skill; fromDetail: boolean } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  /* ---- create ---- */
+  /* ---- создание ---- */
 
   const resetCreate = () => {
     setCreateTitle("");
@@ -146,16 +169,16 @@ export function SkillsList() {
     if (createInputRef.current) createInputRef.current.value = "";
   };
 
-  // Validate file synchronously and set state. Returns true on success
-  // so callers can know whether to clear the surrounding drop-zone state.
+  // Проверяем файл сразу и записываем состояние. Возвращает true при успехе,
+  // чтобы вызывающий знал, нужно ли сбрасывать состояние зоны перетаскивания.
   const acceptCreateZip = (file: File): boolean => {
     if (!isZipFile(file)) {
-      setCreateError(`"${file.name}" is not a .zip file`);
+      setCreateError(`«${file.name}» не является архивом .zip`);
       return false;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       setCreateError(
-        `Zip is ${formatBytes(file.size)}, exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} upload limit`,
+        `Архив весит ${formatBytes(file.size)}, лимит загрузки ${formatBytes(MAX_UPLOAD_BYTES)}`,
       );
       return false;
     }
@@ -177,14 +200,14 @@ export function SkillsList() {
       setShowCreate(false);
       resetCreate();
       load();
-    } catch (e: any) {
-      setCreateError(e?.message || "Upload failed");
+    } catch (e) {
+      setCreateError(uploadErrorText(e));
     } finally {
       setCreateUploading(false);
     }
   };
 
-  /* ---- detail ---- */
+  /* ---- окно навыка ---- */
 
   const openDetail = async (skill: Skill) => {
     setDetail(skill);
@@ -193,7 +216,7 @@ export function SkillsList() {
     setNvError("");
     setNvZip(null);
     try {
-      if (!skill.latest_version) throw new Error("Skill has no versions");
+      if (!skill.latest_version) throw new Error("У навыка нет версий");
       const [versionDetail, versionsRes, preview] = await Promise.all([
         managedApi.skills.versions.retrieve(skill.latest_version, {
           skill_id: skill.id,
@@ -226,7 +249,7 @@ export function SkillsList() {
     setNvError("");
   };
 
-  /* ---- new version ---- */
+  /* ---- новая версия ---- */
 
   const startNewVersion = () => {
     setNvError("");
@@ -238,12 +261,12 @@ export function SkillsList() {
 
   const acceptNvZip = (file: File): boolean => {
     if (!isZipFile(file)) {
-      setNvError(`"${file.name}" is not a .zip file`);
+      setNvError(`«${file.name}» не является архивом .zip`);
       return false;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       setNvError(
-        `Zip is ${formatBytes(file.size)}, exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} upload limit`,
+        `Архив весит ${formatBytes(file.size)}, лимит загрузки ${formatBytes(MAX_UPLOAD_BYTES)}`,
       );
       return false;
     }
@@ -261,119 +284,131 @@ export function SkillsList() {
       await managedApi.skills.versions.create(detail.id, { files });
       setShowNewVersion(false);
       setNvZip(null);
-      /* refresh both the list and this detail */
+      /* обновляем и список, и это окно */
       load();
       const refreshed = await managedApi.skills.retrieve(detail.id);
       openDetail(refreshed);
-    } catch (e: any) {
-      setNvError(e?.message || "Upload failed");
+    } catch (e) {
+      setNvError(uploadErrorText(e));
     } finally {
       setNvUploading(false);
     }
   };
 
-  /* ---- delete ---- */
+  /* ---- удаление ---- */
 
-  const deleteSkill = async () => {
-    if (!detail) return;
-    if (!confirm("Delete this skill? This cannot be undone.")) return;
+  // Единая точка удаления: подтверждение через ConfirmDialog (правило 11 DDC).
+  // Из окна навыка после удаления окно закрывается, из меню строки закрывать нечего.
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await managedApi.skills.delete(detail.id);
-      closeDetail();
+      await managedApi.skills.delete(deleteTarget.skill.id);
+      if (deleteTarget.fromDetail) closeDetail();
       load();
-    } catch {}
+    } catch {
+      // Ошибку показывает общий обработчик запросов.
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
-  // Row-level delete invoked from the per-row actions menu. Separate from
-  // the modal's deleteSkill because the row's confirm copy uses the
-  // skill's own title and there's no detail dialog to close after.
-  const deleteSkillById = async (skill: Skill) => {
-    const name = skill.display_title || skill.name;
-    if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
-    try {
-      await managedApi.skills.delete(skill.id);
-      load();
-    } catch {}
-  };
+  const deleteName = deleteTarget
+    ? deleteTarget.skill.display_title || deleteTarget.skill.name || deleteTarget.skill.id
+    : "";
 
-  /* ---- helpers ---- */
+  // Версия в API это метка времени создания (16 цифр). Людям версии нумеруются
+  // по порядку создания: v1 самая ранняя.
+  const versionOrdinals = useMemo(() => {
+    const byAge = [...detailVersions].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return new Map(byAge.map((v, index) => [v.version, index + 1]));
+  }, [detailVersions]);
 
-  const inputCls =
-    "w-full border border-border rounded-lg px-3 py-2 min-h-11 sm:min-h-0 text-sm outline-none focus:border-border-strong transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] bg-bg text-fg";
+  /* ---- колонки ---- */
 
-  // TanStack column defs. Single table for both Anthropic built-in + custom
-  // skills; the Source column lets the user tell them apart at a glance.
-  // No click sort / no per-column filter — Source filter chip drives the
-  // server `source` param instead.
+  // Описание столбцов TanStack. Одна таблица и для встроенных навыков
+  // Anthropic, и для пользовательских: столбец «Источник» их различает.
+  // Сортировки по клику и фильтров по столбцам нет: параметр `source` на
+  // сервере задаёт чип «Источник».
   const columns = useMemo<ColumnDef<Skill>[]>(
     () => [
       {
         id: "name",
         accessorKey: "display_title",
-        header: "Name",
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <div className="font-medium text-fg truncate">
-              {row.original.display_title || row.original.name || row.original.id}
+        header: "Название",
+        size: 240,
+        meta: { grow: true },
+        cell: ({ row }) => {
+          const title = row.original.display_title || row.original.name || row.original.id;
+          const subtitle =
+            row.original.source === "anthropic"
+              ? row.original.name || row.original.id
+              : row.original.id;
+          return (
+            <div className="min-w-0">
+              <div className="truncate font-medium text-ddc-heading" title={title}>
+                {title}
+              </div>
+              <div className="truncate font-mono text-xs text-ddc-text-muted" title={subtitle}>
+                {subtitle}
+              </div>
             </div>
-            <div className="text-xs text-fg-subtle font-mono truncate">
-              {row.original.source === "anthropic"
-                ? row.original.name || row.original.id
-                : row.original.id}
-            </div>
-          </div>
-        ),
+          );
+        },
         enableHiding: false,
       },
       {
         id: "description",
         accessorKey: "description",
-        header: "Description",
+        header: "Описание",
+        size: 320,
+        meta: { priority: 5 },
         cell: ({ row }) => (
-          <span className="text-fg-muted">{row.original.description || "—"}</span>
+          <span className="block truncate text-ddc-text-muted" title={row.original.description}>
+            {row.original.description || "–"}
+          </span>
         ),
       },
       {
         id: "source",
         accessorKey: "source",
-        header: "Source",
+        header: "Источник",
+        size: 180,
         cell: ({ row }) => {
           const tracked = skillSources.locks.get(row.original.id);
           return row.original.source === "anthropic" ? (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-warning-subtle text-warning">
-              built-in
-            </span>
+            <span className="chip tone-info">Встроенный</span>
           ) : tracked ? (
-            <span
-              className="inline-flex max-w-48 items-center px-2 py-0.5 rounded-full text-xs font-medium bg-bg-surface text-fg-muted"
-              title={tracked.source_url}
-            >
+            <span className="chip tone-neutral max-w-48" title={tracked.source_url}>
               <span className="truncate">{sourceLabel(tracked.source_url)}</span>
             </span>
           ) : (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-bg-surface text-fg-muted">
-              custom
-            </span>
+            <span className="chip tone-neutral">Пользовательский</span>
           );
         },
       },
       {
         id: "version",
         accessorFn: (s) => s.latest_version,
-        header: "Version",
+        header: "Версия",
+        size: 150,
+        meta: { priority: 3 },
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {row.original.latest_version ? `v${row.original.latest_version}` : "—"}
+          <span className="text-ddc-text-muted tabular-nums">
+            {formatSkillVersion(row.original.latest_version)}
           </span>
         ),
       },
       {
         id: "created",
         accessorFn: (s) => s.created_at,
-        header: "Created",
+        header: t.common.created,
+        size: 120,
+        meta: { priority: 1 },
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-ddc-text-muted tabular-nums">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
@@ -381,15 +416,15 @@ export function SkillsList() {
     [skillSources.locks],
   );
 
-  // Active-filter chip displays — kept undefined when matching the default
-  // so the chip reads "Source ▾" rather than "Source: All ▾". The clear-X
-  // only renders when the chip is in non-default state.
+  // Подпись активного фильтра остаётся пустой, пока выбрано значение по
+  // умолчанию: чип читается «Источник ▾», а не «Источник: Все ▾». Крестик
+  // сброса виден, только когда фильтр включён.
   const sourceDisplay =
     source === "any" ? undefined : SOURCE_OPTIONS.find((o) => o.value === source)?.label;
 
   const filters = (
     <FilterChip
-      label="Source"
+      label="Источник"
       active={source !== "any"}
       display={sourceDisplay}
       onClear={() => setSource("any")}
@@ -404,7 +439,7 @@ export function SkillsList() {
           options={SOURCE_OPTIONS}
           value={source}
           onValueChange={(v) => setSource(v as SourceValue)}
-          searchPlaceholder="Source..."
+          searchPlaceholder="Найти источник…"
         />
       </PopoverContent>
     </FilterChip>
@@ -414,19 +449,25 @@ export function SkillsList() {
     void openDetail(s);
   };
 
-  /* ---- render ---- */
+  const filtered = source !== "any" || search.trim() !== "";
+
+  /* ---- разметка ---- */
 
   return (
     <DataTable<Skill>
-      subtitle="Manage pre-built and custom skills for your agents."
-      createLabel="+ New skill"
+      title={t.nav.skills}
+      subtitle="Готовые и пользовательские навыки для ваших агентов."
+      createLabel={t.skills.newSkill}
       onCreate={() => setShowCreate(true)}
+      searchPlaceholder={t.skills.searchSkills}
+      searchValue={search}
+      onSearchChange={setSearch}
       headerActions={
         skillSources.available ? (
           <>
             {skillSources.locks.size > 0 && (
               <Button variant="outline" onClick={() => setUpdatesFor("all")}>
-                Check for updates
+                Проверить обновления
               </Button>
             )}
             <Button
@@ -436,13 +477,13 @@ export function SkillsList() {
                 setShowInstallUrl(true);
               }}
             >
-              Install from URL
+              Установить по ссылке
             </Button>
           </>
         ) : undefined
       }
       filters={filters}
-      data={skills}
+      data={visibleSkills}
       loading={loading}
       hasMore={hasMore}
       loadingMore={isLoadingMore}
@@ -451,26 +492,43 @@ export function SkillsList() {
       onRowClick={handleRowClick}
       rowActions={(skill) => [
         {
-          label: "Delete",
+          label: "Удалить",
           icon: <TrashIcon className="size-4" />,
           destructive: true,
           disabled: skill.source === "anthropic",
-          onSelect: () => void deleteSkillById(skill),
+          onSelect: () => setDeleteTarget({ skill, fromDetail: false }),
         },
       ]}
       columns={columns}
-      emptyTitle="No skills yet"
+      emptyTitle={filtered ? t.skills.noMatchingSkills : t.skills.noSkillsYet}
       emptyKind="skill"
-      emptySubtitle="Create a skill to give your agents domain expertise."
+      emptyIcon={filtered ? <SearchXIcon className="size-6" /> : undefined}
+      emptySubtitle={
+        filtered
+          ? "Измените фильтр по источнику или поисковый запрос."
+          : "Создайте навык, чтобы дать агентам знания в нужной области."
+      }
       emptyAction={
-        <div className="flex gap-2 justify-center">
-          <Button onClick={() => setShowCreate(true)}>+ New skill</Button>
-          {skillSources.available && (
-            <Button variant="outline" onClick={() => setShowInstallUrl(true)}>
-              Install from URL
-            </Button>
-          )}
-        </div>
+        filtered ? (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSource("any");
+              setSearch("");
+            }}
+          >
+            Сбросить фильтр
+          </Button>
+        ) : (
+          <>
+            <Button onClick={() => setShowCreate(true)}><PlusIcon />{t.skills.newSkill}</Button>
+            {skillSources.available && (
+              <Button variant="outline" onClick={() => setShowInstallUrl(true)}>
+                Установить по ссылке
+              </Button>
+            )}
+          </>
+        )
       }
     >
       <InstallFromUrlModal
@@ -494,7 +552,18 @@ export function SkillsList() {
         }}
       />
 
-      {/* ===== Create Dialog ===== */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={`Удалить навык «${deleteName}»?`}
+        message="Действие нельзя отменить."
+        confirmLabel="Удалить"
+        destructive
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      {/* ===== Окно создания ===== */}
       <Modal
         open={showCreate}
         onClose={() => {
@@ -502,9 +571,10 @@ export function SkillsList() {
           setShowCreate(false);
           resetCreate();
         }}
-        title="Upload Custom Skill"
-        subtitle="Upload an Anthropic-style skill folder packaged as a .zip."
-        maxWidth="max-w-xl"
+        closeDisabled={createUploading}
+        title="Загрузка пользовательского навыка"
+        subtitle="Загрузите папку навыка в формате Anthropic, упакованную в .zip."
+        maxWidth="max-w-lg"
         footer={
           <>
             <Button
@@ -515,27 +585,26 @@ export function SkillsList() {
                 resetCreate();
               }}
             >
-              Cancel
+              Отмена
             </Button>
             <Button
               onClick={doCreate}
               disabled={!createZip || createUploading}
               loading={createUploading}
-              loadingLabel="Uploading..."
             >
-              Upload
+              Загрузить
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           {createError && (
-            <div className="text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">
+            <div role="alert" className="callout-danger">
               {createError}
             </div>
           )}
 
-          {/* Drop zone */}
+          {/* Зона перетаскивания */}
           <DropZone
             file={createZip}
             dragOver={createDragOver}
@@ -549,164 +618,154 @@ export function SkillsList() {
             disabled={createUploading}
           />
 
-          {/* Display Title (optional override) */}
-          <div>
-            <Label className="text-sm text-fg-muted block mb-1">
-              Display Title{" "}
-              <span className="text-fg-subtle">
-                (optional — falls back to SKILL.md <code>name</code>)
-              </span>
-            </Label>
+          {/* Отображаемое название (необязательная замена) */}
+          <Field
+            label="Отображаемое название (необязательно)"
+            hint={
+              <>
+                Если оставить пустым, возьмём <code>name</code> из SKILL.md.
+              </>
+            }
+          >
             <Input
               value={createTitle}
               onChange={(e) => setCreateTitle(e.target.value)}
-              className={inputCls}
-              placeholder="Leave blank to use the skill's own name"
+              placeholder="Оставьте пустым, чтобы взять название из самого навыка"
               disabled={createUploading}
             />
-          </div>
+          </Field>
 
-          <p className="text-xs text-fg-subtle">
-            The zip must contain <code>SKILL.md</code> at the root, or one
-            top-level folder containing it (the common case when you
-            <code> zip -r my-skill.zip my-skill</code>).
+          <p className="text-xs text-ddc-text-muted">
+            В архиве должен лежать <code>SKILL.md</code> в корне или одна папка верхнего
+            уровня с этим файлом. Так получается после команды{" "}
+            <code>zip -r my-skill.zip my-skill</code>.
           </p>
         </div>
       </Modal>
 
-      {/* ===== Detail Dialog ===== */}
+      {/* ===== Окно навыка ===== */}
       <Modal
         open={!!detail}
         onClose={closeDetail}
         title={detail?.display_title || detail?.name || detail?.id || ""}
-        subtitle={detail ? `${detail.id} · v${detail.latest_version}` : ""}
+        subtitle={detail ? `${detail.id} · ${formatSkillVersion(detail.latest_version)}` : ""}
         maxWidth="max-w-2xl"
         footer={
-          <Button variant="ghost" onClick={closeDetail}>
-            Close
-          </Button>
+          <>
+            <Button
+              variant="danger-ghost"
+              className="sm:mr-auto"
+              disabled={!detail || detailLoading}
+              onClick={() => detail && setDeleteTarget({ skill: detail, fromDetail: true })}
+            >
+              <TrashIcon />
+              Удалить
+            </Button>
+            <Button variant="ghost" onClick={closeDetail}>
+              Закрыть
+            </Button>
+          </>
         }
       >
         {detailLoading ? (
-          <div className="text-fg-subtle text-sm py-8 text-center">
-            Loading...
+          <div aria-busy="true" className="space-y-4">
+            <span className="sr-only">Загрузка…</span>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+            </div>
+            <Skeleton className="h-16" />
+            <Skeleton className="h-24" />
           </div>
         ) : detail ? (
           <div className="space-y-5">
-            {/* Actions */}
-            <div className="flex justify-end">
-              <Button variant="destructive" size="sm" onClick={deleteSkill}>
-                Delete
-              </Button>
-            </div>
+            {/* Свойства */}
+            <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="min-w-0">
+                <dt className="label">Отображаемое название</dt>
+                <dd className="text-sm font-medium break-words text-ddc-heading">
+                  {detail.display_title || "–"}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="label">Название (name)</dt>
+                <dd className="font-mono text-sm break-words text-ddc-text">{detail.name || "–"}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="label">Описание</dt>
+                <dd className="text-sm break-words text-ddc-text-muted">{detail.description || "–"}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="label">Создан</dt>
+                <dd className="text-sm text-ddc-text-muted tabular-nums">
+                  {formatDateTime(detail.created_at)}
+                </dd>
+              </div>
+            </dl>
 
-            {/* Metadata */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-xs text-fg-muted block mb-0.5">
-                  Display Title
-                </Label>
-                <p className="text-sm font-medium">
-                  {detail.display_title || "—"}
-                </p>
-              </div>
-              <div>
-                <Label className="text-xs text-fg-muted block mb-0.5">
-                  Name
-                </Label>
-                <p className="text-sm font-mono">
-                  {detail.name || "—"}
-                </p>
-              </div>
-              <div>
-                <Label className="text-xs text-fg-muted block mb-0.5">
-                  Description
-                </Label>
-                <p className="text-sm text-fg-muted">
-                  {detail.description || "—"}
-                </p>
-              </div>
-              <div>
-                <Label className="text-xs text-fg-muted block mb-0.5">
-                  Created
-                </Label>
-                <p className="text-sm text-fg-muted">
-                  {new Date(detail.created_at).toLocaleString()}
-                </p>
-              </div>
-            </div>
-
-            {/* Source (installed from a URL) */}
+            {/* Источник (установлен по ссылке) */}
             {skillSources.locks.get(detail.id) && (() => {
               const tracked = skillSources.locks.get(detail.id)!;
               return (
-                <div className="border border-border rounded-lg p-3 space-y-1">
+                <div className="space-y-1 rounded-xl border border-ddc-border p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <Label className="text-xs text-fg-muted">Installed from</Label>
-                    <Button size="sm" variant="outline" onClick={() => setUpdatesFor([detail.id])}>
-                      Check for updates
+                    <Label className="text-xs leading-4 font-medium text-ddc-label">Установлен из</Label>
+                    <Button size="xs" variant="outline" onClick={() => setUpdatesFor([detail.id])}>
+                      Проверить обновления
                     </Button>
                   </div>
-                  <p className="text-sm font-mono break-all">{tracked.source_url}</p>
-                  <p className="text-xs text-fg-subtle">
-                    <span className="font-mono">{tracked.name}</span> · digest{" "}
+                  <p className="font-mono text-sm break-all text-ddc-text">{tracked.source_url}</p>
+                  <p className="text-xs text-ddc-text-muted">
+                    <span className="font-mono">{tracked.name}</span> · дайджест{" "}
                     <span className="font-mono" title={tracked.digest}>
                       {tracked.digest.replace(/^sha256:/, "").slice(0, 12)}
                     </span>{" "}
-                    · updated {new Date(tracked.updated_at).toLocaleString()}
+                    · обновлён {formatDateTime(tracked.updated_at)}
                   </p>
                 </div>
               );
             })()}
 
-            {/* Usage hint */}
+            {/* Подсказка по использованию */}
             <div>
-              <Label className="text-xs text-fg-muted block mb-1">
-                Usage in Agent Config
-              </Label>
-              <pre className="bg-bg-surface border border-border rounded-lg p-3 text-xs font-mono text-fg-muted">
+              <div className="label">Как подключить в настройках агента</div>
+              <pre className="overflow-x-auto rounded-xl border border-ddc-border bg-ddc-surface-sunken p-3 font-mono text-xs text-ddc-text-muted">
 {`"skills": [{ "type": "custom", "skill_id": "${detail.id}", "version": "latest" }]`}
               </pre>
             </div>
 
-            {/* Files */}
+            {/* Файлы */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-xs text-fg-muted">
-                  Files (v{detail.latest_version})
-                </Label>
-                <Button variant="ghost"
-                  onClick={startNewVersion}
-                  className="inline-flex items-center min-h-11 sm:min-h-0 px-2 text-xs text-fg-muted hover:text-fg transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
-                >
-                  + New version
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="label mb-0">Файлы ({formatSkillVersion(detail.latest_version)})</div>
+                <Button variant="ghost" size="xs" onClick={startNewVersion}>
+                  <PlusIcon />
+                  Новая версия
                 </Button>
               </div>
               {detailFiles.length === 0 ? (
-                <p className="text-xs text-fg-subtle">
-                  No files in this version.
-                </p>
+                <p className="text-xs text-ddc-text-muted">В этой версии нет файлов.</p>
               ) : (
                 <div className="space-y-2">
                   {detailFiles.map((f, i) => (
                     <div
                       key={i}
-                      className="border border-border rounded-lg overflow-hidden"
+                      className="overflow-hidden rounded-xl border border-ddc-border"
                     >
-                      <div className="bg-bg-surface px-3 py-1.5 border-b border-border text-xs font-mono text-fg-muted flex items-center justify-between">
-                        <span className="truncate">{f.filename}</span>
-                        {f.encoding === "base64" && (
-                          <span className="ml-2 text-xs uppercase tracking-wider text-fg-subtle">
-                            binary
-                          </span>
-                        )}
+                      <div className="flex items-center justify-between gap-2 border-b border-ddc-divider bg-ddc-surface-muted px-3 py-1.5 font-mono text-xs text-ddc-text-muted">
+                        <span className="min-w-0 truncate" title={f.filename}>
+                          {f.filename}
+                        </span>
+                        {f.encoding === "base64" && <span className="chip tone-neutral flex-none">двоичный</span>}
                       </div>
                       {f.encoding === "base64" ? (
-                        <p className="px-3 py-2 text-xs italic text-fg-subtle">
-                          Binary file — not previewed.
+                        <p className="px-3 py-2 text-xs text-ddc-text-muted italic">
+                          Двоичный файл, предпросмотр недоступен.
                         </p>
                       ) : (
-                        <pre className="px-3 py-2 text-xs font-mono text-fg-muted whitespace-pre-wrap max-h-60 overflow-y-auto leading-relaxed">
+                        <pre className="max-h-60 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-ddc-text-muted">
                           {f.content}
                         </pre>
                       )}
@@ -716,14 +775,12 @@ export function SkillsList() {
               )}
             </div>
 
-            {/* New Version sub-form */}
+            {/* Форма новой версии */}
             {showNewVersion && (
-              <div className="border border-border-strong rounded-lg p-4 bg-bg-surface/50 space-y-3">
-                <h3 className="text-sm font-medium text-fg">
-                  Upload New Version
-                </h3>
+              <div className="space-y-3 rounded-xl border border-ddc-border-strong bg-ddc-surface-muted p-4">
+                <h3 className="text-sm font-semibold text-ddc-heading">Загрузка новой версии</h3>
                 {nvError && (
-                  <div className="text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">
+                  <div role="alert" className="callout-danger">
                     {nvError}
                   </div>
                 )}
@@ -739,7 +796,7 @@ export function SkillsList() {
                   inputRef={nvInputRef}
                   disabled={nvUploading}
                 />
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
                   <Button
                     variant="ghost"
                     disabled={nvUploading}
@@ -749,54 +806,50 @@ export function SkillsList() {
                       setNvError("");
                     }}
                   >
-                    Cancel
+                    Отмена
                   </Button>
                   <Button
                     onClick={doNewVersion}
                     disabled={!nvZip || nvUploading}
                     loading={nvUploading}
-                    loadingLabel="Uploading..."
                   >
-                    Publish Version
+                    Опубликовать версию
                   </Button>
                 </div>
               </div>
             )}
 
-            {/* Versions list */}
+            {/* История версий */}
             <div>
-              <Label className="text-xs text-fg-muted block mb-2">
-                Version History
-              </Label>
+              <div className="label mb-2">История версий</div>
               {detailVersions.length === 0 ? (
-                <p className="text-xs text-fg-subtle">
-                  No version history available.
-                </p>
+                <p className="text-xs text-ddc-text-muted">История версий недоступна.</p>
               ) : (
-                <div className="border border-border rounded-lg overflow-x-auto">
+                <div className="overflow-x-auto rounded-xl border border-ddc-border">
                   <Table className="w-full text-sm">
                     <TableHeader>
-                      <TableRow className="bg-bg-surface/60 text-fg-muted text-xs uppercase tracking-wider">
-                        <TableHead className="text-left px-4 py-2">Version</TableHead>
-                        <TableHead className="text-left px-4 py-2">Created</TableHead>
+                      <TableRow variant="wireless">
+                        <TableHead className="px-4 py-2 text-left text-xs font-semibold tracking-wider text-ddc-text-muted uppercase">
+                          Версия
+                        </TableHead>
+                        <TableHead className="px-4 py-2 text-left text-xs font-semibold tracking-wider text-ddc-text-muted uppercase">
+                          {t.common.created}
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {detailVersions.map((v) => (
-                        <TableRow
-                          key={v.version}
-                          className="border-t border-border"
-                        >
-                          <TableCell className="px-4 py-2 font-mono text-xs">
-                            v{v.version}
+                        <TableRow key={v.version}>
+                          <TableCell className="px-4 py-2 text-xs tabular-nums">
+                            {versionOrdinals.get(v.version)
+                              ? `v${versionOrdinals.get(v.version)}`
+                              : formatSkillVersion(v.version)}
                             {v.version === detail.latest_version && (
-                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-success-subtle text-success">
-                                latest
-                              </span>
+                              <span className="chip tone-success ml-2">Последняя</span>
                             )}
                           </TableCell>
-                          <TableCell className="px-4 py-2 text-fg-muted text-xs">
-                            {new Date(v.created_at).toLocaleString()}
+                          <TableCell className="px-4 py-2 text-xs text-ddc-text-muted tabular-nums">
+                            {formatDateTime(v.created_at)}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -853,17 +906,18 @@ function DropZone({
       }}
       onDrop={handleDrop}
       className={[
-        "border-2 border-dashed rounded-lg px-4 py-6 text-center transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]",
+        "rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors duration-150",
         dragOver
-          ? "border-brand bg-brand/5"
-          : "border-border bg-bg-surface/30",
-        disabled ? "opacity-60 pointer-events-none" : "",
+          ? "border-ddc-ring bg-ddc-selected-bg"
+          : "border-ddc-border-strong bg-ddc-surface-muted",
+        disabled ? "pointer-events-none opacity-60" : "",
       ].join(" ")}
     >
       <Input
         ref={inputRef}
         type="file"
         accept=".zip,application/zip,application/x-zip-compressed"
+        aria-label="Архив навыка (.zip)"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -873,33 +927,36 @@ function DropZone({
       {file ? (
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 text-left">
-            <div className="text-sm font-medium text-fg truncate">{file.name}</div>
-            <div className="text-xs text-fg-subtle">{formatBytes(file.size)}</div>
+            <div className="truncate text-sm font-medium text-ddc-heading" title={file.name}>
+              {file.name}
+            </div>
+            <div className="text-xs text-ddc-text-muted tabular-nums">{formatBytes(file.size)}</div>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex flex-none gap-2">
             <Button
               variant="ghost"
-              size="sm"
+              size="xs"
               onClick={() => inputRef.current?.click()}
             >
-              Replace
+              Заменить
             </Button>
-            <Button variant="ghost" size="sm" onClick={onClear}>
-              Remove
+            <Button variant="ghost" size="xs" onClick={onClear}>
+              Убрать
             </Button>
           </div>
         </div>
       ) : (
-        <div className="space-y-2">
-          <div className="text-sm text-fg-muted">
-            Drag &amp; drop a <code>.zip</code>, or
+        <div className="flex flex-col items-center gap-2">
+          <UploadIcon className="size-5 text-ddc-icon-muted" aria-hidden="true" />
+          <div className="text-sm text-ddc-text-muted">
+            Перетащите архив <code>.zip</code> сюда или
           </div>
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={() => inputRef.current?.click()}
           >
-            Choose file
+            Выберите файл
           </Button>
         </div>
       )}

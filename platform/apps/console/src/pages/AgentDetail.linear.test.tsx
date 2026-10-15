@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import { I18nProvider } from "../i18n";
 import { AgentDetail } from "./AgentDetail";
+import { formatDateTime } from "./agents/format";
 
 const agent = {
   id: "agent-1",
@@ -16,9 +18,11 @@ const agent = {
   updated_at: "2026-08-31T11:00:00.000Z",
 };
 
+let agentResult: { data?: typeof agent; error?: Error } = { data: agent };
+
 vi.mock("../lib/useApiQuery", () => ({
   useApiQuery: (path: string | null) => {
-    if (path === "/v1/agents/agent-1") return { data: agent };
+    if (path === "/v1/agents/agent-1") return agentResult;
     if (path === "/v1/agents/agent-1/versions") return { data: { data: [agent] } };
     return { data: { data: [] } };
   },
@@ -33,26 +37,31 @@ vi.mock("../lib/api", () => ({
   }),
 }));
 
-vi.mock("../components/PageHeader", () => ({
-  PageHeader: ({ actions }: { actions?: React.ReactNode }) => <div>{actions}</div>,
-}));
-
 vi.mock("./agents/AgentFormDialog", () => ({ AgentFormDialog: () => null }));
 
-describe("AgentDetail Linear rail", () => {
-  it("opens with the entity title in the body and keeps metadata in the rail", async () => {
-    render(
-      <MemoryRouter initialEntries={["/agents/agent-1"]}>
-        <I18nProvider>
-          <Routes>
-            <Route path="/agents/:id" element={<AgentDetail />} />
-          </Routes>
-        </I18nProvider>
-      </MemoryRouter>,
-    );
+function renderDetail() {
+  return render(
+    <MemoryRouter initialEntries={["/agents/agent-1"]}>
+      <I18nProvider>
+        <Routes>
+          <Route path="/agents/:id" element={<AgentDetail />} />
+        </Routes>
+      </I18nProvider>
+    </MemoryRouter>,
+  );
+}
 
-    expect(await screen.findByRole("heading", { level: 1, name: "OpenMA Demo Agent" }))
-      .toBeInTheDocument();
+afterEach(() => {
+  agentResult = { data: agent };
+});
+
+describe("AgentDetail Linear rail", () => {
+  it("opens with the entity title in the page header and keeps metadata in the rail", async () => {
+    renderDetail();
+
+    const title = await screen.findByRole("heading", { level: 1, name: "OpenMA Demo Agent" });
+    expect(title.closest("header")).not.toBeNull();
+    expect(screen.getByTestId("detail-body")).not.toContainElement(title);
     expect(screen.getByTestId("detail-layout")).toHaveAttribute("data-detail-layout", "rail");
 
     const rail = screen.getByTestId("detail-rail");
@@ -60,8 +69,72 @@ describe("AgentDetail Linear rail", () => {
     expect(within(rail).getByText("test-model")).toBeInTheDocument();
 
     const body = screen.getByTestId("detail-body");
-    expect(within(body).getByRole("heading", { name: "Integrations" })).toBeInTheDocument();
-    expect(within(body).getByRole("heading", { name: "System Prompt" })).toBeInTheDocument();
-    expect(within(body).getByRole("heading", { name: "Version History" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Интеграции" })).toBeNull();
+    expect(screen.queryByText(/Linear|GitHub|Slack|Feishu/)).toBeNull();
+    expect(within(body).getByRole("heading", { name: "Системный промпт" })).toBeInTheDocument();
+    expect(within(body).getByRole("heading", { name: "История версий" })).toBeInTheDocument();
+  });
+
+  it("names the rail properties in Russian and writes dates as dd.MM.yyyy HH:mm", async () => {
+    renderDetail();
+
+    const rail = await screen.findByTestId("detail-rail");
+    expect(within(rail).getByRole("heading", { name: "Свойства" })).toBeInTheDocument();
+    for (const label of ["Модель", "Версия", "Инструменты", "Создан", "Обновлён"]) {
+      expect(within(rail).getByText(label)).toBeInTheDocument();
+    }
+    expect(within(rail).getByText("v2")).toBeInTheDocument();
+    expect(within(rail).getByText("Нет")).toBeInTheDocument();
+    expect(within(rail).getByText(formatDateTime(agent.created_at))).toBeInTheDocument();
+    expect(within(rail).getByText(formatDateTime(agent.updated_at))).toBeInTheDocument();
+  });
+
+  it("marks the current version in the history table", async () => {
+    renderDetail();
+
+    const body = await screen.findByTestId("detail-body");
+    const history = within(body).getByRole("table");
+    expect(within(history).getByRole("columnheader", { name: "Версия" })).toBeInTheDocument();
+    expect(within(history).getByText("Текущая")).toBeInTheDocument();
+  });
+
+  it("asks through a dialog before archiving and lets the user back out", async () => {
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole("button", { name: "В архив" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Отправить агента в архив?" });
+    expect(dialog).toHaveAccessibleDescription(/Действие нельзя отменить/);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows a busy skeleton while the agent loads", () => {
+    agentResult = {};
+    renderDetail();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Загрузка…");
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  });
+
+  it("reports a load failure with a way back to the list", async () => {
+    agentResult = { error: new Error("Сервер недоступен") };
+    renderDetail();
+
+    expect(await screen.findByText("Не удалось загрузить агента")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Сервер недоступен");
+    expect(screen.getByRole("button", { name: "К списку агентов" })).toBeInTheDocument();
+  });
+
+  it("names the toolset in Russian and never prints the raw API type", async () => {
+    agentResult = {
+      data: { ...agent, tools: [{ type: "agent_toolset_20260401" }] } as unknown as typeof agent,
+    };
+    renderDetail();
+
+    const rail = await screen.findByTestId("detail-rail");
+    expect(within(rail).getByText("Базовый набор инструментов")).toBeInTheDocument();
+    expect(within(rail).queryByText(/agent_toolset_20260401/)).toBeNull();
   });
 });

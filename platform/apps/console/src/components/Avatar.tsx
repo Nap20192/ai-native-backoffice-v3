@@ -10,18 +10,17 @@ import { cn } from "@/lib/utils";
  * circle with the entity's first letter (uppercase). Used for tenants,
  * users, and bot personas — anywhere a visual id sits next to a name.
  *
- * Wraps shadcn `Avatar` so AvatarPrimitive's image-error fallback handling
- * (auto-shows the fallback if the URL 404s) replaces the previous
- * onError style:none hack. Sizes are pinned manually because shadcn
- * only ships sm / default (size-8) / lg — we still need xs for dense
- * rows. squared is preserved for tenant avatars (read as "workspace"
- * rather than "person").
+ * Размеры по шкале аватаров DDC (правило 9): 24, 32, 40, 64, 96 пикселей.
+ * Обёртка над shadcn `Avatar`: если картинка не загрузилась, показывается
+ * буква. `squared` оставлен для аватаров рабочих пространств (читаются как
+ * «пространство», а не «человек»).
  */
-const SIZE: Record<"xs" | "sm" | "md" | "lg", string> = {
-  xs: "size-5 text-xs",
-  sm: "size-6 text-xs",
-  md: "size-7 text-sm",
-  lg: "size-8 text-sm",
+const SIZE: Record<"xs" | "sm" | "md" | "lg" | "xl", string> = {
+  xs: "size-6 text-2xs",
+  sm: "size-8 text-xs",
+  md: "size-10 text-sm",
+  lg: "size-16 text-xl",
+  xl: "size-24 text-3xl",
 };
 
 interface AvatarProps {
@@ -53,7 +52,7 @@ export function Avatar({ name, src, size = "md", squared, className = "" }: Avat
       )}
       <AvatarFallback
         className={cn(
-          "bg-brand-subtle text-brand font-mono font-bold",
+          "bg-brand-600 text-white font-semibold",
           squared ? "rounded-md" : "rounded-full",
         )}
       >

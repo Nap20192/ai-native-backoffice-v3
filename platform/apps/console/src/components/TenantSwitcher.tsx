@@ -7,7 +7,7 @@ import { useApi, getActiveTenantId, setActiveTenantId } from "../lib/api";
 import { useApiQuery } from "../lib/useApiQuery";
 import { Modal } from "./Modal";
 import { Button } from "@/components/ui/button";
-import { useI18n } from "../i18n";
+import { useI18n, type Messages } from "../i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,23 +17,32 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar } from "./Avatar";
 
-// Slot beneath the logo in the sidebar. Opens a dropdown with all
-// memberships + "Create workspace" button. Switching writes
-// localStorage and reloads the page so every already-mounted query
-// refetches under the new tenant.
+// Блок рабочего пространства в шапке бокового меню. Выпадающий список
+// показывает все членства и кнопку «Создать рабочее пространство».
+// Переключение пишет id в localStorage и перезагружает страницу, чтобы все
+// смонтированные запросы заново ушли с новым tenant.
 //
-// Built on shadcn DropdownMenu (Radix → Floating UI under the hood):
-// the popover auto-flips between top/bottom and shifts on the cross
-// axis when it would otherwise collide with the viewport, so nothing
-// gets clipped no matter where the trigger sits in the sidebar (top,
-// middle, or bottom). The earlier hand-rolled `bottom-full mb-1`
-// version assumed "always upward, always fits" and broke whenever
-// the sidebar shrank or the dropdown grew past the available space.
+// Список построен на DropdownMenu из shadcn (Radix и Floating UI): он сам
+// разворачивается вверх или вниз и сдвигается вбок, если упирается в край окна.
 
 interface Tenant {
   id: string;
   name: string;
   role: string;
+}
+
+/** Роль из API (`owner`, `admin`, `member`) выводится словарным названием. */
+function roleLabel(messages: Messages, role: string): string {
+  switch (role) {
+    case "owner":
+      return messages.profile.roleOwner;
+    case "admin":
+      return messages.profile.roleAdmin;
+    case "member":
+      return messages.profile.roleMember;
+    default:
+      return role;
+  }
 }
 
 function displayName(t: Tenant): string {
@@ -47,20 +56,18 @@ export function TenantSwitcher() {
   const [createOpen, setCreateOpen] = useState(false);
   const { t } = useI18n();
 
-  // TQ replaces the previous mount-once useEffect that hand-rolled a fetch
-  // + setState. Dedup means a re-mount (sidebar collapse/expand) reuses the
-  // cached membership list rather than re-hitting /v1/oma/me/tenants. A 401 on
-  // first paint (pre-auth) is silenced by useApi's auth-error list.
+  // Список членств берётся через TanStack Query: повторный монтаж (свернули и
+  // развернули меню) берёт кэш, а не идёт снова в /v1/oma/me/tenants. 401 до
+  // входа глушится списком ошибок авторизации в useApi.
   const { data: tenantsRes } = useApiQuery<{ data: Tenant[] }>(
     "/v1/oma/me/tenants",
   );
   const tenants = tenantsRes?.data ?? [];
 
-  // Sync the active-tenant pin once the membership list lands. The
-  // localStorage pin is the source of truth across page loads; on first
-  // visit (or when the stored id is no longer a valid membership) we
-  // fall back to whichever tenant the backend resolved (its own fallback
-  // chain ends at user.tenantId).
+  // Когда список членств пришёл, сверяем закреплённое пространство. Источник
+  // правды между загрузками страницы это localStorage; при первом заходе или
+  // если сохранённого id уже нет среди членств, берём то, что выбрал бэкенд
+  // (его цепочка выбора заканчивается на user.tenantId).
   useEffect(() => {
     if (tenants.length === 0) return;
     const stored = getActiveTenantId();
@@ -74,24 +81,18 @@ export function TenantSwitcher() {
 
   const switchTo = (id: string) => {
     setActiveTenantId(id);
-    // Full reload — cheaper than threading active-tenant context through
-    // every page's query state. Acceptable cost: sub-second on modern HW.
+    // Полная перезагрузка дешевле, чем тянуть активное пространство в запросы
+    // каждой страницы. Стоит меньше секунды.
     window.location.reload();
   };
 
-  // Always render the row — even before `/v1/oma/me/tenants` resolves —
-  // so the sidebar layout doesn't change height between empty and
-  // loaded states. Previously this returned null pre-fetch, which made
-  // the SidebarFooter shorter on first paint and then grew by 44 px
-  // when tenants landed, shifting the user-profile row below it
-  // downward in a visible "jump together with the avatar" twitch.
+  // Строка рисуется всегда, даже до ответа `/v1/oma/me/tenants`, чтобы высота
+  // шапки меню не прыгала между пустым и загруженным видом.
   const current = tenants.find((t) => t.id === active);
 
-  // `current` resolves on the second pass (after the useEffect picks
-  // the active tenant from the loaded list). Until then the row holds
-  // its 44 px footprint with a brand-tinted skeleton avatar so the
-  // only visual change when data lands is the initial letter + name
-  // appearing on top of the existing block.
+  // `current` появляется на втором проходе, когда эффект выбрал активное
+  // пространство из списка. До этого строка держит свой размер с заглушкой
+  // вместо аватара, и при загрузке меняются только буква и название.
   const ready = current != null;
 
   return (
@@ -108,36 +109,31 @@ export function TenantSwitcher() {
           >
             <span data-sidebar-slot data-sidebar-track="icon">
               {ready ? (
-                <Avatar name={current.name} size="sm" squared />
+                <Avatar name={displayName(current)} size="sm" squared />
               ) : (
-                <span className="size-5 rounded-md bg-brand-subtle" aria-hidden="true" />
+                <span className="console-tenant-skeleton" aria-hidden="true" />
               )}
             </span>
-            <div className="min-w-0 leading-tight" data-sidebar-track="label">
-              <div className="text-sm font-medium truncate text-fg">
+            <div className="console-tenant-text" data-sidebar-track="label">
+              <div className="console-tenant-name" title={ready ? displayName(current) : undefined}>
                 {ready ? displayName(current) : " "}
               </div>
               {ready && tenants.length > 1 && (
-                <div className="text-xs text-fg-subtle uppercase tracking-wider">
-                  {current.role}
-                </div>
+                <div className="console-tenant-role">{roleLabel(t, current.role)}</div>
               )}
             </div>
             {ready && (
               <ChevronsUpDownIcon
-                className="w-3.5 h-3.5 text-fg-subtle shrink-0"
+                className="console-tenant-chevron"
                 aria-hidden="true"
               />
             )}
           </Button>
         </DropdownMenuTrigger>
 
-        {/* `side="bottom"` is the preferred placement; Radix auto-flips
-            to top if the dropdown would overflow the viewport. `align`
-            anchors the popover's left edge to the trigger; the menu
-            width matches the trigger width (--radix-dropdown-menu-
-            trigger-width). collisionPadding keeps a small breathing
-            margin from viewport edges. */}
+        {/* Предпочтительная сторона `bottom`; Radix сам переворачивает меню
+            вверх, если оно не помещается. `align` прижимает левый край к
+            триггеру, collisionPadding оставляет зазор до края окна. */}
         <DropdownMenuContent
           side="bottom"
           align="start"
@@ -152,9 +148,11 @@ export function TenantSwitcher() {
               className="console-tenant-menu-item"
             >
               <Avatar name={displayName(t)} size="xs" squared />
-              <span className="min-w-0 truncate">{displayName(t)}</span>
+              <span className="min-w-0 truncate" title={displayName(t)}>
+                {displayName(t)}
+              </span>
               {t.id === active && (
-                <CheckIcon className="size-3.5 text-success shrink-0" />
+                <CheckIcon className="size-4 shrink-0 text-ddc-accent-text" />
               )}
             </DropdownMenuItem>
           ))}
@@ -174,8 +172,8 @@ export function TenantSwitcher() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={(t) => {
-          // Optimistic: append to list and switch immediately. The reload
-          // ensures every page refetches with the new tenant header.
+          // Сразу переключаемся на новое пространство. Перезагрузка заставляет
+          // каждую страницу запросить данные с новым заголовком tenant.
           setActiveTenantId(t.id);
           window.location.reload();
         }}
@@ -219,11 +217,14 @@ function CreateTenantModal({
   return (
     <Modal open={open} onClose={onClose} title={t.profile.createWorkspace.replace("…", "")}>
       <div className="space-y-4">
-        <p className="text-sm text-fg-muted">
+        <p className="text-sm text-ddc-text-muted">
           {t.profile.createWorkspaceDesc}
         </p>
         <div>
-          <Label htmlFor="tenant-create-name" className="block text-xs uppercase tracking-wider text-fg-subtle mb-1">
+          <Label
+            htmlFor="tenant-create-name"
+            className="mb-1.5 block text-xs font-medium text-ddc-label"
+          >
             {t.profile.workspaceName}
           </Label>
           <Input
@@ -234,20 +235,19 @@ function CreateTenantModal({
             placeholder={t.profile.workspacePlaceholder}
             autoFocus
             disabled={working}
-            className="w-full bg-bg border border-border rounded-lg px-3 py-2 min-h-11 sm:min-h-0 text-sm outline-none focus:border-border-strong"
+            className="w-full"
           />
         </div>
         {error && (
-          <div className="bg-danger-subtle border border-danger/30 text-danger text-sm rounded px-3 py-2">
+          <div
+            role="alert"
+            className="rounded-xl bg-ddc-tone-danger-bg px-4 py-3 text-sm text-ddc-tone-danger-fg ring-1 ring-inset ring-ddc-tone-danger-ring"
+          >
             {error}
           </div>
         )}
         <div className="flex gap-2 justify-end">
-          <Button variant="ghost"
-            onClick={onClose}
-            disabled={working}
-            className="inline-flex items-center justify-center px-4 py-2 min-h-11 sm:min-h-0 rounded-lg border border-border text-sm text-fg-muted hover:bg-bg-surface disabled:opacity-40"
-          >
+          <Button variant="ghost" onClick={onClose} disabled={working}>
             {t.common.cancel}
           </Button>
           <Button onClick={submit} disabled={working || !name.trim()}>

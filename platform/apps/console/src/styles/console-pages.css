@@ -1,7 +1,27 @@
-.console-detail-layout {
+/*
+  Страницы консоли на дизайн-системе DDC.
+
+  Карточки: rounded-2xl, рамка ink-100, белая поверхность, shadow-card
+  (раздел 3 docs/ddc-design-system.md). Заголовок страницы 24px bold с
+  разрядкой -0.025em, заголовок секции 16px semibold, подпись 12px.
+  Ритм: между блоками страницы 24px, внутри карточки 16px, сетки 16px.
+  Карточки красятся белой поверхностью --ddc-surface, а не --surface-route:
+  фон маршрута решает оболочка, а карточка должна остаться карточкой.
+  Классы, которые носят Button (kpi-card, secondary-stat, copy-control),
+  сами задают высоту, иначе h-10 кнопки обрежет содержимое.
+*/
+
+/* Страница DDC (.page): поле 24px, от md 32px. Шапка страницы и раскладка
+   лежат внутри поля, поэтому сама раскладка без отступов. */
+.console-detail-page {
   width: 100%;
+  min-width: 0;
   min-height: 100%;
   padding: var(--detail-frame-inset);
+}
+
+.console-detail-layout {
+  width: 100%;
 }
 
 .console-detail-layout--single {
@@ -23,76 +43,52 @@
 .console-detail-rail {
   display: flex;
   flex-direction: column;
-  gap: var(--console-gap-lg);
+  gap: 16px;
 }
 
 .console-detail-stack {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--console-pad-2xl);
+  gap: 24px;
 }
 
-.console-detail-title-block h1 {
-  color: var(--fg);
-  font-family: var(--font-display);
-  font-size: var(--console-type-title);
-  font-weight: 620;
-  letter-spacing: -0.02em;
-  line-height: 34px;
-}
-
-.console-detail-title-block p {
-  max-width: 68ch;
-  margin-top: var(--console-gap-sm);
-  color: var(--fg-muted);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
-}
-
-.console-detail-section {
-  min-width: 0;
-}
-
-.console-detail-section > h2,
 .console-property-group-title {
-  margin: 0 0 var(--console-gap-lg);
-  color: var(--fg);
+  margin: 0 0 12px;
+  color: var(--ddc-heading);
   font-family: var(--font-display);
   font-size: var(--console-type-ui);
-  font-weight: 620;
-  line-height: 20px;
+  font-weight: 600;
+  line-height: 24px;
 }
 
 .console-property-group {
   min-width: 0;
-  border: 1px solid var(--border-chrome);
+  border: 1px solid var(--ddc-border);
   border-radius: var(--console-radius-card);
-  padding: var(--console-pad-lg);
-  background: color-mix(in srgb, var(--surface-stage) 42%, var(--surface-route));
+  padding: 20px;
+  background: var(--ddc-surface);
+  box-shadow: var(--shadow-card-soft);
 }
 
 .console-property-list {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--console-gap-2xs);
+  gap: 4px;
 }
 
+/* Строка свойства: подпись и значение. Подписи стоят на левом краю карточки,
+   на одной оси с заголовком «Свойства» (отступа у строки нет). Колонка подписи
+   не уже самого длинного слова («Инструменты»). */
 .console-property-row {
   display: grid;
   min-height: var(--control-h);
-  grid-template-columns: minmax(88px, 0.42fr) minmax(0, 1fr);
+  grid-template-columns: minmax(7.5rem, 0.4fr) minmax(0, 1fr);
   align-items: center;
-  gap: var(--console-gap-lg);
-  border-radius: var(--console-radius-sm);
-  padding-inline: var(--console-pad-xs);
+  gap: 12px;
   font-size: var(--console-type-body);
   line-height: var(--type-line);
-}
-
-.console-property-row:hover {
-  background: var(--surface-row-hover);
 }
 
 .console-property-row dt {
@@ -105,65 +101,16 @@
   color: var(--fg);
 }
 
-.console-integration-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--console-gap-lg);
-}
-
-.console-integration-fold {
-  overflow: hidden;
-  border: 1px solid var(--border-chrome);
-  border-radius: var(--console-radius-row);
-  background: var(--surface-route);
-}
-
-.console-integration-summary {
-  display: flex;
-  min-height: var(--menu-action-row-h);
-  align-items: center;
-  gap: var(--console-gap-lg);
-  padding-inline: var(--console-pad-md);
-  color: var(--fg);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
-  list-style: none;
-  cursor: pointer;
-}
-
-.console-integration-summary:hover {
-  background: var(--surface-row-hover);
-}
-
-.console-integration-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--console-gap-sm);
-  padding: var(--console-pad-sm) var(--console-pad-md) var(--console-pad-md);
-  color: var(--fg-muted);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
-}
-
-.console-detail-link {
-  display: inline-flex;
-  min-height: var(--control-h);
-  align-items: center;
-  gap: var(--console-gap-sm);
-  color: var(--brand);
-  font-size: var(--console-type-body);
-}
-
 .console-detail-code-block {
   max-height: 256px;
   overflow-y: auto;
-  border-radius: var(--console-radius-row);
-  padding: var(--console-pad-lg);
+  border-radius: var(--console-radius-control);
+  padding: 12px;
   background: var(--bg-surface);
   color: var(--fg-muted);
   font-family: var(--font-mono);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
+  font-size: var(--console-type-label);
+  line-height: 18px;
   white-space: pre-wrap;
 }
 
@@ -174,69 +121,53 @@
 
 .console-detail-table {
   width: 100%;
-  min-width: 560px;
+  /* 560px только когда место есть: на телефоне таблица не шире экрана. */
+  min-width: min(560px, 100%);
   table-layout: fixed;
   border-collapse: separate;
-  border-spacing: 0 var(--data-row-gap);
+  border-spacing: 0;
   font-size: var(--console-type-body);
+  font-variant-numeric: tabular-nums;
 }
 
 .console-detail-table th {
   height: var(--table-head-h);
-  padding-inline: var(--console-pad-xs);
+  padding-inline: 12px;
   border: 0;
+  border-bottom: 1px solid var(--border-chrome);
   color: var(--fg-subtle);
   font-size: var(--console-type-label);
-  font-weight: 560;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-align: left;
+  text-transform: uppercase;
 }
 
 .console-detail-table td {
   height: var(--data-row-h);
-  padding-inline: var(--console-pad-xs);
+  padding-inline: 12px;
   border: 0;
+  border-bottom: 1px solid var(--border-chrome);
   background: var(--data-row-bg);
 }
 
-.console-detail-table tbody td:first-child {
-  border-radius: var(--console-radius-row) 0 0 var(--console-radius-row);
-}
-
-.console-detail-table tbody td:last-child {
-  border-radius: 0 var(--console-radius-row) var(--console-radius-row) 0;
-}
-
-.console-settings-page {
-  padding: var(--settings-frame-inset);
+.console-detail-table tbody tr:last-child td {
+  border-bottom-color: transparent;
 }
 
 .console-settings-layout {
   display: flex;
-  width: min(100%, 760px);
+  width: min(100%, 896px);
   flex-direction: column;
-  gap: var(--console-pad-xl);
-}
-
-.console-settings-intro {
-  display: flex;
-  flex-direction: column;
-  gap: var(--console-gap-2xl);
-}
-
-.console-settings-intro h1 {
-  color: var(--fg);
-  font-family: var(--font-display);
-  font-size: var(--console-type-title);
-  font-weight: 620;
-  letter-spacing: -0.02em;
-  line-height: 34px;
+  gap: 24px;
 }
 
 .console-settings-section {
   overflow: hidden;
-  border: 1px solid var(--border-chrome);
+  border: 1px solid var(--ddc-border);
   border-radius: var(--console-radius-card);
-  background: color-mix(in srgb, var(--surface-stage) 32%, var(--surface-route));
+  background: var(--ddc-surface);
+  box-shadow: var(--shadow-card-soft);
 }
 
 .console-settings-section-header {
@@ -244,36 +175,36 @@
   min-height: var(--detail-action-strip-h);
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--console-pad-lg);
-  padding: var(--console-pad-md) var(--console-pad-lg);
+  gap: 12px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border-chrome);
 }
 
 .console-settings-section-header h2 {
-  color: var(--fg);
+  color: var(--ddc-heading);
   font-family: var(--font-sans);
-  font-size: var(--console-type-body);
-  font-weight: 580;
-  line-height: var(--type-line);
+  font-size: var(--console-type-ui);
+  font-weight: 600;
+  line-height: 24px;
 }
 
 .console-settings-section-header p {
-  margin-top: var(--console-gap-3xs);
-  color: var(--fg-muted);
+  margin-top: 2px;
+  color: var(--fg-subtle);
   font-size: var(--console-type-label);
   line-height: 16px;
 }
 
 .console-settings-section-body {
-  padding: var(--console-pad-lg);
+  padding: 20px;
 }
 
 .console-settings-actions {
   display: flex;
   min-height: var(--detail-action-strip-h);
   align-items: center;
-  gap: var(--console-gap-lg);
-  padding-top: var(--console-gap-sm);
+  gap: 8px;
+  padding-top: 16px;
   border-top: 1px solid var(--border-chrome);
 }
 
@@ -293,25 +224,25 @@
 }
 
 .console-integration-page--narrow {
-  width: min(100%, 760px);
+  width: min(100%, 768px);
 }
 
 .console-integration-page > header {
-  margin-bottom: var(--console-pad-xl);
+  margin-bottom: 24px;
 }
 
 .console-integration-page > header h1 {
-  color: var(--fg);
+  color: var(--ddc-heading);
   font-family: var(--font-display);
   font-size: var(--console-type-title);
-  font-weight: 620;
-  letter-spacing: -0.02em;
-  line-height: 34px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 32px;
 }
 
 .console-integration-page > header p {
-  margin-top: var(--console-gap-sm);
-  color: var(--fg-muted);
+  margin-top: 4px;
+  color: var(--fg-subtle);
   font-size: var(--console-type-body);
   line-height: var(--type-line);
 }
@@ -322,75 +253,75 @@
   min-height: 100%;
   max-width: 1560px;
   flex-direction: column;
-  gap: var(--console-pad-xl);
+  gap: 24px;
   padding: var(--dashboard-frame-inset);
   margin-inline: auto;
-}
-
-.console-dashboard-intro h1 {
-  color: var(--fg);
-  font-family: var(--font-display);
-  font-size: clamp(24px, 3vw, 34px);
-  font-weight: 620;
-  letter-spacing: -0.025em;
-  line-height: 1.08;
-}
-
-.console-dashboard-intro p {
-  max-width: 680px;
-  margin-top: 7px;
-  color: var(--fg-muted);
-  font-size: var(--console-type-body);
-  line-height: 20px;
 }
 
 .console-kpi-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--console-gap-lg);
+  gap: 16px;
 }
 
+/* Плитка KPI: карточка p-5, значение 24px bold tabular-nums, подпись text-sm.
+   Живёт на Button, поэтому высота auto и выравнивание заданы явно. */
 .console-kpi-card {
   display: flex;
   min-width: 0;
-  min-height: var(--dashboard-kpi-h);
+  height: auto;
+  min-height: 0;
   flex-direction: column;
-  justify-content: space-between;
-  border: 1px solid var(--border-chrome);
-  border-radius: var(--console-radius-row);
-  padding: var(--console-pad-lg);
-  background: var(--surface-route);
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
+  border: 1px solid var(--ddc-border);
+  border-radius: var(--console-radius-card);
+  padding: 20px;
+  background: var(--ddc-surface);
+  box-shadow: var(--shadow-card-soft);
   color: var(--fg);
   text-align: left;
-  transition: background var(--dur-quick) var(--ease-soft), border-color var(--dur-quick) var(--ease-soft);
+  transition: border-color var(--dur-base) var(--ease-soft);
 }
 
+/* Наведение как у card-link: меняется только рамка (brand-300 70%,
+   в тёмной теме brand-700 70%). */
 .console-kpi-card:hover {
-  border-color: color-mix(in srgb, var(--brand) 34%, var(--border));
-  background: var(--surface-row-hover);
+  border-color: color-mix(in srgb, var(--color-brand-300) 70%, transparent);
+  background: var(--ddc-surface);
+}
+
+.dark .console-kpi-card:hover {
+  border-color: color-mix(in srgb, var(--color-brand-700) 70%, transparent);
 }
 
 .console-kpi-value {
-  color: var(--fg);
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ddc-heading);
   font-family: var(--font-display);
   font-size: var(--console-type-kpi);
-  font-weight: 620;
-  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-kpi-card:hover .console-kpi-value {
-  color: var(--brand);
+  color: var(--ddc-heading);
 }
 
 .console-kpi-label {
+  max-width: 100%;
   overflow: hidden;
-  color: var(--fg-muted);
-  font-size: var(--console-type-label);
-  font-weight: 620;
-  letter-spacing: 0.075em;
-  line-height: 14px;
+  color: var(--fg-subtle);
+  font-size: var(--console-type-body);
+  font-weight: 400;
+  line-height: 20px;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -401,7 +332,7 @@
 .console-secondary-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--console-gap-lg);
+  gap: 16px;
 }
 
 .console-secondary-stat {
@@ -410,15 +341,16 @@
   height: var(--control-h);
   align-items: center;
   justify-content: space-between;
-  border: 1px solid var(--border-chrome);
-  border-radius: var(--console-radius-row);
-  padding-inline: var(--console-pad-md);
-  color: var(--fg-muted);
+  border: 1px solid var(--ddc-border);
+  border-radius: var(--console-radius-control);
+  padding-inline: 16px;
+  background: var(--ddc-surface);
+  color: var(--fg-subtle);
   font-size: var(--console-type-body);
 }
 
 .console-secondary-stat strong {
-  color: var(--fg);
+  color: var(--ddc-heading);
   font-variant-numeric: tabular-nums;
 }
 
@@ -426,36 +358,37 @@
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
   align-items: start;
-  gap: 12px;
+  gap: 16px;
 }
 
 .console-panel {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border-chrome);
-  border-radius: 8px;
-  background: var(--surface-route);
+  border: 1px solid var(--ddc-border);
+  border-radius: var(--console-radius-card);
+  background: var(--ddc-surface);
+  box-shadow: var(--shadow-card-soft);
 }
 
 .console-panel-header {
   display: flex;
-  min-height: 54px;
+  min-height: 56px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 11px 14px;
+  padding: 16px 20px;
 }
 
 .console-panel-title {
-  color: var(--fg);
+  color: var(--ddc-heading);
   font-family: var(--font-display);
   font-size: var(--console-type-ui);
-  font-weight: 620;
-  line-height: 20px;
+  font-weight: 600;
+  line-height: 24px;
 }
 
 .console-panel-description {
-  margin-top: 1px;
+  margin-top: 2px;
   color: var(--fg-subtle);
   font-size: var(--console-type-label);
   line-height: 16px;
@@ -474,7 +407,7 @@
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr);
   gap: 16px;
-  padding: 14px;
+  padding: 16px 20px;
 }
 
 .console-quickstart-step + .console-quickstart-step {
@@ -482,25 +415,25 @@
 }
 
 .console-step-index {
-  color: var(--brand);
+  color: var(--ddc-link);
   font-family: var(--font-mono);
   font-size: var(--console-type-label);
-  font-weight: 620;
+  font-weight: 600;
   letter-spacing: 0.08em;
-  line-height: 15px;
+  line-height: 20px;
 }
 
 .console-step-title {
-  margin-top: 2px;
-  color: var(--fg);
+  margin-top: 0;
+  color: var(--ddc-heading);
   font-size: var(--console-type-body);
-  font-weight: 580;
+  font-weight: 600;
   line-height: var(--type-line);
 }
 
 .console-step-body {
   min-width: 0;
-  color: var(--fg-muted);
+  color: var(--fg-subtle);
   font-size: var(--console-type-body);
   line-height: var(--type-line);
 }
@@ -512,10 +445,10 @@
   min-height: var(--control-h);
   align-items: center;
   gap: 8px;
-  margin-top: calc(var(--density-unit) * 9);
-  border: 1px solid var(--border-chrome);
-  border-radius: 6px;
-  padding: 4px 7px;
+  margin-top: 8px;
+  border: 1px solid var(--ddc-border-strong);
+  border-radius: var(--console-radius-control);
+  padding: 4px 12px;
   background: var(--bg-surface);
   color: var(--fg);
   font-family: var(--font-mono);
@@ -524,7 +457,7 @@
 }
 
 .console-copy-control:hover {
-  border-color: color-mix(in srgb, var(--brand) 32%, var(--border));
+  border-color: var(--ddc-ring);
 }
 
 .console-copy-control > span {
@@ -538,31 +471,36 @@
   overflow-x: auto;
 }
 
+/* Одна длинная колонка (название) забирает свободное место, остальные по
+   содержимому (правило таблиц DDC): колонки не выходят за карточку. */
 .console-dashboard-table {
   width: 100%;
   min-width: 100%;
-  table-layout: fixed;
+  table-layout: auto;
   border-collapse: separate;
-  border-spacing: 0 var(--data-row-gap);
+  border-spacing: 0;
   font-size: var(--console-type-body);
+  font-variant-numeric: tabular-nums;
 }
 
 .console-dashboard-table th {
   height: var(--table-head-h);
-  padding-inline: var(--console-pad-xs);
+  padding-inline: 12px;
   border: 0;
+  border-bottom: 1px solid var(--border-chrome);
   color: var(--fg-subtle);
   font-size: var(--console-type-label);
-  font-weight: 610;
-  letter-spacing: 0;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-align: left;
-  text-transform: none;
+  text-transform: uppercase;
 }
 
 .console-dashboard-table td {
   height: var(--data-row-h);
-  padding-inline: var(--console-pad-xs);
+  padding-inline: 12px;
   border: 0;
+  border-bottom: 1px solid var(--border-chrome);
   background: transparent;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -573,12 +511,8 @@
   border: 0;
 }
 
-.console-dashboard-table tbody td:first-child {
-  border-radius: var(--console-radius-row) 0 0 var(--console-radius-row);
-}
-
-.console-dashboard-table tbody td:last-child {
-  border-radius: 0 var(--console-radius-row) var(--console-radius-row) 0;
+.console-dashboard-table tbody tr:last-child td {
+  border-bottom-color: transparent;
 }
 
 .console-dashboard-table tbody tr {
@@ -586,28 +520,7 @@
 }
 
 .console-dashboard-table tbody tr:hover td {
-  background: var(--bg-surface);
-}
-
-.console-page-header {
-  background: var(--surface-route);
-}
-
-.console-page-header-primary {
-  display: flex;
-  min-height: var(--list-toolbar-h);
-  align-items: center;
-  gap: 16px;
-  padding-inline: var(--detail-frame-inset);
-}
-
-.console-page-header-toolbar {
-  display: flex;
-  min-height: var(--list-toolbar-h);
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  padding-inline: var(--detail-frame-inset);
+  background: var(--surface-row-hover);
 }
 
 @media (max-width: 1100px) {
@@ -629,28 +542,25 @@
   }
 }
 
+/* Поле страницы DDC на телефоне 24px (md и выше 32px). */
 @media (max-width: 767px) {
-  .console-detail-layout {
-    padding: var(--console-pad-xl);
+  :root {
+    --list-frame-inset: 24px;
+    --detail-frame-inset: 24px;
+    --dashboard-frame-inset: 24px;
+    --settings-frame-inset: 24px;
   }
 
   .console-detail-rail {
     display: flex;
   }
 
-  .console-settings-page,
-  .console-integration-page,
-  .console-dashboard-layout {
-    padding: var(--console-pad-lg);
-  }
-
   .console-integration-page > header {
     align-items: flex-start;
     flex-direction: column;
-    gap: var(--console-pad-lg);
+    gap: 12px;
   }
 
-  .console-kpi-row,
   .console-secondary-stats {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -661,18 +571,13 @@
 }
 
 @media (max-width: 640px) {
-  :root {
-    --detail-frame-inset: 18px;
-    --dashboard-frame-inset: 14px;
-  }
-
   .console-kpi-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .console-quickstart-step {
     grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
+    gap: 4px;
   }
 
   .console-detail-rail,

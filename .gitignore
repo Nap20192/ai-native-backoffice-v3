@@ -12,3 +12,7 @@ coverage/
 playwright-report/
 test-results/
 reports/screenshots/*.tmp
+.audit/
+platform/apps/main-node/data-preview/
+.verify-evidence/
+platform/apps/main-node/data-shots/

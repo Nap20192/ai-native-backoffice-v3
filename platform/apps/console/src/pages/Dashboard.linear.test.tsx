@@ -38,4 +38,25 @@ describe("Dashboard Linear density", () => {
     expect(screen.getByTestId("dashboard-secondary-stats")).toHaveTextContent("5");
     expect(screen.getByTestId("dashboard-secondary-stats")).toHaveTextContent("6");
   });
+
+  it("shows the dashboard in Russian with icon KPI tiles and numbered steps", () => {
+    render(
+      <MemoryRouter>
+        <I18nProvider>
+          <Dashboard />
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Начало работы с openma" }),
+    ).toBeInTheDocument();
+    const primary = screen.getByTestId("dashboard-primary-kpis");
+    expect(within(primary).getByRole("button", { name: "Агенты: 1" })).toBeInTheDocument();
+    expect(within(primary).getByRole("button", { name: "Сессии: 2" })).toBeInTheDocument();
+    expect(screen.getByText("Шаг 1")).toBeInTheDocument();
+    expect(screen.getByText("Шаг 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Скопировать команду" })).toBeInTheDocument();
+    expect(screen.getByText("Сессий пока нет")).toBeInTheDocument();
+  });
 });

@@ -1,13 +1,32 @@
+/*
+  Оболочка консоли в оформлении DDC (портал БСБ).
+
+  Раскладка как в портале: боковое меню 256px на белой поверхности с рамкой
+  справа, шапка 64px с рамкой снизу, под ними нейтральный холст (ink-50, в
+  тёмной теме ink-950) без зелёной тонировки и пятен: это сознательное
+  отступление от .app-shell портала, см. комментарий у @utility ddc-app-shell
+  в ddc-tokens.css. Цвета берутся из смысловых переменных --ddc-* (ddc-tokens.css),
+  которые сами меняются между светлой и тёмной темой. Правила и размеры:
+  docs/ddc-design-system.md, разделы 3 и 4.
+
+  Файл лежит без @layer: его правила сильнее утилит Tailwind у компонентов
+  shadcn (Button, Avatar, DropdownMenu), поэтому геометрию меню не нужно
+  выправлять классами на месте.
+*/
+
 .console-shell {
   position: relative;
   display: grid;
   width: 100%;
   height: 100svh;
+  height: 100dvh;
   grid-template-columns: var(--shell-sidebar-current-w) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  background: var(--surface-stage);
-  color: var(--fg);
+  /* Нейтральный холст страницы: фон body портала (ink-50, в тёмной теме
+     ink-950). Без тонировки и градиента. */
+  background-color: var(--ddc-bg);
+  color: var(--ddc-text);
   transition: grid-template-columns var(--dur-slow) var(--ease-soft);
 }
 
@@ -23,8 +42,8 @@
   user-select: none;
 }
 
-/* Navigation and route chrome behave like native application controls. Keep
- * their labels out of drag selection while leaving route data copyable. */
+/* Меню и шапка ведут себя как элементы приложения: подписи не выделяются
+ * протяжкой мыши, а данные страницы остаются доступными для копирования. */
 .console-sidebar,
 .console-topbar {
   -webkit-user-select: none;
@@ -41,6 +60,8 @@
   pointer-events: none;
 }
 
+/* ---------- Колонка бокового меню ---------- */
+
 .console-sidebar-rail {
   position: relative;
   z-index: 20;
@@ -48,7 +69,8 @@
   width: var(--shell-sidebar-current-w);
   min-width: 0;
   height: 100%;
-  background: var(--surface-stage);
+  border-right: 1px solid var(--ddc-divider);
+  background: var(--ddc-surface);
 }
 
 .console-shell[data-sidebar-state="desktop-hidden"],
@@ -57,52 +79,49 @@
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
+/* Скрытое меню и его превью: колонка на всю высоту поверх страницы. Скрытое
+ * состояние убирает меню из обхода по Tab (visibility), но только в конце
+ * выезда, а при открытии видимость возвращается сразу. */
 .console-shell[data-sidebar-state="desktop-hidden"] .console-sidebar-rail,
-.console-shell[data-sidebar-state="desktop-preview"] .console-sidebar-rail {
-  position: fixed;
-  inset: var(--sidebar-preview-top) auto var(--sidebar-preview-bottom) var(--sidebar-preview-left);
-  width: var(--shell-sidebar-current-w);
-  height: auto;
-  overflow: hidden;
-  border: 1px solid var(--border-chrome);
-  border-radius: var(--sidebar-preview-radius);
-  background: var(--surface-route);
-  box-shadow: none;
-  opacity: 0;
-  transform: translateX(calc(-100% - var(--shell-stage-gap) * 2));
-  pointer-events: none;
-  transition:
-    opacity var(--dur-base) var(--ease-soft),
-    transform var(--dur-slow) var(--ease-soft),
-    box-shadow var(--dur-slow) var(--ease-soft);
-}
-
+.console-shell[data-sidebar-state="desktop-preview"] .console-sidebar-rail,
 .console-shell[data-sidebar-state^="mobile-"] .console-sidebar-rail {
   position: fixed;
-  inset: var(--shell-stage-gap) auto var(--shell-stage-gap) var(--shell-stage-gap);
-  width: var(--shell-sidebar-current-w);
+  inset: 0 auto 0 0;
   height: auto;
   overflow: hidden;
-  border: 1px solid var(--border-chrome);
-  border-radius: var(--shell-route-radius);
-  background: var(--surface-route);
   box-shadow: none;
   opacity: 0;
-  transform: translateX(calc(-100% - var(--shell-stage-gap) * 2));
+  visibility: hidden;
+  transform: translateX(-100%);
   pointer-events: none;
   transition:
     opacity var(--dur-base) var(--ease-soft),
     transform var(--dur-slow) var(--ease-soft),
-    box-shadow var(--dur-slow) var(--ease-soft);
+    box-shadow var(--dur-slow) var(--ease-soft),
+    visibility 0s linear var(--dur-slow);
+}
+
+/* Телефон: меню шире колонки компьютера на 32px, 288px (w-72 в портале). */
+.console-shell[data-sidebar-state^="mobile-"] .console-sidebar-rail {
+  width: 288px;
+  max-width: calc(100vw - 48px);
 }
 
 .console-shell[data-sidebar-state="desktop-preview"] .console-sidebar-rail,
 .console-shell[data-sidebar-state="mobile-drawer"] .console-sidebar-rail {
   box-shadow: var(--shadow-overlay);
   opacity: 1;
+  visibility: visible;
   transform: translateX(0);
   pointer-events: auto;
+  transition:
+    opacity var(--dur-base) var(--ease-soft),
+    transform var(--dur-slow) var(--ease-soft),
+    box-shadow var(--dur-slow) var(--ease-soft),
+    visibility 0s;
 }
+
+/* ---------- Рабочая область: шапка и страница ---------- */
 
 .console-workspace {
   display: flex;
@@ -111,15 +130,10 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  padding: var(--shell-stage-gap) var(--shell-stage-gap) var(--shell-stage-gap) 0;
 }
 
-.console-shell[data-sidebar-state="desktop-hidden"] .console-workspace,
-.console-shell[data-sidebar-state="desktop-preview"] .console-workspace,
-.console-shell[data-sidebar-state^="mobile-"] .console-workspace {
-  padding-left: var(--shell-stage-gap);
-}
-
+/* Холст страницы прозрачный: между карточками виден нейтральный фон
+ * оболочки. Карточки страниц рисуют сами. */
 .console-route-surface {
   display: flex;
   min-width: 0;
@@ -128,77 +142,74 @@
   flex-direction: column;
   overflow: hidden;
   border: 0;
-  border-left: 1px solid var(--border-chrome);
-  border-radius: var(--shell-route-radius);
-  background: var(--surface-route);
-  box-shadow: var(--shadow-route);
+  background: transparent;
 }
 
-.console-shell[data-sidebar-state="desktop-hidden"] .console-route-surface,
-.console-shell[data-sidebar-state="desktop-preview"] .console-route-surface {
-  border: 1px solid var(--border-chrome);
-}
-
+/* Шапка приложения: 64px, белая, рамка снизу (Topbar.tsx портала). Поля как у
+ * .gutter-x: 24px, от md 32px. */
 .console-topbar {
+  position: relative;
   display: flex;
   min-width: 0;
   height: var(--shell-top-h);
   flex: 0 0 var(--shell-top-h);
   align-items: center;
   gap: 8px;
-  padding-inline: var(--list-frame-inset);
-  border-bottom: 1px solid transparent;
+  padding-inline: 24px;
+  border-bottom: 1px solid var(--ddc-divider);
+  background: var(--ddc-surface);
 }
 
-.console-page-header-slot {
-  flex: 0 0 auto;
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--dur-quick) var(--ease-soft);
+@media (min-width: 640px) {
+  .console-topbar {
+    gap: 12px;
+  }
 }
 
-.console-page-header-slot:empty {
-  display: none;
+@media (min-width: 768px) {
+  .console-topbar {
+    padding-inline: 32px;
+  }
 }
 
-.console-page-header-slot[data-scrolled="true"] {
-  border-bottom-color: var(--border-chrome);
-}
-
+/* Прокручивается только страница. Место под полосу занято всегда, чтобы
+ * содержимое не прыгало; полоса 6px и её цвет заданы в ddc-tokens.css. */
 .console-route-main {
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
-  scrollbar-width: none;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   overscroll-behavior-y: contain;
 }
 
-.console-route-main::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
+/* Кнопка «Показать меню»: btn-ghost btn-icon-sm портала. -ml-2.5 ставит
+ * значок, а не подложку кнопки, на край поля страницы. */
 .console-sidebar-restore {
   display: inline-flex;
-  width: var(--control-h);
-  height: var(--control-h);
-  flex: 0 0 var(--control-h);
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   align-items: center;
   justify-content: center;
+  margin-left: -10px;
+  padding: 0;
   border: 0;
-  border-radius: var(--console-radius-sm);
+  border-radius: 12px;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--ddc-ghost-text);
+  transition: background-color 150ms ease;
 }
 
 .console-sidebar-restore:hover {
-  background: var(--bg-surface);
-  color: var(--fg);
+  background: var(--ddc-ghost-hover);
+  color: var(--ddc-ghost-text);
 }
 
 .console-sidebar-restore svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .console-sidebar-hover-zone {
@@ -229,6 +240,7 @@
   right: -4px;
   width: 8px;
   height: 100%;
+  padding: 0;
   border: 0;
   background: transparent;
   cursor: col-resize;
@@ -249,16 +261,26 @@
 
 .console-sidebar-resize:hover::after,
 .console-sidebar-resize:focus-visible::after {
-  background: var(--brand);
+  background: var(--ddc-primary);
 }
 
+/* Фон под выдвижным меню на телефоне: ink-950 с прозрачностью 40% и размытие
+ * 4px, как у затемнения под окном. */
 .console-sidebar-scrim {
   position: fixed;
   z-index: 19;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
   border: 0;
-  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 0;
+  background: var(--ddc-overlay);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
 }
+
+/* ---------- Содержимое бокового меню ---------- */
 
 .console-sidebar {
   display: flex;
@@ -267,193 +289,498 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  color: var(--fg);
+  color: var(--ddc-text);
 }
 
-.console-shell[data-sidebar-state="desktop-full"] .console-sidebar {
-  padding-block: var(--shell-stage-gap);
+.console-sidebar svg {
+  flex: none;
 }
 
+/* Значок пункта: 16px, как в портале (h-4 w-4). */
 .console-sidebar [data-sidebar-track="icon"] {
   display: inline-flex;
-  width: var(--shell-slot-size);
-  height: var(--shell-slot-size);
+  width: 16px;
+  height: 16px;
+  flex: none;
   align-items: center;
   justify-content: center;
 }
 
+/* Шапка меню: 64px, рамка снизу, знак на оси колонки иконок. Здесь стоит
+ * блок рабочего пространства и кнопка поиска. */
 .console-sidebar-tenant {
   display: flex;
   height: var(--shell-top-h);
   flex: 0 0 var(--shell-top-h);
   align-items: center;
-  gap: var(--console-gap-2xs);
-  padding-inline: var(--sidebar-frame-inset);
+  gap: 8px;
+  padding-left: 14px;
+  padding-right: 12px;
+  border-bottom: 1px solid var(--ddc-divider);
 }
 
-.console-sidebar-tenant-trigger {
-  width: auto;
-  flex: 1 1 auto;
+.console-sidebar-tenant [data-sidebar-track="icon"] {
+  width: 36px;
+  height: 36px;
 }
 
+/* Кнопка поиска: btn-ghost btn-icon-sm. */
 .console-sidebar-search {
   display: inline-flex;
-  width: var(--sidebar-row-h);
-  height: var(--sidebar-row-h);
-  flex: 0 0 var(--sidebar-row-h);
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: 0;
-  border-radius: var(--console-radius-sm);
+  border-radius: 12px;
   background: transparent;
-  color: var(--fg-muted);
-  transition: color var(--dur-quick) var(--ease-soft), background var(--dur-quick) var(--ease-soft);
+  color: var(--ddc-text-muted);
+  transition: color 150ms ease, background-color 150ms ease;
 }
 
 .console-sidebar-search:hover {
-  background: var(--surface-row-hover);
-  color: var(--fg);
+  background: var(--ddc-ghost-hover);
+  color: var(--ddc-ghost-text);
 }
 
+/* Пункт меню: group relative flex items-center gap-3 rounded-xl px-3 py-2
+ * text-sm leading-5 портала. Обычный font-medium ink-600, активный
+ * font-semibold на заливке brand-50. */
 .console-sidebar-row {
-  display: grid;
-  grid-template-columns: var(--shell-slot-size) minmax(0, 1fr) auto;
+  position: relative;
+  display: flex;
   width: 100%;
   min-width: 0;
-  height: var(--sidebar-row-h);
+  height: auto;
+  min-height: 36px;
   align-items: center;
-  column-gap: var(--sidebar-track-gap);
+  justify-content: flex-start;
+  gap: 12px;
   border: 0;
-  border-radius: var(--console-radius-sm);
-  padding-inline: var(--sidebar-row-inset);
+  border-radius: 12px;
+  padding: 8px 12px;
   background: transparent;
-  color: var(--fg-muted);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
+  color: var(--ddc-label);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
   text-align: left;
   text-decoration: none;
-  transition: color var(--dur-quick) var(--ease-soft), background var(--dur-quick) var(--ease-soft);
+  transition: color 150ms ease, background-color 150ms ease;
 }
 
 .console-sidebar-row:hover {
-  background: var(--surface-row-hover);
-  color: var(--fg);
+  background: var(--ddc-surface-muted);
 }
 
-.console-sidebar-row[data-active="true"] {
-  background: var(--surface-row-selected);
-  color: var(--fg);
-  font-weight: 520;
+/* Пока список пространств грузится, кнопка заблокирована и не подсвечивается. */
+.console-sidebar-row:disabled,
+.console-sidebar-row:disabled:hover {
+  background: transparent;
+  cursor: default;
+}
+
+.console-sidebar-row[data-active="true"],
+.console-sidebar-row[data-active="true"]:hover {
+  background: var(--ddc-selected-bg);
+  color: var(--ddc-selected-text);
+  font-weight: 600;
+}
+
+/* Кольцо фокуса внутрь: прокрутка меню его не режет. */
+.console-sidebar-row:focus-visible {
+  outline-offset: -2px;
 }
 
 .console-sidebar-row > [data-sidebar-track="label"] {
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Список разделов: py-3 pl-3 pr-1.5, место под полосу прокрутки занято. */
 .console-sidebar-nav {
   min-height: 0;
   flex: 1 1 auto;
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: var(--console-pad-sm) var(--sidebar-frame-inset) var(--console-pad-md);
-  scrollbar-width: none;
-}
-
-.console-sidebar-nav::-webkit-scrollbar {
-  display: none;
+  padding: 12px 6px 12px 12px;
+  scrollbar-gutter: stable;
 }
 
 .console-sidebar-group + .console-sidebar-group {
-  margin-top: var(--sidebar-section-gap);
+  margin-top: 4px;
 }
 
 .console-sidebar-row + .console-sidebar-row,
 .console-sidebar-group-label + .console-sidebar-row {
-  margin-top: var(--sidebar-pill-gap);
+  margin-top: 4px;
 }
 
+/* Подпись раздела: eyebrow px-3 pb-1 pt-4. */
 .console-sidebar-group-label {
-  height: var(--sidebar-row-h);
-  padding: 5px var(--sidebar-row-inset);
-  color: var(--fg-muted);
-  font-size: var(--console-type-body);
-  font-weight: 560;
-  letter-spacing: 0;
-  line-height: 18px;
-  text-transform: none;
+  overflow: hidden;
+  padding: 16px 12px 4px;
+  color: var(--ddc-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
+/* Низ меню: рамка сверху, py-2 pl-3 pr-1.5. */
 .console-sidebar-footer {
   flex: 0 0 auto;
-  padding: var(--console-pad-xs) var(--sidebar-frame-inset) var(--console-pad-md);
+  padding: 8px 6px 8px 12px;
+  border-top: 1px solid var(--ddc-divider);
 }
 
-.console-sidebar-tenant .console-sidebar-row,
 .console-sidebar-footer .console-sidebar-row {
-  min-height: var(--sidebar-row-h);
-  height: auto;
+  min-height: 48px;
+}
+
+.console-sidebar-footer [data-sidebar-track="icon"] {
+  width: 32px;
+  height: 32px;
+}
+
+/* ---------- Аватары в меню ---------- */
+
+/* Аватар DDC: bg-brand-600 с белым текстом, без внутренней рамки. Знак
+ * рабочего пространства квадратный со скруглением 12px (знак портала 36px). */
+.console-sidebar [data-slot="avatar"],
+.console-tenant-menu [data-slot="avatar"],
+.console-user-menu [data-slot="avatar"] {
+  flex: none;
+}
+
+.console-sidebar [data-slot="avatar"]::after,
+.console-tenant-menu [data-slot="avatar"]::after {
+  display: none;
+}
+
+.console-sidebar [data-slot="avatar-fallback"],
+.console-tenant-menu [data-slot="avatar-fallback"] {
+  background: var(--ddc-primary);
+  color: var(--ddc-on-primary);
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: -0.025em;
 }
 
 .console-sidebar-tenant [data-slot="avatar"],
-.console-tenant-menu [data-slot="avatar"] {
-  width: var(--shell-slot-size);
-  height: var(--shell-slot-size);
-  font-size: 9px;
-  transform: translateX(var(--tenant-avatar-optical-x));
+.console-sidebar-tenant [data-slot="avatar-fallback"] {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  font-size: 0.875rem;
+}
+
+.console-sidebar-footer [data-slot="avatar"],
+.console-sidebar-footer [data-slot="avatar-fallback"] {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+}
+
+.console-tenant-menu [data-slot="avatar"],
+.console-tenant-menu [data-slot="avatar-fallback"] {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  font-size: 0.6875rem;
+}
+
+/* ---------- Блок рабочего пространства ---------- */
+
+.console-sidebar-tenant-trigger {
+  min-width: 0;
+  min-height: 44px;
+  flex: 1 1 auto;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+}
+
+.console-tenant-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.console-tenant-name {
+  overflow: hidden;
+  color: var(--ddc-heading);
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-tenant-role {
+  overflow: hidden;
+  color: var(--ddc-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.console-tenant-chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--ddc-icon-muted);
+}
+
+.console-tenant-skeleton {
+  display: block;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--ddc-surface-sunken);
+}
+
+/* ---------- Блок пользователя ---------- */
+
+.console-user-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.console-user-name {
+  overflow: hidden;
+  color: var(--ddc-heading);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-user-email {
+  overflow: hidden;
+  color: var(--ddc-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Выпадающие меню: карточка .menu портала ---------- */
+
+.console-tenant-menu,
+.console-user-menu {
+  padding: 6px;
+  border: 1px solid var(--ddc-border);
+  border-radius: 16px;
+  background: var(--ddc-surface);
+  color: var(--ddc-text);
+  box-shadow: var(--shadow-popover);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
 .console-tenant-menu {
-  width: var(--radix-dropdown-menu-trigger-width);
-  min-width: var(--radix-dropdown-menu-trigger-width);
-  max-width: var(--radix-dropdown-menu-trigger-width);
+  width: max(var(--radix-dropdown-menu-trigger-width), 14rem);
+  min-width: 14rem;
+  max-width: calc(100vw - 16px);
   max-height: min(288px, var(--radix-dropdown-menu-content-available-height));
-  padding: var(--console-pad-xs);
-  border: 1px solid var(--border-chrome);
-  border-radius: var(--console-radius-popover);
-  box-shadow: var(--shadow-popover);
 }
 
-.console-tenant-menu-item {
-  display: grid;
-  height: var(--menu-action-row-h);
-  grid-template-columns: var(--shell-slot-size) minmax(0, 1fr) 14px;
+/* Пункт: menu-item портала, 36px, px-3 py-2, rounded-lg, значок ink-400. */
+.console-tenant-menu [data-slot="dropdown-menu-item"],
+.console-user-menu [data-slot="dropdown-menu-item"] {
+  display: flex;
+  height: auto;
+  min-height: 36px;
   align-items: center;
-  gap: var(--console-gap-lg);
-  border-radius: var(--console-radius-md);
-  padding: 0 var(--console-pad-sm);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
+  gap: 8px;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--ddc-ghost-text);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.console-tenant-menu [data-slot="dropdown-menu-item"] svg,
+.console-user-menu [data-slot="dropdown-menu-item"] svg {
+  flex: none;
+  color: var(--ddc-icon-muted);
+}
+
+.console-tenant-menu [data-slot="dropdown-menu-item"]:focus,
+.console-tenant-menu [data-slot="dropdown-menu-item"][data-highlighted],
+.console-user-menu [data-slot="dropdown-menu-item"]:focus,
+.console-user-menu [data-slot="dropdown-menu-item"][data-highlighted] {
+  background: var(--ddc-surface-muted);
+  color: var(--ddc-heading);
+}
+
+.console-tenant-menu [data-slot="dropdown-menu-separator"],
+.console-user-menu [data-slot="dropdown-menu-separator"] {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--ddc-divider);
+}
+
+.console-tenant-menu-item span:not([data-slot]) {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-tenant-menu-item[data-create-workspace] {
-  grid-template-columns: var(--shell-slot-size) minmax(0, 1fr);
-  color: var(--fg-muted);
+  color: var(--ddc-label);
 }
 
-@media (max-width: 767px) {
-  .console-sidebar-rail {
-    max-width: calc(100vw - var(--shell-stage-gap) * 4);
-  }
-
-  .console-shell[data-sidebar-state^="mobile-"] .console-workspace {
-    padding: 0;
-  }
-
-  .console-route-surface {
-    border-width: 0;
-    border-radius: 0;
-  }
+.console-tenant-menu-item svg.text-ddc-accent-text {
+  margin-left: auto;
+  color: var(--ddc-accent-text);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .console-shell,
-  .console-sidebar-rail,
-  .console-sidebar-preview-scrim,
-  .console-sidebar-row,
-  .console-page-header-slot,
-  .console-sidebar-resize::after {
-    transition-duration: 0.01ms;
-  }
+.console-menu-head {
+  padding: 8px 12px;
+}
+
+.console-menu-head-name {
+  overflow: hidden;
+  color: var(--ddc-heading);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-menu-head-email {
+  overflow: hidden;
+  color: var(--ddc-text-muted);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Надпись над группой пунктов: eyebrow. */
+.console-menu-eyebrow {
+  padding: 8px 12px 4px;
+  color: var(--ddc-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1rem;
+  text-transform: uppercase;
+}
+
+.console-menu-flag {
+  display: inline-flex;
+  width: 16px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--ddc-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1rem;
+}
+
+.console-user-menu .console-menu-check {
+  margin-left: auto;
+  color: var(--ddc-accent-text);
+}
+
+/* Выход отделён и краснеет: menu-item-danger портала. */
+.console-user-menu .console-menu-danger,
+.console-user-menu .console-menu-danger svg {
+  color: var(--ddc-danger-text);
+}
+
+.console-user-menu .console-menu-danger:focus,
+.console-user-menu .console-menu-danger[data-highlighted] {
+  background: var(--ddc-tone-danger-bg);
+  color: var(--ddc-tone-danger-fg);
+}
+
+.console-user-menu .console-menu-danger:focus svg,
+.console-user-menu .console-menu-danger[data-highlighted] svg {
+  color: var(--ddc-tone-danger-fg);
+}
+
+/* ---------- Хлебные крошки в шапке ---------- */
+
+.console-breadcrumb {
+  min-width: 0;
+}
+
+.console-breadcrumb [data-slot="breadcrumb-list"] {
+  flex-wrap: nowrap;
+  gap: 6px;
+  color: var(--ddc-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.console-breadcrumb [data-slot="breadcrumb-item"] {
+  min-width: 0;
+}
+
+.console-breadcrumb [data-slot="breadcrumb-link"] {
+  color: var(--ddc-text-muted);
+  font-weight: 500;
+  transition: color 150ms ease;
+}
+
+.console-breadcrumb [data-slot="breadcrumb-link"]:hover {
+  color: var(--ddc-heading);
+}
+
+.console-breadcrumb [data-slot="breadcrumb-page"] {
+  color: var(--ddc-heading);
+  font-weight: 600;
+}
+
+.console-breadcrumb [data-slot="breadcrumb-separator"] {
+  display: inline-flex;
+  color: var(--ddc-icon-muted);
+}
+
+/* ---------- Командная палитра ---------- */
+
+.console-command-palette {
+  border: 1px solid var(--ddc-border);
+  background: var(--ddc-surface);
+  box-shadow: var(--shadow-popover);
+}
+
+.console-command-palette [cmdk-group-heading] {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.console-command-palette [data-slot="command-item"][data-selected="true"] {
+  background: var(--ddc-selected-bg);
+  color: var(--ddc-selected-text);
+}
+
+.console-command-palette [data-slot="command-item"][data-selected="true"] svg {
+  color: var(--ddc-selected-text);
 }

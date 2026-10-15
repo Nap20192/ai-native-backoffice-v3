@@ -1,12 +1,18 @@
+import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useMemo, useCallback } from "react";
+import { PlusIcon, XIcon } from "lucide-react";
 import { useApi } from "../lib/api";
 import { useOmaInfiniteApiQuery } from "../lib/useApiQuery";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
 import { PopoverContent } from "@/components/ui/popover";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
@@ -14,24 +20,25 @@ import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
 import { TextInput, SecretInput } from "../components/Input";
 import { toast } from "sonner";
 import type { ModelCard } from "@open-managed-agents/api-types";
+import { cn } from "@/lib/utils";
 import { useI18n } from "../i18n";
 import { LocalDebugOnlyWarning } from "../components/LocalDebugOnlyWarning";
 
 // Common Pi provider presets. The actual provider id is an open string; the
 // text field below also accepts any current/future Pi id or a custom id.
 const PROVIDERS = [
-  { value: "anthropic", label: "Anthropic", desc: "Claude models" },
-  { value: "openai", label: "OpenAI", desc: "GPT models" },
-  { value: "deepseek", label: "DeepSeek", desc: "DeepSeek catalog" },
-  { value: "openrouter", label: "OpenRouter", desc: "OpenRouter catalog" },
-  { value: "google", label: "Google", desc: "Gemini models" },
-  { value: "minimax", label: "MiniMax", desc: "MiniMax models" },
+  { value: "anthropic", label: "Anthropic", desc: "Модели Claude" },
+  { value: "openai", label: "OpenAI", desc: "Модели GPT" },
+  { value: "deepseek", label: "DeepSeek", desc: "Каталог DeepSeek" },
+  { value: "openrouter", label: "OpenRouter", desc: "Каталог OpenRouter" },
+  { value: "google", label: "Google", desc: "Модели Gemini" },
+  { value: "minimax", label: "MiniMax", desc: "Модели MiniMax" },
 ] as const;
 
 type ProviderValue = string;
 
 const PROVIDER_FILTER_OPTIONS: { value: ProviderValue | "any"; label: string }[] = [
-  { value: "any", label: "All" },
+  { value: "any", label: "Все" },
   ...PROVIDERS.map((p) => ({ value: p.value, label: p.label })),
 ];
 
@@ -56,6 +63,13 @@ export function ModelCardsList() {
   const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string }>>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [showModelSuggestions, setShowModelSuggestions] = useState(false);
+
+  // Удаление карточки подтверждается окном ConfirmDialog (правило 11 DDC).
+  // Цель не сбрасываем при закрытии: текст окна не должен пропасть, пока оно
+  // уходит с экрана.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Server-driven filter state. Each piece flows into cardsParams below
   // → useInfiniteApiQuery resets to page 1 on params change → the list
@@ -111,7 +125,7 @@ export function ModelCardsList() {
   const save = async () => {
     setError("");
     if (!form.model_id || (!editingId && !form.api_key)) {
-      setError("Model ID and API Key are required.");
+      setError("Укажите ID модели и API-ключ.");
       return;
     }
     try {
@@ -138,11 +152,11 @@ export function ModelCardsList() {
         try {
           piConfig = JSON.parse(form.pi_config);
         } catch {
-          setError("Pi Config must be valid JSON.");
+          setError("Конфигурация Pi должна быть корректным JSON.");
           return;
         }
         if (typeof piConfig !== "object" || piConfig === null || Array.isArray(piConfig)) {
-          setError("Pi Config must be a JSON object.");
+          setError("Конфигурация Pi должна быть JSON-объектом.");
           return;
         }
         payload.pi_config = piConfig;
@@ -159,22 +173,41 @@ export function ModelCardsList() {
         );
         const probe = created.probe;
         if (probe?.ok === true) {
-          toast.success(`Model card created — ${form.provider} key verified.`);
+          toast.success(`Карточка модели создана, ключ ${form.provider} проверен.`);
         } else if (probe?.ok === false) {
           toast.warning(
             probe.message
-              ? `Model card saved but the key didn't work: ${probe.message}`
-              : "Model card saved but the key didn't work — check api_key / base_url / model id.",
+              ? `Карточка модели сохранена, но ключ не прошёл проверку: ${probe.message}`
+              : "Карточка модели сохранена, но ключ не прошёл проверку. Проверьте API-ключ, базовый URL и ID модели.",
           );
         }
         // ok === null (unsupported provider) → no toast, success is implicit.
       }
       closeDialog(); load();
-    } catch (e: any) { setError(e?.message || "Failed to save"); }
+    } catch (e: any) { setError(e?.message || "Не удалось сохранить"); }
   };
+
+  // Повторный клик по «Создать» во время запроса не должен создать вторую
+  // карточку, поэтому сохранение идёт через useAsyncAction.
+  const saveAction = useAsyncAction(save);
 
   const remove = async (id: string) => {
     try { await api(`/v1/oma/model_cards/${id}`, { method: "DELETE" }); load(); } catch {}
+  };
+
+  const askDelete = () => {
+    if (!editingId) return;
+    setDeleteTarget({ id: editingId, name: form.model_id });
+    setDeleteOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    await remove(deleteTarget.id);
+    setDeleting(false);
+    setDeleteOpen(false);
+    closeDialog();
   };
 
   const startEdit = (card: ModelCard) => {
@@ -202,15 +235,7 @@ export function ModelCardsList() {
     setShowCreate(false); setEditingId(null); setForm({ ...INITIAL_FORM }); setError("");
   };
 
-  const inputCls = "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
-
   const providerLabel = (p: string) => PROVIDERS.find((x) => x.value === p)?.label || p;
-
-  const providerBadge = (p: string) => {
-    if (p === "anthropic" || p === "ant" || p === "ant-compatible") return "bg-warning-subtle text-warning";
-    if (p === "openai" || p === "oai" || p === "oai-compatible") return "bg-success-subtle text-success";
-    return "bg-bg-surface text-fg-muted";
-  };
 
   // TanStack column defs. Order, filtering, and search all flow through
   // server params now — no per-column sort/filter UI. The id+model_id
@@ -223,42 +248,53 @@ export function ModelCardsList() {
       {
         id: "model_id",
         accessorKey: "model_id",
-        header: "Model ID",
+        header: "ID модели",
+        size: 240,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <>
-            <div className="font-medium text-fg">{row.original.model_id}</div>
-            <div className="text-xs text-fg-subtle font-mono">{row.original.id}</div>
-          </>
+          <div className="min-w-0">
+            <div className="truncate font-medium text-ddc-heading" title={row.original.model_id}>
+              {row.original.model_id}
+            </div>
+            <div className="truncate font-mono text-xs text-muted" title={row.original.id}>
+              {row.original.id}
+            </div>
+          </div>
         ),
         enableHiding: false,
       },
       {
         id: "provider",
         accessorKey: "provider",
-        header: "API Format",
+        header: "Провайдер",
+        size: 140,
         cell: ({ row }) => (
-          <span className={`px-2 py-0.5 rounded text-xs font-medium ${providerBadge(row.original.provider)}`}>
-            {providerLabel(row.original.provider)}
-          </span>
+          <span className="chip tone-neutral">{providerLabel(row.original.provider)}</span>
         ),
       },
       {
         id: "model",
         accessorKey: "model",
-        header: "Wire Model",
+        header: "Модель провайдера",
+        size: 200,
+        meta: { priority: 3 },
         cell: ({ row }) =>
           row.original.model === row.original.model_id ? (
-            <span className="text-fg-subtle">(same)</span>
+            <span className="truncate text-muted">(совпадает с ID)</span>
           ) : (
-            <span className="font-mono text-xs text-fg-muted">{row.original.model}</span>
+            <span className="truncate font-mono text-xs text-muted" title={row.original.model}>
+              {row.original.model}
+            </span>
           ),
       },
       {
         id: "api_key",
         accessorFn: (c) => c.api_key_preview ?? "",
-        header: "API Key",
+        header: "API-ключ",
+        size: 130,
+        meta: { priority: 4 },
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-fg-subtle">
+          <span className="font-mono text-xs text-muted">
             ****{row.original.api_key_preview}
           </span>
         ),
@@ -266,42 +302,48 @@ export function ModelCardsList() {
       {
         id: "base_url",
         accessorFn: (c) => c.base_url ?? "",
-        header: "Base URL",
-        cell: ({ row }) => (
-          <span className="text-fg-muted text-xs">{row.original.base_url || "—"}</span>
-        ),
+        header: "Базовый URL",
+        size: 220,
+        meta: { priority: 5 },
+        cell: ({ row }) =>
+          row.original.base_url ? (
+            <span className="truncate text-xs text-muted" title={row.original.base_url}>
+              {row.original.base_url}
+            </span>
+          ) : (
+            <span className="text-xs text-ddc-placeholder">Не задан</span>
+          ),
       },
       {
         id: "default",
         accessorFn: (c) => (c.is_default ? "default" : ""),
-        header: "Default",
+        header: "По умолчанию",
+        size: 150,
         cell: ({ row }) =>
-          row.original.is_default ? (
-            <span className="text-xs text-fg-muted bg-bg-surface px-1.5 py-0.5 rounded">
-              default
-            </span>
-          ) : null,
+          row.original.is_default ? <span className="chip tone-brand">По умолчанию</span> : null,
       },
       {
         id: "created",
         accessorFn: (c) => c.created_at,
-        header: "Created",
+        header: t.common.created,
+        size: 120,
+        meta: { priority: 1 },
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-muted tabular-nums">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
     ],
-    // Intentionally empty: startEdit + remove close over `form`/`api`
-    // but the column defs only need to reflect identity, not capture a
-    // fresh closure on every render.
+    // Intentionally keyed only on the dictionary: startEdit + remove close
+    // over `form`/`api` but the column defs only need to reflect identity,
+    // not capture a fresh closure on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [t],
   );
 
   // Active-filter chip displays — kept null when matching the default so
-  // the chip reads "Provider ▾" rather than "Provider: All ▾". The
+  // the chip reads "Провайдер ▾" rather than "Провайдер: Все ▾". The
   // clear-X only renders when the chip is in non-default state.
   const providerDisplay =
     provider === "any"
@@ -311,7 +353,7 @@ export function ModelCardsList() {
   const filters = (
     <>
       <FilterChip
-        label="Provider"
+        label="Провайдер"
         active={provider !== "any"}
         display={providerDisplay}
         onClear={() => setProvider("any")}
@@ -326,7 +368,7 @@ export function ModelCardsList() {
             options={PROVIDER_FILTER_OPTIONS}
             value={provider}
             onValueChange={(v) => setProvider(v as ProviderValue | "any")}
-            searchPlaceholder="Provider..."
+            searchPlaceholder="Провайдер…"
           />
         </PopoverContent>
       </FilterChip>
@@ -335,11 +377,17 @@ export function ModelCardsList() {
     </>
   );
 
+  const openCreate = () => { setShowCreate(true); setError(""); };
+
+  const labelCls = "mb-1.5 block text-xs leading-4 font-medium text-ddc-label";
+
   return (
     <DataTable<ModelCard>
-      createLabel="+ New model card"
-      onCreate={() => { setShowCreate(true); setError(""); }}
-      searchPlaceholder="Search model cards..."
+      title={t.nav.modelCards}
+      subtitle="Подключения к языковым моделям: провайдер, ключ доступа и адрес."
+      createLabel={t.modelCards.newModelCard}
+      onCreate={openCreate}
+      searchPlaceholder={t.modelCards.searchModelCards}
       searchValue={search}
       onSearchChange={setSearch}
       filters={filters}
@@ -350,83 +398,97 @@ export function ModelCardsList() {
       hasMore={hasMore}
       loadingMore={isLoadingMore}
       onLoadMore={loadMore}
-      emptyTitle={search ? "No matching model cards" : "No model cards yet"}
+      emptyTitle={search ? t.modelCards.noMatchingModelCards : t.modelCards.noModelCardsYet}
       emptyKind="model_card"
       emptyAction={
-        !search && (
-          <Button onClick={() => { setShowCreate(true); setError(""); }}>
-            + New model card
-          </Button>
-        )
+        !search && <Button onClick={openCreate}><PlusIcon />{t.modelCards.newModelCard}</Button>
       }
       emptySubtitle={
         search ? (
-          "Try a different search term."
+          "Попробуйте изменить запрос."
         ) : (
           <>
-            <p>Add a model card to configure API credentials for your agents.</p>
-            <p className="text-xs mt-3">
-              Without model cards, agents use the environment ANTHROPIC_API_KEY.
+            <p>Добавьте карточку модели, чтобы задать ключи доступа для ваших агентов.</p>
+            <p className="mt-3 text-xs">
+              Без карточек моделей агенты используют переменную окружения{" "}
+              <code className="font-mono">ANTHROPIC_API_KEY</code>.
             </p>
           </>
         )
       }
       columns={columns}
     >
-      <Modal open={showCreate} onClose={closeDialog} title={editingId ? "Edit Model Card" : "New Model Card"}
+      <Modal
+        open={showCreate}
+        onClose={closeDialog}
+        title={editingId ? "Изменить карточку модели" : "Новая карточка модели"}
+        closeDisabled={saveAction.loading}
         footer={
           <>
             {editingId && (
               <Button
-                variant="ghost"
-                onClick={async () => {
-                  if (!confirm(`Delete model card ${form.model_id}? This can't be undone.`)) return;
-                  await remove(editingId);
-                  closeDialog();
-                }}
-                className="text-danger hover:text-danger hover:bg-danger-subtle mr-auto"
+                variant="danger-ghost"
+                onClick={askDelete}
+                disabled={saveAction.loading}
+                className="mr-auto"
               >
-                Delete
+                {t.common.delete}
               </Button>
             )}
-            <Button variant="ghost" onClick={closeDialog}>Cancel</Button>
-            <Button onClick={save} disabled={!form.model_id || (!editingId && !form.api_key)}>{editingId ? "Save" : "Create"}</Button>
+            <Button variant="ghost" onClick={closeDialog} disabled={saveAction.loading}>
+              {t.common.cancel}
+            </Button>
+            <Button
+              onClick={saveAction.run}
+              loading={saveAction.loading}
+              disabled={!form.model_id || (!editingId && !form.api_key)}
+            >
+              {editingId ? t.common.save : t.common.create}
+            </Button>
           </>
         }>
-        <form autoComplete="off" onSubmit={(e) => e.preventDefault()} className="space-y-3">
+        <form autoComplete="off" onSubmit={(e) => e.preventDefault()} className="space-y-4">
           <LocalDebugOnlyWarning />
-          {error && <div className="text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
-          <div>
-            <Label htmlFor="modelcard-id" className="text-sm text-fg-muted block mb-1">
-              Model ID *
-              <span className="ml-1 text-xs text-fg-subtle">(tenant-unique handle agents reference)</span>
-            </Label>
-            <TextInput id="modelcard-id" value={form.model_id} onChange={(e) => setForm({ ...form, model_id: e.target.value })} className={inputCls}
-              placeholder="claude-prod, claude-sonnet-4-6, bedrock-sonnet, ..." />
-          </div>
+          {error && (
+            <div role="alert" className="callout-danger">
+              {error}
+            </div>
+          )}
+          <TextInput
+            id="modelcard-id"
+            label="ID модели *"
+            hint="Уникальное имя в рабочем пространстве, на него ссылаются агенты."
+            value={form.model_id}
+            onChange={(e) => setForm({ ...form, model_id: e.target.value })}
+            placeholder="claude-prod, claude-sonnet-4-6, bedrock-sonnet, ..."
+          />
           <div role="group" aria-labelledby="modelcard-provider-label">
-            <span id="modelcard-provider-label" className="text-sm text-fg-muted block mb-1">Pi Provider *</span>
+            <span id="modelcard-provider-label" className={labelCls}>Провайдер Pi *</span>
             <div className="grid grid-cols-2 gap-2">
-              {PROVIDERS.map((p) => (
-                <Button variant="ghost"
-                  key={p.value}
-                  type="button"
-                  aria-pressed={form.provider === p.value}
-                  onClick={() => {
-                    setForm({ ...form, provider: p.value, model: "", base_url: "" });
-                    setAvailableModels([]);
-                    void fetchModels(p.value);
-                  }}
-                  className={`text-left px-3 py-2 border rounded-md text-sm transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
-                    form.provider === p.value
-                      ? "border-brand bg-brand-subtle text-fg"
-                      : "border-border text-fg-muted hover:border-fg-subtle"
-                  }`}
-                >
-                  <div className="font-medium">{p.label}</div>
-                  <div className="text-xs text-fg-subtle mt-0.5">{p.desc}</div>
-                </Button>
-              ))}
+              {PROVIDERS.map((p) => {
+                const selected = form.provider === p.value;
+                return (
+                  <PlainButton
+                    key={p.value}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setForm({ ...form, provider: p.value, model: "", base_url: "" });
+                      setAvailableModels([]);
+                      void fetchModels(p.value);
+                    }}
+                    className={cn(
+                      "min-w-0 rounded-xl border px-3 py-2 text-left text-sm transition-colors",
+                      selected
+                        ? "border-ddc-ring bg-ddc-selected-bg text-ddc-selected-text"
+                        : "border-ddc-border-strong text-ddc-text hover:bg-ddc-surface-muted",
+                    )}
+                  >
+                    <div className="truncate font-medium" title={p.label}>{p.label}</div>
+                    <div className="truncate text-xs text-muted" title={p.desc}>{p.desc}</div>
+                  </PlainButton>
+                );
+              })}
             </div>
             <TextInput
               value={form.provider}
@@ -435,105 +497,149 @@ export function ModelCardsList() {
                 setAvailableModels([]);
               }}
               onBlur={() => void fetchModels(form.provider)}
-              className={`${inputCls} mt-2`}
-              placeholder="Pi provider id, e.g. anthropic, deepseek, my-vllm"
-              aria-label="Pi provider id"
+              className="mt-2"
+              placeholder="ID провайдера Pi, например anthropic, deepseek, my-vllm"
+              aria-label="ID провайдера Pi"
             />
           </div>
+          <SecretInput
+            id="modelcard-api-key"
+            label={editingId ? "API-ключ" : "API-ключ *"}
+            value={form.api_key}
+            onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+            placeholder={editingId ? "Оставьте пустым, чтобы сохранить текущий ключ" : "sk-..."}
+            name="model-api-key-field"
+          />
           <div>
-            <Label htmlFor="modelcard-api-key" className="text-sm text-fg-muted block mb-1">API Key {editingId ? "" : "*"}</Label>
-            <SecretInput id="modelcard-api-key" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })} className={inputCls}
-              placeholder={editingId ? "Leave blank to keep current key" : "sk-..."}
-              name="model-api-key-field" />
-            {modelsLoading && (
-              <p className="text-xs text-fg-subtle mt-1">Loading models...</p>
-            )}
-          </div>
-          <div className="relative">
-            <Label htmlFor="modelcard-wire-model" className="text-sm text-fg-muted block mb-1">
-              Wire Model
-              <span className="ml-1 text-xs text-fg-subtle">(sent to provider; defaults to Model ID)</span>
+            <Label htmlFor="modelcard-wire-model" className={labelCls}>
+              Модель провайдера
             </Label>
-            <Input id="modelcard-wire-model" value={form.model}
-              onChange={(e) => { setForm({ ...form, model: e.target.value }); setShowModelSuggestions(true); }}
-              onFocus={() => {
-                setShowModelSuggestions(true);
-                if (availableModels.length === 0) void fetchModels(form.provider);
-              }}
-              onBlur={() => setTimeout(() => setShowModelSuggestions(false), 150)}
-              className={inputCls}
-              placeholder={form.model_id || "e.g. claude-sonnet-4-6, deepseek-v4-flash, org/model"}
-              autoComplete="off" name="model-field" />
-            {showModelSuggestions && availableModels.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-bg border border-border rounded-md shadow-lg py-1 max-h-48 overflow-y-auto">
-                {availableModels
-                  .filter((m) => !form.model || m.id.includes(form.model) || m.name.toLowerCase().includes(form.model.toLowerCase()))
-                  .map((m) => (
-                    <Button variant="ghost" key={m.id} type="button"
-                      onMouseDown={() => { setForm({ ...form, model: m.id }); setShowModelSuggestions(false); }}
-                      className="w-full text-left px-3 py-1.5 min-h-11 sm:min-h-0 text-sm hover:bg-bg-surface">
-                      <span className="text-fg">{m.name !== m.id ? m.name : m.id}</span>
-                      {m.name !== m.id && <span className="text-fg-subtle text-xs ml-2">{m.id}</span>}
-                    </Button>
-                  ))}
-              </div>
-            )}
-            {!availableModels.length && !modelsLoading && form.provider && (
-              <p className="text-xs text-fg-subtle mt-1">No Pi catalog entries loaded — enter a wire model manually for custom providers.</p>
-            )}
+            <div className="relative">
+              <Input id="modelcard-wire-model" value={form.model}
+                onChange={(e) => { setForm({ ...form, model: e.target.value }); setShowModelSuggestions(true); }}
+                onFocus={() => {
+                  setShowModelSuggestions(true);
+                  if (availableModels.length === 0) void fetchModels(form.provider);
+                }}
+                onBlur={() => setTimeout(() => setShowModelSuggestions(false), 150)}
+                aria-describedby="modelcard-wire-model-hint"
+                placeholder={form.model_id || "например, claude-sonnet-4-6, deepseek-v4-flash, org/model"}
+                autoComplete="off" name="model-field" />
+              {showModelSuggestions && availableModels.length > 0 && (
+                <div className="menu absolute top-full left-0 z-10 mt-1 max-h-48 w-full overflow-y-auto">
+                  {availableModels
+                    .filter((m) => !form.model || m.id.includes(form.model) || m.name.toLowerCase().includes(form.model.toLowerCase()))
+                    .map((m) => (
+                      <PlainButton key={m.id} type="button"
+                        onMouseDown={() => { setForm({ ...form, model: m.id }); setShowModelSuggestions(false); }}
+                        className="menu-item">
+                        <span className="min-w-0 truncate" title={m.name !== m.id ? `${m.name} (${m.id})` : m.id}>
+                          {m.name !== m.id ? m.name : m.id}
+                        </span>
+                        {m.name !== m.id && (
+                          <span className="ml-auto flex-none truncate text-xs text-muted" title={m.id}>{m.id}</span>
+                        )}
+                      </PlainButton>
+                    ))}
+                </div>
+              )}
+            </div>
+            <p id="modelcard-wire-model-hint" className="mt-1.5 text-xs leading-4 text-muted">
+              {modelsLoading
+                ? "Загружаем список моделей…"
+                : !availableModels.length && form.provider
+                  ? "Каталог Pi не загружен. Для своих провайдеров укажите модель вручную."
+                  : "Отправляется провайдеру. Если пусто, берётся ID модели."}
+            </p>
           </div>
-          <div>
-            <Label htmlFor="modelcard-base-url" className="text-sm text-fg-muted block mb-1">Base URL <span className="text-fg-subtle">(optional for Pi built-ins)</span></Label>
-            <Input id="modelcard-base-url" value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} className={inputCls}
-              placeholder="https://your-provider.example/v1" autoComplete="off" />
-          </div>
-          <div>
-            <Label htmlFor="modelcard-pi-config" className="text-sm text-fg-muted block mb-1">Pi Config <span className="text-fg-subtle">(JSON; custom provider requires api)</span></Label>
+          <TextInput
+            id="modelcard-base-url"
+            label="Базовый URL"
+            hint="Необязательно для встроенных провайдеров Pi."
+            value={form.base_url}
+            onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+            placeholder="https://your-provider.example/v1"
+          />
+          <Field label="Конфигурация Pi" hint="JSON. Для своего провайдера нужно поле api.">
             <Textarea
               id="modelcard-pi-config"
               value={form.pi_config}
               onChange={(e) => setForm({ ...form, pi_config: e.target.value })}
-              className={`${inputCls} min-h-24 font-mono`}
+              className="min-h-24 font-mono text-xs"
               placeholder={'{"api":"openai-completions","reasoning":false,"contextWindow":128000,"maxTokens":16384}'}
               spellCheck={false}
             />
-          </div>
-          <div>
-              <Label className="text-sm text-fg-muted block mb-1">Custom Headers <span className="text-fg-subtle">(optional)</span></Label>
-              <div className="space-y-1.5">
-                {form.custom_headers.map((h, i) => (
-                  <div key={i} className="flex gap-2 items-center">
+          </Field>
+          <div role="group" aria-labelledby="modelcard-headers-label">
+            <span id="modelcard-headers-label" className={labelCls}>Свои заголовки (необязательно)</span>
+            <div className="space-y-2">
+              {form.custom_headers.map((h, i) => {
+                const removable = form.custom_headers.length > 1;
+                return (
+                  <div
+                    key={i}
+                    className={cn(
+                      "grid items-center gap-2",
+                      removable
+                        ? "grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                        : "sm:grid-cols-2",
+                    )}
+                  >
                     <Input value={h.key} onChange={(e) => {
                       const hdrs = [...form.custom_headers];
                       hdrs[i] = { ...hdrs[i], key: e.target.value };
                       setForm({ ...form, custom_headers: hdrs });
-                    }} className={inputCls} placeholder="Header-Name" aria-label={`Custom header ${i + 1} name`} autoComplete="off" />
+                    }} placeholder="Имя заголовка" aria-label={`Заголовок ${i + 1}: имя`} autoComplete="off" />
                     <Input value={h.value} onChange={(e) => {
                       const hdrs = [...form.custom_headers];
                       hdrs[i] = { ...hdrs[i], value: e.target.value };
                       setForm({ ...form, custom_headers: hdrs });
-                    }} className={inputCls} placeholder="value" aria-label={`Custom header ${i + 1} value`} autoComplete="off" />
-                    {form.custom_headers.length > 1 && (
-                      <Button variant="ghost" type="button" onClick={() => setForm({ ...form, custom_headers: form.custom_headers.filter((_, j) => j !== i) })}
-                        className="inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 px-2 text-fg-subtle hover:text-danger text-xs shrink-0">Remove</Button>
+                    }} placeholder="Значение" aria-label={`Заголовок ${i + 1}: значение`} autoComplete="off" />
+                    {removable && (
+                      <Button variant="ghost" size="icon-xs" type="button"
+                        onClick={() => setForm({ ...form, custom_headers: form.custom_headers.filter((_, j) => j !== i) })}
+                        className="col-start-2 row-span-2 row-start-1 self-center text-ddc-icon-muted hover:text-ddc-danger-text sm:col-start-3 sm:row-span-1"
+                        aria-label={`Удалить заголовок ${i + 1}`}
+                        title="Удалить заголовок">
+                        <XIcon />
+                      </Button>
                     )}
                   </div>
-                ))}
-                <Button variant="ghost" type="button" onClick={() => setForm({ ...form, custom_headers: [...form.custom_headers, { key: "", value: "" }] })}
-                  className="inline-flex items-center justify-center min-h-11 sm:min-h-0 px-2 text-xs text-fg-muted hover:text-fg">+ Add header</Button>
-              </div>
+                );
+              })}
+              <PlainButton type="button" className="btn-add"
+                onClick={() => setForm({ ...form, custom_headers: [...form.custom_headers, { key: "", value: "" }] })}>
+                <PlusIcon aria-hidden="true" />
+                Добавить заголовок
+              </PlainButton>
+            </div>
           </div>
-          <Label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer">
+          <Label className="cursor-pointer text-sm leading-5 font-normal text-ddc-text">
             <Checkbox
               checked={form.is_default}
               onCheckedChange={(checked) =>
                 setForm({ ...form, is_default: checked === true })
               }
             />
-            Set as default model card
+            Использовать как карточку по умолчанию
           </Label>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Удалить карточку модели?"
+        message={
+          deleteTarget
+            ? `Карточка «${deleteTarget.name}» будет удалена. Действие нельзя отменить.`
+            : "Действие нельзя отменить."
+        }
+        confirmLabel={t.common.delete}
+        destructive
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteOpen(false)}
+      />
     </DataTable>
   );
 }

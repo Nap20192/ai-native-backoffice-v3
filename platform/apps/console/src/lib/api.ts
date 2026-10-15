@@ -68,13 +68,19 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId?: string;
+  /** Текст ошибки так, как его прислал сервер (обычно по-английски). В
+   *  интерфейс не выводится, нужен для консоли браузера и отладки. */
+  readonly serverMessage: string;
 
-  constructor(info: ApiErrorInfo & { status: number; requestId?: string }) {
+  constructor(
+    info: ApiErrorInfo & { status: number; requestId?: string; serverMessage?: string },
+  ) {
     super(info.message);
     this.name = "ApiError";
     this.status = info.status;
     this.code = info.code;
     this.requestId = info.requestId;
+    this.serverMessage = info.serverMessage ?? info.message;
   }
 }
 
@@ -113,11 +119,56 @@ function shouldSilenceAuthError(path: string, status: number): boolean {
   return SILENT_AUTH_PATHS.some((p) => path === p || path.startsWith(`${p}?`));
 }
 
-function getApiToastMessage(info: ApiErrorInfo, status: number): string {
-  if (info.message !== `HTTP ${status}`) return info.message;
-  if (status >= 500) return "Server error. Please try again.";
-  return `Request failed (HTTP ${status}).`;
+/** Русские тексты ошибок по коду сервера. Код стабилен, текст сервера нет. */
+const ERROR_CODE_MESSAGES: Record<string, string> = {
+  not_a_member: "Вы не состоите в этом рабочем пространстве.",
+  authentication_error: "Требуется вход. Войдите снова.",
+  permission_error: "Недостаточно прав в рабочем пространстве.",
+  not_found_error: "Запись не найдена.",
+  rate_limit_error: "Слишком много запросов. Повторите позже.",
+  overloaded_error: "Сервер перегружен. Повторите попытку позже.",
+};
+
+/** Русские тексты ошибок по статусу ответа, когда кода нет или он незнаком. */
+const ERROR_STATUS_MESSAGES: Record<number, string> = {
+  400: "Некорректный запрос. Проверьте введённые данные.",
+  401: "Требуется вход. Войдите снова.",
+  402: "Недостаточно средств для выполнения запроса.",
+  403: "Недостаточно прав в рабочем пространстве.",
+  404: "Запись не найдена.",
+  405: "Действие недоступно для этой записи.",
+  408: "Время ожидания истекло. Повторите попытку.",
+  409: "Конфликт: запись уже существует или была изменена.",
+  410: "Срок действия истёк или запись больше недоступна.",
+  413: "Слишком большой запрос.",
+  415: "Неподдерживаемый формат данных.",
+  422: "Данные не прошли проверку. Проверьте введённые значения.",
+  429: "Слишком много запросов. Повторите позже.",
+};
+
+const CYRILLIC = /[А-Яа-яЁё]/;
+
+/**
+ * Текст ошибки для пользователя по-русски. Сервер отвечает по-английски, и его
+ * текст в интерфейс не попадает: берётся русский текст по коду, затем по
+ * статусу. Сообщение сервера, уже написанное по-русски, остаётся как есть.
+ * Исходный текст сервера уходит в консоль браузера (`console.error`) и в
+ * `ApiError.serverMessage`.
+ */
+export function localizeApiError(info: ApiErrorInfo, status: number): string {
+  if (info.message && CYRILLIC.test(info.message)) return info.message;
+  if (info.code && ERROR_CODE_MESSAGES[info.code]) return ERROR_CODE_MESSAGES[info.code];
+  if (ERROR_STATUS_MESSAGES[status]) return ERROR_STATUS_MESSAGES[status];
+  if (status >= 500) return "Ошибка сервера. Повторите попытку.";
+  return `Не удалось выполнить запрос (HTTP ${status}).`;
 }
+
+/** Параметры запроса консоли поверх `RequestInit`. */
+export type ApiRequestInit = RequestInit & {
+  /** Не показывать тост об ошибке: страница сама рисует состояние ошибки
+   *  (`LoadError`), и второй сигнал о том же сбое только шумит. */
+  quiet?: boolean;
+};
 
 export function useApi() {
   // The request transports are wrapped in useCallback so a render of any
@@ -132,8 +183,9 @@ export function useApi() {
   const apiRaw = useCallback(
     async function apiRaw(
       path: string,
-      init?: RequestInit
+      requestInit?: ApiRequestInit
     ): Promise<Response> {
+      const { quiet, ...init } = requestInit ?? {};
       const activeTenant = getActiveTenantId();
       // Don't auto-set JSON content-type for FormData — the browser must add
       // multipart boundaries itself, and a manually set content-type without
@@ -158,13 +210,13 @@ export function useApi() {
         // Network-level failure (DNS, CORS, offline, request aborted by route
         // change). Show a single toast — the caller's catch likely just renders
         // an empty state otherwise.
-        const msg = err instanceof Error ? err.message : "network error";
+        const msg = err instanceof Error ? err.message : "network unavailable";
         // Don't toast aborted requests (component unmount is a normal flow).
         if (!(err instanceof DOMException && err.name === "AbortError")) {
           // User-facing toast: skip the METHOD path: prefix (debug noise);
           // log the full thing to console for dev triage.
           console.error(`[api] ${(init?.method || "GET")} ${path}: ${msg}`);
-          toast.error(`Network error: ${msg}`);
+          toast.error("Ошибка сети. Проверьте соединение и повторите попытку.");
         }
         throw err;
       }
@@ -195,10 +247,15 @@ export function useApi() {
         ) {
           sessionStorage.setItem("oma_tenant_self_heal", "1");
           setActiveTenantId(null);
-          toast.info("Reset stored workspace pin (was unrecognized) — reloading");
+          toast.info("Сохранённое рабочее пространство не найдено. Сбрасываю и перезагружаю страницу");
           // Give the toast a tick to render before navigation.
           setTimeout(() => location.reload(), 250);
-          throw new ApiError({ ...info, status: res.status });
+          throw new ApiError({
+            ...info,
+            message: localizeApiError(info, res.status),
+            serverMessage: info.message,
+            status: res.status,
+          });
         }
 
         // Surface non-OK responses to the user. Silently dropped errors had us
@@ -206,18 +263,21 @@ export function useApi() {
         // every endpoint failure here is something the user could act on
         // (re-login, switch tenant, retry) once they know it happened.
         //
-        // Toast format: server message verbatim. The previous shape prefixed
-        // the API path (e.g. "/v1/sessions: Insufficient balance.") which
-        // leaked debug info into UX. Path + status still go to console for
-        // dev triage.
+        // Текст тоста по-русски (localizeApiError), без пути запроса: путь и
+        // исходный текст сервера уходят только в консоль для разработчика.
+        const message = localizeApiError(info, res.status);
         if (!shouldSilenceAuthError(path, res.status)) {
           console.error(`[api] ${res.status} ${path}: ${info.message}`);
-          toast.error(getApiToastMessage(info, res.status), {
-            id: `api-error:${res.status}:${info.code || info.message}`,
-          });
+          if (!quiet) {
+            toast.error(message, {
+              id: `api-error:${res.status}:${info.code || info.message}`,
+            });
+          }
         }
         throw new ApiError({
           ...info,
+          message,
+          serverMessage: info.message,
           status: res.status,
           requestId: typeof requestId === "string" ? requestId : undefined,
         });
@@ -233,7 +293,7 @@ export function useApi() {
   const api = useCallback(
     async function api<T = unknown>(
       path: string,
-      init?: RequestInit,
+      init?: ApiRequestInit,
     ): Promise<T> {
       const response = await apiRaw(path, init);
       return response.json() as Promise<T>;
@@ -255,7 +315,7 @@ export function useApi() {
         },
       });
       if (!response.body) {
-        throw new Error("Managed Agents event stream response has no body");
+        throw new Error("Ответ потока событий агента пуст");
       }
       return iterateJsonSseStream<T>(response.body);
     },

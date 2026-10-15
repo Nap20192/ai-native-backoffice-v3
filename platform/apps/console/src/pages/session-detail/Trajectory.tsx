@@ -6,23 +6,34 @@ import {
 import { StatusPill } from "../../components/Badge";
 import { Modal } from "../../components/Modal";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { EMPTY_VALUE, formatDateTimeRu } from "../../components/session/format-ru";
 
 /**
- * Session-detail trajectory views.
+ * Траектория на странице сессии.
  *
- * Three pieces:
- *   - `TrajectoryOutcomeChip` — small "Outcome: X" pill rendered in the
- *     session header. Hidden while loading / on error / when the agent
- *     is still running.
- *   - `TrajectoryRewardChip` — paired pill showing the verifier's reward
- *     score. Tooltip reveals the verifier id + computed-at timestamp.
- *   - `TrajectoryViewerModal` — Phase-3 viewer: pretty-printed JSON with
- *     a Download button. Anthropic Messages / Inspect AI / OTel
- *     projections are Phase 4.
+ * Три части:
+ *   - `TrajectoryOutcomeChip`: значок «Итог: X» в шапке сессии. Скрыт, пока
+ *     траектория грузится, при ошибке и пока агент ещё работает.
+ *   - `TrajectoryRewardChip`: парный значок с оценкой проверяющего. В
+ *     подсказке id проверяющего и время расчёта.
+ *   - `TrajectoryViewerModal`: окно с отформатированным JSON и кнопкой
+ *     скачивания. Проекции Anthropic Messages, Inspect AI и OTel появятся
+ *     позже.
  *
- * Lifted out of SessionDetail to keep the orchestrator focused on event
- * stream + chat scaffolding.
+ * Вынесено из SessionDetail, чтобы основная страница занималась потоком
+ * событий и чатом.
  */
+
+/** Итог траектории по-русски. Сырые значения (`success`, `failure`) в
+ *  интерфейс не выводятся. */
+const OUTCOME_LABEL: Record<string, string> = {
+  success: "успешно",
+  failure: "неудача",
+  timeout: "превышено время",
+  interrupted: "прервано",
+  running: "выполняется",
+};
 
 export function TrajectoryOutcomeChip({
   trajectory,
@@ -35,7 +46,7 @@ export function TrajectoryOutcomeChip({
   return (
     <StatusPill
       status={tone}
-      label={`Outcome: ${trajectory.outcome}`}
+      label={`Итог: ${OUTCOME_LABEL[trajectory.outcome] ?? trajectory.outcome}`}
     />
   );
 }
@@ -57,20 +68,20 @@ export function TrajectoryRewardChip({
   // with the outcome chip next to it (success = same green, failure = red).
   const tone = isPass ? "completed" : isFail ? "errored" : "neutral";
   const titleParts = [
-    `Reward: ${r.final_reward.toFixed(4)}`,
-    r.verifier_id ? `verifier: ${r.verifier_id}` : null,
-    r.computed_at ? `computed: ${new Date(r.computed_at).toLocaleString()}` : null,
+    `Оценка: ${r.final_reward.toFixed(4).replace(".", ",")}`,
+    r.verifier_id ? `проверяющий: ${r.verifier_id}` : null,
+    r.computed_at ? `рассчитано: ${formatDateTimeRu(r.computed_at)}` : null,
   ].filter(Boolean) as string[];
+  const headlineRu = headline === "–" ? EMPTY_VALUE : headline;
   return (
     <span title={titleParts.join(" · ")}>
-      <StatusPill status={tone} label={`Reward: ${headline}`} />
+      <StatusPill status={tone} label={`Оценка: ${headlineRu}`} />
     </span>
   );
 }
 
-/** Trajectory viewer modal — Phase 3 minimum-viable: pretty-printed
- *  JSON with a Download button. The download uses an in-memory blob URL
- *  so we don't have to round-trip to a server endpoint. */
+/** Окно просмотра траектории: отформатированный JSON и кнопка скачивания.
+ *  Скачивание идёт через blob-адрес в памяти, запроса к серверу нет. */
 export function TrajectoryViewerModal({
   open,
   onClose,
@@ -102,30 +113,33 @@ export function TrajectoryViewerModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Trajectory"
-      subtitle={ready ? `${trajectory.trajectory_id} · session ${sessionId}` : `session ${sessionId}`}
+      title="Траектория"
+      subtitle={ready ? `${trajectory.trajectory_id} · сессия ${sessionId}` : `Сессия ${sessionId}`}
       maxWidth="max-w-4xl"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-          <Button onClick={download} disabled={!ready}>Download JSON</Button>
+          <Button variant="ghost" onClick={onClose}>Закрыть</Button>
+          <Button onClick={download} disabled={!ready}>Скачать JSON</Button>
         </>
       }
     >
       {trajectory === "loading" && (
-        <div className="text-sm text-fg-subtle">Loading trajectory…</div>
+        <div className="flex items-center gap-2 text-sm text-ddc-text-muted" role="status">
+          <Spinner />
+          Загрузка траектории…
+        </div>
       )}
       {trajectory === "error" && (
-        <div className="text-sm text-danger">
-          Trajectory unavailable. The session may not have any events yet, or the
-          sandbox worker is unreachable. Retry by reloading the page.
+        <div className="callout-danger" role="alert">
+          Траектория недоступна. Возможно, в сессии ещё нет событий или недоступен
+          исполнитель в песочнице. Обновите страницу, чтобы повторить попытку.
         </div>
       )}
       {trajectory === undefined && (
-        <div className="text-sm text-fg-subtle">No trajectory loaded yet.</div>
+        <div className="text-sm text-ddc-text-muted">Траектория ещё не загружена.</div>
       )}
       {ready && (
-        <pre className="font-mono text-xs bg-bg-surface rounded px-3 py-2 overflow-auto max-h-[60vh] text-fg whitespace-pre">
+        <pre className="max-h-[60vh] overflow-auto rounded-xl bg-ddc-surface-muted p-3 font-mono text-xs whitespace-pre text-ddc-text">
           {json}
         </pre>
       )}

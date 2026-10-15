@@ -30,8 +30,8 @@ export type ConversationEmptyStateProps = ComponentProps<"div"> & {
 
 export const ConversationEmptyState = ({
   className,
-  title = "No messages yet",
-  description = "Start a conversation to see messages here",
+  title = "Сообщений пока нет",
+  description = "Начните диалог, и сообщения появятся здесь",
   icon,
   children,
   ...props
@@ -45,11 +45,11 @@ export const ConversationEmptyState = ({
   >
     {children ?? (
       <>
-        {icon && <div className="text-muted-foreground">{icon}</div>}
+        {icon && <div className="text-ddc-icon-muted">{icon}</div>}
         <div className="space-y-1">
-          <h3 className="font-medium text-sm">{title}</h3>
+          <h3 className="text-sm font-medium text-ddc-heading">{title}</h3>
           {description && (
-            <p className="text-muted-foreground text-sm">{description}</p>
+            <p className="text-sm text-ddc-text-muted">{description}</p>
           )}
         </div>
       </>
@@ -70,6 +70,8 @@ export const ConversationScrollButton = ({
       icon={children}
       renderButton={({ onClick, className: sharedClassName, icon }) => (
         <Button
+          aria-label="Прокрутить вниз"
+          title="Прокрутить вниз"
           className={sharedClassName}
           onClick={onClick}
           size="icon"
@@ -99,8 +101,15 @@ export type ConversationDownloadProps = Omit<
   formatMessage?: (message: UIMessage, index: number) => string;
 };
 
+const ROLE_LABEL: Record<UIMessage["role"], string> = {
+  user: "Пользователь",
+  assistant: "Агент",
+  system: "Система",
+};
+
 const defaultFormatMessage = (message: UIMessage): string => {
   const roleLabel =
+    ROLE_LABEL[message.role] ??
     message.role.charAt(0).toUpperCase() + message.role.slice(1);
   return `**${roleLabel}:** ${getMessageText(message)}`;
 };
@@ -137,13 +146,15 @@ export const ConversationDownload = ({
   return (
     <Button
       className={cn(
-        "absolute top-4 right-4 rounded-full dark:bg-background dark:hover:bg-muted",
+        "absolute top-4 right-4",
         className
       )}
       onClick={handleDownload}
       size="icon"
       type="button"
       variant="outline"
+      aria-label="Скачать разговор"
+      title="Скачать разговор"
       {...props}
     >
       {children ?? <DownloadIcon className="size-4" />}

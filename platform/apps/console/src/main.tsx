@@ -8,13 +8,6 @@ import {
   type UIMatch,
 } from "react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
-// Bundled font (woff2 shipped with the app) so Logo's `[ ]` brackets render
-// in JetBrains Mono on first paint — Google Fonts `display=swap` would
-// otherwise render the brackets in SF Mono first, then re-render in
-// JetBrains Mono when the network fetch resolves, producing a visible
-// width shift in the sidebar header.
-import "@fontsource-variable/jetbrains-mono";
-import "@fontsource-variable/geist";
 import "./index.css";
 import { AuthProvider } from "./lib/auth";
 import { I18nProvider } from "./i18n";
@@ -23,6 +16,7 @@ import { AppShell } from "./components/AppShell";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { queryClient } from "./lib/query-client";
 import { loadBranding } from "./lib/branding";
+import { crumbName } from "./lib/crumb-names";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { AgentsList } from "./pages/AgentsList";
@@ -71,8 +65,8 @@ import { consolePlugins } from "./plugins/registry";
  * Router config. Migrated from declarative `<BrowserRouter><Routes>` to
  * the data router (`createBrowserRouter` + `<RouterProvider>`) so we
  * can use `useMatches()` / per-route `handle` / loaders / actions.
- * Hooks that throw "must be used within a data router" — AppBreadcrumb,
- * future loader-driven pages — now work.
+ * Hooks that throw "must be used within a data router" - AppBreadcrumb,
+ * future loader-driven pages - now work.
  *
  * Lazy chunks use the data-router-native `lazy:` field, which returns
  * an object with `Component` (and optionally `loader`, `action`,
@@ -85,33 +79,35 @@ import { consolePlugins } from "./plugins/registry";
  * the loader) pass a function that reads the match.
  */
 
+const INTEGRATIONS_ENABLED = import.meta.env.VITE_ENABLE_INTEGRATIONS === "1";
+
 const protectedRoutes: RouteObject[] = [
-  { index: true, element: <Dashboard />, handle: { crumb: "Dashboard" } },
+  { index: true, element: <Dashboard />, handle: { crumb: "Сводка" } },
   // Nested route groups so detail pages publish a proper hierarchy
-  // through `useMatches()` — `/agents/:id` resolves to
+  // through `useMatches()` - `/agents/:id` resolves to
   // [agents-parent, agents/:id], so AppBreadcrumb renders
   // `Agents › Agent` instead of just `Agent` with no link back.
   {
     path: "agents",
-    handle: { crumb: "Agents" },
+    handle: { crumb: "Агенты" },
     children: [
       { index: true, element: <AgentsList /> },
       {
         path: ":id",
         element: <AgentDetail />,
-        handle: { crumb: (m: UIMatch) => (m.params.id as string | undefined) ?? "Agent" },
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Агент") },
       },
     ],
   },
   {
     path: "sessions",
-    handle: { crumb: "Sessions" },
+    handle: { crumb: "Сессии" },
     children: [
       { index: true, element: <SessionsList /> },
       {
         path: ":id",
-        handle: { crumb: (m: UIMatch) => (m.params.id as string | undefined) ?? "Session" },
-        // SessionDetail lazy-loads — it pulls in ai-elements + Shiki +
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Сессия") },
+        // SessionDetail lazy-loads - it pulls in ai-elements + Shiki +
         // Streamdown + mermaid + dozens of language defs (~500 kB
         // gzipped). Splitting it out keeps the initial bundle for
         // /agents, /sessions list, etc. under 350 kB.
@@ -122,141 +118,148 @@ const protectedRoutes: RouteObject[] = [
       },
     ],
   },
-  { path: "files", element: <FilesList />, handle: { crumb: "Files" } },
+  { path: "files", element: <FilesList />, handle: { crumb: "Файлы" } },
   {
     path: "evals",
-    handle: { crumb: "Eval Runs" },
+    handle: { crumb: "Запуски оценки" },
     children: [
       { index: true, element: <EvalRunsList /> },
       {
         path: ":id",
         element: <EvalRunDetail />,
-        handle: { crumb: (m: UIMatch) => (m.params.id as string | undefined) ?? "Eval Run" },
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Запуск оценки") },
       },
     ],
   },
   {
     path: "environments",
-    handle: { crumb: "Environments" },
+    handle: { crumb: "Окружения" },
     children: [
       { index: true, element: <EnvironmentsList /> },
       {
         path: ":id",
         element: <EnvironmentDetail />,
-        handle: { crumb: (m: UIMatch) => (m.params.id as string | undefined) ?? "Environment" },
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Окружение") },
       },
     ],
   },
-  { path: "skills", element: <SkillsList />, handle: { crumb: "Skills" } },
+  { path: "skills", element: <SkillsList />, handle: { crumb: "Навыки" } },
   {
     path: "vaults",
-    handle: { crumb: "Credential Vaults" },
+    handle: { crumb: "Хранилища секретов" },
     children: [
       { index: true, element: <VaultsList /> },
       {
         path: ":id",
         element: <VaultDetail />,
-        handle: { crumb: (m: UIMatch) => (m.params.id as string | undefined) ?? "Vault" },
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Хранилище") },
       },
     ],
   },
   {
     path: "memory",
-    handle: { crumb: "Memory Stores" },
+    handle: { crumb: "Хранилища памяти" },
     children: [
       { index: true, element: <MemoryStoresList /> },
       {
         path: ":id",
         element: <MemoryStoreDetail />,
-        handle: { crumb: (m: UIMatch) => (m.params.id as string | undefined) ?? "Memory Store" },
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Хранилище памяти") },
       },
     ],
   },
-  { path: "model-cards", element: <ModelCardsList />, handle: { crumb: "Model Cards" } },
-  { path: "members", element: <WorkspaceMembers />, handle: { crumb: "Members" } },
-  { path: "api-keys", element: <ApiKeysList />, handle: { crumb: "API Keys" } },
-  { path: "runtimes", element: <RuntimesList />, handle: { crumb: "Local Runtimes" } },
-  {
-    path: "integrations",
-    handle: { crumb: "Integrations" },
-    children: [
+  { path: "model-cards", element: <ModelCardsList />, handle: { crumb: "Карточки моделей" } },
+  { path: "members", element: <WorkspaceMembers />, handle: { crumb: "Участники" } },
+  { path: "api-keys", element: <ApiKeysList />, handle: { crumb: "API-ключи" } },
+  { path: "runtimes", element: <RuntimesList />, handle: { crumb: "Локальные среды" } },
+  // Интеграции (Linear, GitHub, Slack, Feishu) убраны из меню и со страниц.
+  // Код страниц остаётся, маршруты открываются только флагом сборки
+  // VITE_ENABLE_INTEGRATIONS=1, иначе адрес /integrations/* уходит на /agents.
+  ...(INTEGRATIONS_ENABLED
+    ? [
       {
-        path: "linear",
-        handle: { crumb: "Linear" },
+        path: "integrations",
+        handle: { crumb: "Интеграции" },
         children: [
-          { index: true, element: <IntegrationsLinearList /> },
           {
-            path: "publish",
-            element: <IntegrationsLinearPublishPage />,
-            handle: { crumb: "Publish" },
+            path: "linear",
+            handle: { crumb: "Linear" },
+            children: [
+              { index: true, element: <IntegrationsLinearList /> },
+              {
+                path: "publish",
+                element: <IntegrationsLinearPublishPage />,
+                handle: { crumb: "Публикация" },
+              },
+              {
+                path: "install-pat",
+                element: <IntegrationsLinearPatInstallPage />,
+                handle: { crumb: "Установка по PAT" },
+              },
+              {
+                path: "installations/:id",
+                element: <IntegrationsLinearWorkspace />,
+                handle: { crumb: "Рабочее пространство" },
+              },
+            ],
           },
           {
-            path: "install-pat",
-            element: <IntegrationsLinearPatInstallPage />,
-            handle: { crumb: "Install PAT" },
+            path: "github",
+            handle: { crumb: "GitHub" },
+            children: [
+              { index: true, element: <IntegrationsGitHubList /> },
+              {
+                path: "bind",
+                element: <IntegrationsGitHubBindPage />,
+                handle: { crumb: "Привязка" },
+              },
+              {
+                path: "installations/:id",
+                element: <IntegrationsGitHubWorkspace />,
+                handle: { crumb: "Рабочее пространство" },
+              },
+            ],
           },
           {
-            path: "installations/:id",
-            element: <IntegrationsLinearWorkspace />,
-            handle: { crumb: "Workspace" },
+            path: "slack",
+            handle: { crumb: "Slack" },
+            children: [
+              { index: true, element: <IntegrationsSlackList /> },
+              {
+                path: "publish",
+                element: <IntegrationsSlackPublishPage />,
+                handle: { crumb: "Публикация" },
+              },
+              {
+                path: "installations/:id",
+                element: <IntegrationsSlackWorkspace />,
+                handle: { crumb: "Рабочее пространство" },
+              },
+            ],
+          },
+          {
+            path: "feishu",
+            handle: { crumb: "Feishu" },
+            children: [
+              { index: true, element: <IntegrationsFeishuList /> },
+              {
+                path: "publish",
+                element: <IntegrationsFeishuPublishPage />,
+                handle: { crumb: "Публикация" },
+              },
+              {
+                path: "installations/:id",
+                element: <IntegrationsFeishuWorkspace />,
+                handle: { crumb: "Рабочее пространство" },
+              },
+            ],
           },
         ],
       },
-      {
-        path: "github",
-        handle: { crumb: "GitHub" },
-        children: [
-          { index: true, element: <IntegrationsGitHubList /> },
-          {
-            path: "bind",
-            element: <IntegrationsGitHubBindPage />,
-            handle: { crumb: "Bind" },
-          },
-          {
-            path: "installations/:id",
-            element: <IntegrationsGitHubWorkspace />,
-            handle: { crumb: "Workspace" },
-          },
-        ],
-      },
-      {
-        path: "slack",
-        handle: { crumb: "Slack" },
-        children: [
-          { index: true, element: <IntegrationsSlackList /> },
-          {
-            path: "publish",
-            element: <IntegrationsSlackPublishPage />,
-            handle: { crumb: "Publish" },
-          },
-          {
-            path: "installations/:id",
-            element: <IntegrationsSlackWorkspace />,
-            handle: { crumb: "Workspace" },
-          },
-        ],
-      },
-      {
-        path: "feishu",
-        handle: { crumb: "Feishu" },
-        children: [
-          { index: true, element: <IntegrationsFeishuList /> },
-          {
-            path: "publish",
-            element: <IntegrationsFeishuPublishPage />,
-            handle: { crumb: "Publish" },
-          },
-          {
-            path: "installations/:id",
-            element: <IntegrationsFeishuWorkspace />,
-            handle: { crumb: "Workspace" },
-          },
-        ],
-      },
-    ],
-  },
+      ]
+    : []),
   // Plugin-contributed routes (hosted-only extensions). Default empty in
-  // OSS — hosted deploy overlays plugins/registry.ts to inject billing
+  // OSS - hosted deploy overlays plugins/registry.ts to inject billing
   // / etc. PluginRoute keeps the same `{ path, element }` shape that
   // RouteObject expects.
   ...consolePlugins.flatMap((p) => p.routes ?? []),

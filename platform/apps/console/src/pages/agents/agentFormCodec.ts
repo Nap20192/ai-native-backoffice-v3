@@ -18,10 +18,10 @@ export function parseAgentConfigText(
     parsed = format === "yaml" ? yaml.load(source) : JSON.parse(source);
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
-    throw new Error(`Invalid ${format.toUpperCase()}${detail}`);
+    throw new Error(`Некорректный ${format.toUpperCase()}${detail}`);
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Agent config must be an object");
+    throw new Error("Конфигурация агента должна быть объектом");
   }
   return parsed as Record<string, unknown>;
 }
@@ -34,7 +34,7 @@ export function prepareCodePayload(
   const payload = structuredClone(parsed);
   if (!opts.forUpdate) {
     if (typeof payload.name !== "string" || payload.name.length === 0) {
-      throw new Error("name is required");
+      throw new Error("Укажите название агента");
     }
     if (payload.tools === undefined) {
       payload.tools = [{ type: "agent_toolset_20260401" }];
@@ -49,14 +49,14 @@ function parseMetadataJson(source: string): Record<string, string> {
     parsed = JSON.parse(source);
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
-    throw new Error(`Invalid metadata JSON${detail}`);
+    throw new Error(`Некорректный JSON метаданных${detail}`);
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Metadata JSON must be an object");
+    throw new Error("Метаданные должны быть объектом JSON");
   }
   for (const value of Object.values(parsed)) {
     if (typeof value !== "string") {
-      throw new Error("Metadata JSON values must be strings");
+      throw new Error("Значения метаданных должны быть строками");
     }
   }
   return parsed as Record<string, string>;
@@ -98,11 +98,11 @@ export function materializeAgentUpdate(
         for (const [metadataKey, metadataValue] of Object.entries(value)) {
           if (metadataValue === null) delete metadata[metadataKey];
           else if (typeof metadataValue === "string") metadata[metadataKey] = metadataValue;
-          else throw new Error("Metadata patch values must be strings or null");
+          else throw new Error("Значения в изменении метаданных должны быть строками или null");
         }
         next.metadata = metadata;
       } else {
-        throw new Error("Metadata patch must be an object or null");
+        throw new Error("Изменение метаданных должно быть объектом или null");
       }
       continue;
     }
@@ -206,9 +206,9 @@ const RESPONSE_ONLY_KEYS = new Set([
 
 /** Advanced harness ids (`_oma.harness`). Pi is the platform default; `ai-sdk` is deprecated. */
 export const AGENT_HARNESS_HINT = {
-  default: "Pi agent-core (omit harness)",
-  pi: "Pi agent-core (explicit)",
-  "ai-sdk": "Legacy AI SDK loop (deprecated — prefer default Pi)",
+  default: "Pi agent-core (поле harness не задаётся)",
+  pi: "Pi agent-core (задан явно)",
+  "ai-sdk": "Прежний цикл AI SDK (устарел, лучше использовать Pi по умолчанию)",
 } as const;
 
 const OMA_ONLY_KEYS = new Set([
@@ -595,18 +595,18 @@ export function mergeMcpServers(
       };
       if (m.type === "stdio") {
         if (!m.command.startsWith("/")) {
-          throw new Error(`MCP stdio command for "${m.name}" must be an absolute path`);
+          throw new Error(`Команда MCP stdio для «${m.name}» должна быть абсолютным путём`);
         }
         const args = JSON.parse(m.argsJson || "[]") as unknown;
         if (!Array.isArray(args) || !args.every((value) => typeof value === "string")) {
-          throw new Error(`MCP stdio args for "${m.name}" must be a JSON string array`);
+          throw new Error(`Аргументы MCP stdio для «${m.name}» должны быть массивом строк JSON`);
         }
         const env = JSON.parse(m.envJson || "{}") as unknown;
         if (
           !env || typeof env !== "object" || Array.isArray(env)
           || !Object.values(env).every((value) => typeof value === "string")
         ) {
-          throw new Error(`MCP stdio env for "${m.name}" must be a JSON string map`);
+          throw new Error(`Переменные окружения MCP stdio для «${m.name}» должны быть объектом со строковыми значениями JSON`);
         }
         delete next.url;
         delete next.stdio;

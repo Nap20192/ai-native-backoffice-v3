@@ -55,13 +55,13 @@ describe("Login OAuth and layout", () => {
     renderLogin();
 
     const signInOptions = screen.getByRole("group", {
-      name: "Sign in options",
+      name: "Способы входа",
     });
     const google = within(signInOptions).getByRole("button", {
-      name: "Continue with Google",
+      name: "Продолжить через Google",
     });
     const github = within(signInOptions).getByRole("button", {
-      name: "Continue with GitHub",
+      name: "Продолжить через GitHub",
     });
 
     await user.click(google);
@@ -82,44 +82,44 @@ describe("Login OAuth and layout", () => {
     const { container } = renderLogin();
 
     expect(
-      screen.getByRole("heading", { name: "Log in to openma" }),
+      screen.getByRole("heading", { name: "Вход в openma" }),
     ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Почта")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("complementary", { name: "Openma platform story" }),
     ).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: "Continue with email" }),
+      screen.getByRole("button", { name: "Продолжить с почтой" }),
     );
 
     expect(
-      screen.getByRole("heading", { name: "Log in with email" }),
+      screen.getByRole("heading", { name: "Вход по почте" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Email")).toBeInTheDocument();
+    expect(screen.getByLabelText("Почта")).toBeInTheDocument();
 
     const passwordField = container.querySelector(
       '[data-login-field="password"]',
     );
     expect(passwordField).not.toBeNull();
     expect(
-      within(passwordField as HTMLElement).getByText("Password").parentElement,
+      within(passwordField as HTMLElement).getByText("Пароль").parentElement,
     ).toContainElement(
       within(passwordField as HTMLElement).getByRole("button", {
-        name: "Forgot password?",
+        name: "Забыли пароль?",
       }),
     );
 
-    const actions = screen.getByRole("group", { name: "Sign in actions" });
-    expect(within(actions).getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    const actions = screen.getByRole("group", { name: "Действия входа" });
+    expect(within(actions).getByRole("button", { name: "Войти" })).toBeInTheDocument();
     expect(
       within(actions).getByRole("button", {
-        name: "Sign in with email code",
+        name: "Войти по коду из письма",
       }),
     ).toBeInTheDocument();
 
     expect(
-      screen.getByRole("button", { name: "Back to sign in options" }),
+      screen.getByRole("button", { name: "К способам входа" }),
     ).toBeInTheDocument();
   });
 
@@ -127,14 +127,14 @@ describe("Login OAuth and layout", () => {
     const user = userEvent.setup();
     renderLogin();
 
-    const footer = screen.getByRole("group", { name: "Account options" });
-    expect(within(footer).getByText("Don't have an account?")).toBeInTheDocument();
+    const footer = screen.getByRole("group", { name: "Параметры учётной записи" });
+    expect(within(footer).getByText("Нет учётной записи?")).toBeInTheDocument();
 
-    await user.click(within(footer).getByRole("button", { name: "Sign up" }));
+    await user.click(within(footer).getByRole("button", { name: "Зарегистрироваться" }));
 
     expect(
-      screen.getByRole("heading", { name: "Create your account" }),
+      screen.getByRole("heading", { name: "Создание учётной записи" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Имя")).toBeInTheDocument();
   });
 });

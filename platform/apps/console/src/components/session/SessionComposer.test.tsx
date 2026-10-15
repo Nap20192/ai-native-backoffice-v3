@@ -16,7 +16,7 @@ describe("<SessionComposer />", () => {
       />,
     );
 
-    expect(screen.getByRole("textbox", { name: "Message" }).closest("[data-chat-column]"))
+    expect(screen.getByRole("textbox", { name: "Сообщение" }).closest("[data-chat-column]"))
       .toBeNull();
   });
 
@@ -35,10 +35,10 @@ describe("<SessionComposer />", () => {
       />,
     );
 
-    const action = screen.getByRole("button", { name: "Send message" });
+    const action = screen.getByRole("button", { name: "Отправить сообщение" });
     expect(action).toBeDisabled();
 
-    await user.type(screen.getByRole("textbox", { name: "Message" }), "hello");
+    await user.type(screen.getByRole("textbox", { name: "Сообщение" }), "hello");
     expect(action).toBeEnabled();
     await user.click(action);
 
@@ -66,8 +66,8 @@ describe("<SessionComposer />", () => {
       />,
     );
 
-    await user.type(screen.getByRole("textbox", { name: "Message" }), "next");
-    await user.click(screen.getByRole("button", { name: "Queue message" }));
+    await user.type(screen.getByRole("textbox", { name: "Сообщение" }), "next");
+    await user.click(screen.getByRole("button", { name: "Поставить сообщение в очередь" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onStop).not.toHaveBeenCalled();
@@ -88,8 +88,8 @@ describe("<SessionComposer />", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(screen.queryByRole("button", { name: "Отправить сообщение" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Остановить ответ" }));
     expect(onStop).toHaveBeenCalledOnce();
   });
 
@@ -117,8 +117,8 @@ describe("<SessionComposer />", () => {
     );
 
     const image = new File(["pixels"], "cat.png", { type: "image/png" });
-    await user.upload(screen.getByLabelText("Upload files"), image);
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.upload(screen.getByLabelText("Загрузить файлы"), image);
+    await user.click(screen.getByRole("button", { name: "Отправить сообщение" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     const message = onSubmit.mock.calls[0]?.[0] as {

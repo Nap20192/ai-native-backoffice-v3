@@ -1,6 +1,7 @@
 import type { CSSProperties, JSX } from "react";
 
 import { Skeleton as ShadcnSkeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 interface SkeletonProps {
   className?: string;
@@ -16,23 +17,22 @@ const radiusCls: Record<NonNullable<SkeletonProps["rounded"]>, string> = {
 };
 
 /**
- * Static placeholder block for in-flight content. Wraps shadcn `Skeleton`
- * but swaps the default `animate-pulse` for `skeleton-pulse` (defined in
- * index.css) so a long list of placeholder rows doesn't read as
- * "flashing" — the in-house pulse goes 0.4↔0.65 with the soft ease
- * curve, where Tailwind's animate-pulse is 0.5↔1 (uniform).
- * prefers-reduced-motion freezes both.
+ * Статичный блок-заглушка для данных в пути. Оборачивает shadcn `Skeleton`,
+ * которому DDC даёт подложку ink-100 (в тёмной теме ink-800) и блик
+ * `animate-shimmer`. Скелетон повторяет разметку: строка `h-4` под
+ * text-sm, `h-3` под text-xs, заголовок `h-5 w-40`, аватар `rounded-full`,
+ * бейдж `h-5 rounded-md`. По умолчанию скругление `rounded-lg`.
  *
- * Caller controls width/height via className. Example:
+ * Размер задаёт вызывающий код через className. Пример:
  *   <Skeleton className="h-4 w-32" />
- *   <Skeleton className="h-9 w-9" rounded="full" />
+ *   <Skeleton className="h-8 w-8" rounded="full" />
  */
-export function Skeleton({ className = "", rounded = "md", style }: SkeletonProps): JSX.Element {
+export function Skeleton({ className = "", rounded = "lg", style }: SkeletonProps): JSX.Element {
   return (
     <ShadcnSkeleton
       aria-hidden="true"
       style={style}
-      className={`!animate-none skeleton-pulse ${radiusCls[rounded]} ${className}`}
+      className={cn(radiusCls[rounded], className)}
     />
   );
 }
@@ -45,14 +45,16 @@ interface SkeletonRowsProps {
 
 /**
  * Convenience for "loading a tabular list" — N evenly-spaced full-width
- * rows. Match approximate row height of your real table to avoid a
- * jarring layout shift when data lands.
+ * rows. Высота строки по умолчанию 40px, как у строки таблицы DDC, чтобы
+ * список не прыгал, когда придут данные. Обёртке стоит `aria-busy`, а
+ * диктор читает скрытое «Загрузка…».
  */
-export function SkeletonRows({ count, height = 36, gap = 12 }: SkeletonRowsProps): JSX.Element {
+export function SkeletonRows({ count, height = 40, gap = 8 }: SkeletonRowsProps): JSX.Element {
   return (
-    <div className="px-4 py-3" style={{ display: "grid", gap: `${gap}px` }}>
+    <div className="px-4 py-3" style={{ display: "grid", gap: `${gap}px` }} aria-busy="true">
+      <span className="sr-only">Загрузка…</span>
       {Array.from({ length: count }).map((_, i) => (
-        <Skeleton key={i} className="w-full" rounded="md" style={{ height: `${height}px` }} />
+        <Skeleton key={i} className="w-full" rounded="lg" style={{ height: `${height}px` }} />
       ))}
     </div>
   );

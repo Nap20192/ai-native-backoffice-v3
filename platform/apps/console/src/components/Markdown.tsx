@@ -49,7 +49,7 @@ export function Markdown({ children }: { children: string }) {
       remarkPlugins={[remarkGfm]}
       components={{
         pre: ({ children }) => (
-          <pre className="bg-bg-surface border border-border rounded-md p-3 overflow-x-auto my-2 text-sm">
+          <pre className="my-2 overflow-x-auto rounded-xl border border-ddc-border bg-ddc-surface-muted p-3 text-sm">
             {children}
           </pre>
         ),
@@ -57,7 +57,7 @@ export function Markdown({ children }: { children: string }) {
           const isInline = !className;
           if (isInline) {
             return (
-              <code className="bg-bg-surface px-1 py-0.5 rounded text-sm font-mono" {...props}>
+              <code className="rounded-md bg-ddc-surface-sunken px-1 py-0.5 font-mono text-xs" {...props}>
                 {children}
               </code>
             );
@@ -87,20 +87,20 @@ export function Markdown({ children }: { children: string }) {
         ul: ({ children }) => <ul className="list-disc pl-5 my-1">{children}</ul>,
         ol: ({ children }) => <ol className="list-decimal pl-5 my-1">{children}</ol>,
         li: ({ children }) => <li className="my-0.5">{children}</li>,
-        h1: ({ children }) => <h1 className="font-display text-lg font-semibold mt-3 mb-1 text-fg">{children}</h1>,
-        h2: ({ children }) => <h2 className="font-display text-base font-semibold mt-2 mb-1 text-fg">{children}</h2>,
-        h3: ({ children }) => <h3 className="font-semibold mt-2 mb-1 text-fg">{children}</h3>,
+        h1: ({ children }) => <h1 className="font-display mt-3 mb-1 text-lg font-semibold text-ddc-heading">{children}</h1>,
+        h2: ({ children }) => <h2 className="font-display mt-2 mb-1 text-base font-semibold text-ddc-heading">{children}</h2>,
+        h3: ({ children }) => <h3 className="mt-2 mb-1 font-semibold text-ddc-heading">{children}</h3>,
         blockquote: ({ children }) => (
-          <blockquote className="border-l-2 border-border-strong pl-3 my-2 text-fg-muted">{children}</blockquote>
+          <blockquote className="my-2 border-l-2 border-ddc-border-strong pl-3 text-ddc-label">{children}</blockquote>
         ),
         table: ({ children }) => (
           <Table className="border-collapse my-2 text-sm w-full">{children}</Table>
         ),
         th: ({ children }) => (
-          <TableHead className="border border-border px-2 py-1 bg-bg-surface text-left text-fg">{children}</TableHead>
+          <TableHead className="border border-ddc-divider bg-ddc-surface-muted px-3 py-2 text-left text-sm font-semibold tracking-normal text-ddc-heading normal-case">{children}</TableHead>
         ),
         td: ({ children }) => (
-          <TableCell className="border border-border px-2 py-1 text-fg">{children}</TableCell>
+          <TableCell className="border border-ddc-divider px-3 py-2 text-ddc-text">{children}</TableCell>
         ),
       }}
     >

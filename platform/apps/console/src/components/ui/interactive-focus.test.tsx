@@ -45,12 +45,12 @@ describe("interactive control focus treatment", () => {
     const linkButton = screen.getByRole("button", {
       name: "Forgot password?",
     });
-    expect(linkButton).toHaveClass("focus-visible:ring-0");
     expect(linkButton).toHaveClass("focus-visible:underline");
+    expect(linkButton.className).not.toContain("outline-none");
     expect(linkButton.className).not.toContain("focus-visible:ring-3");
   });
 
-  it("uses a restrained one-pixel halo across shared controls", () => {
+  it("leaves the focus ring of shared controls to the single global :focus-visible rule", () => {
     render(
       <>
         <Button>Save</Button>
@@ -88,10 +88,27 @@ describe("interactive control focus treatment", () => {
 
     for (const control of controls) {
       expect(control).not.toBeNull();
-      expect(control?.className).toContain("focus-visible:ring-1");
+      // outline-none / outline-hidden would hide the global DDC ring.
+      expect(control?.className).not.toContain("outline-none");
+      expect(control?.className).not.toContain("outline-hidden");
       expect(control?.className).not.toContain("focus-visible:ring-3");
       expect(control?.className).not.toContain("focus-visible:ring-[3px]");
     }
+  });
+
+  it("selects the active tab through the Radix data-state attribute", () => {
+    render(
+      <Tabs defaultValue="one">
+        <TabsList>
+          <TabsTrigger value="one">Tab one</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+
+    const tab = screen.getByRole("tab", { name: "Tab one" });
+    expect(tab).toHaveAttribute("data-state", "active");
+    expect(tab.className).toContain("data-[state=active]:bg-ddc-selected-bg");
+    expect(tab.className).toContain("data-[state=active]:text-ddc-selected-text");
   });
 
   it("keeps sidebar navigation focus to the same one-pixel treatment", () => {

@@ -1,8 +1,10 @@
+import { formatDateTime } from "../lib/date-format";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { DownloadIcon, TrashIcon } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type ColumnDef } from "../components/DataTable";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip } from "../components/FilterChip";
 import {
@@ -17,14 +19,22 @@ import { useManagedApi } from "../lib/useManagedApi";
 
 const ALL_SCOPE = "";
 
+const sizeFormat = new Intl.NumberFormat("ru-RU", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 export function FilesList() {
   const managedApi = useManagedApi();
   const [scopeId, setScopeId] = useState<string>(ALL_SCOPE);
   const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<FileRecord | null>(null);
+  const [askDelete, setAskDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { t } = useI18n();
 
-  // Files has its own official SDK pagination shape (`before_id` plus
-  // `has_more/last_id`), isolated from Managed `page/next_page` feeds.
+  // У файлов своя пагинация официального SDK (`before_id` и
+  // `has_more/last_id`), отдельная от лент Managed с `page/next_page`.
   const filesParams = useMemo(
     () => ({ scope_id: scopeId || undefined }),
     [scopeId],
@@ -41,24 +51,22 @@ export function FilesList() {
     params: filesParams,
   });
 
-  // Sessions for the Scope chip's option list. One-shot fetch of the
-  // top 200 sessions visible to the user — same approach AgentsList
-  // takes for its callable-agents dropdown. Sessions beyond the cap
-  // aren't listed; users with a long tail still have the search box
-  // inside the FacetedFilter (cmdk type-ahead) to find what they need
-  // by id substring.
+  // Сессии нужны для списка в фильтре «Сессия». Разовая выборка первых 200
+  // сессий, видимых пользователю, как в AgentsList для списка вызываемых
+  // агентов. Сессии за пределом лимита в списке не видны, но строка поиска
+  // внутри FacetedFilter (cmdk) находит их по части id.
   const { data: sessionsRes } = useApiQuery<{ data: Session[] }>(
     "/v1/sessions",
     { limit: "200" },
   );
   const sessions = sessionsRes?.data ?? [];
 
-  // Scope option list — "All" maps to no filter, every other option
-  // carries the real session id and labels with the session title (or
-  // the id when the title is blank).
+  // Список сессий для фильтра: «Все» значит без фильтра, остальные пункты
+  // несут настоящий id сессии и подписаны названием (или id, если названия
+  // нет).
   const scopeOptions = useMemo(
     () => [
-      { value: ALL_SCOPE, label: "All sessions" },
+      { value: ALL_SCOPE, label: "Все сессии" },
       ...sessions.map((s) => ({
         value: s.id,
         label: s.title?.trim() ? `${s.title} (${s.id})` : s.id,
@@ -67,18 +75,18 @@ export function FilesList() {
     [sessions],
   );
 
-  // Pretty label for the active chip — falls back to the bare id when
-  // the session isn't in our cached list (e.g. user landed via deep
-  // link to a session beyond the 200-row cap).
+  // Подпись активного чипа. Если сессии нет в загруженном списке (например,
+  // пользователь пришёл по ссылке на сессию за пределом 200 строк),
+  // показываем сам id.
   const scopeDisplay = useMemo(() => {
     if (!scopeId) return undefined;
     const hit = sessions.find((s) => s.id === scopeId);
     return hit?.title?.trim() ? hit.title : scopeId;
   }, [scopeId, sessions]);
 
-  // Binary responses use the official Files.download shape. The Managed API
-  // transport supplies the same cookie, beta, and active-tenant negotiation
-  // as JSON requests.
+  // Бинарный ответ идёт по форме официального Files.download. Транспорт
+  // Managed API передаёт ту же cookie, beta-заголовки и активное
+  // рабочее пространство, что и JSON-запросы.
   const download = async (f: FileRecord) => {
     try {
       const res = await managedApi.files.download(f.id);
@@ -90,28 +98,32 @@ export function FilesList() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      toast.error(`Download failed: ${e instanceof Error ? e.message : "network error"}`);
+      toast.error(`Не удалось скачать файл: ${e instanceof Error ? e.message : "ошибка сети"}`);
     }
   };
 
-  const remove = async (f: FileRecord) => {
-    if (!confirm(`Delete "${f.filename}"? The R2 object and metadata both go. This cannot be undone.`)) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await managedApi.files.delete(f.id);
-      // Invalidate every /v1/files query (any scope filter) so the page
-      // refetches — useInfiniteApiQuery exposes refresh() which bounces
-      // back to page 0. Cheaper than maintaining a local optimistic
-      // copy; the next refetch lands fresh server truth.
+      await managedApi.files.delete(deleteTarget.id);
+      // Сбрасываем все запросы /v1/files (с любой сессией в фильтре):
+      // refresh() возвращает список на первую страницу. Это дешевле
+      // локальной оптимистичной копии, а следующий запрос принесёт
+      // свежие данные сервера.
       refreshFiles();
     } catch {
-      // toasted
+      // Ошибку уже показал клиент API.
+    } finally {
+      setDeleting(false);
+      setAskDelete(false);
     }
   };
 
-  // Search is client-side over the loaded page — backend doesn't index
-  // by filename and the upload API has no name filter. Operators who
-  // need a file from the long tail filter by scope (server-side) first,
-  // then narrow further by name within the page.
+  // Поиск работает на клиенте по уже загруженной странице: сервер не
+  // индексирует имена, а в API загрузки нет фильтра по имени. Файл из
+  // длинного хвоста сначала сужают по сессии (на сервере), затем по имени
+  // внутри страницы.
   const filtered = search
     ? items.filter((f) => f.filename.toLowerCase().includes(search.toLowerCase()))
     : items;
@@ -121,9 +133,11 @@ export function FilesList() {
       {
         id: "filename",
         accessorKey: "filename",
-        header: "Filename",
+        header: "Имя файла",
+        size: 220,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <span title={row.original.filename} className="font-medium text-fg truncate inline-block max-w-[280px] align-bottom">
+          <span title={row.original.filename} className="truncate font-medium text-ddc-heading">
             {row.original.filename}
           </span>
         ),
@@ -132,28 +146,33 @@ export function FilesList() {
       {
         id: "id",
         accessorKey: "id",
-        header: "ID",
+        header: t.common.id,
+        size: 220,
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
+          <span title={row.original.id} className="truncate font-mono text-xs text-ddc-text-muted">
             {row.original.id}
           </span>
         ),
-        enableHiding: false,
       },
       {
         id: "mime_type",
         accessorKey: "mime_type",
-        header: "Type",
+        header: "Тип",
+        size: 150,
+        meta: { priority: 3 },
         cell: ({ row }) => (
-          <span className="text-fg-muted text-xs">{row.original.mime_type}</span>
+          <span title={row.original.mime_type} className="truncate text-xs text-ddc-text-muted">
+            {row.original.mime_type}
+          </span>
         ),
       },
       {
         id: "size",
         accessorFn: (f) => f.size_bytes,
-        header: "Size",
+        header: "Размер",
+        size: 100,
         cell: ({ row }) => (
-          <span className="text-fg-muted text-xs tabular-nums">
+          <span className="text-xs tabular-nums text-ddc-text-muted">
             {formatBytes(row.original.size_bytes)}
           </span>
         ),
@@ -161,38 +180,41 @@ export function FilesList() {
       {
         id: "scope",
         accessorFn: (f) => f.scope?.id ?? "",
-        header: "Scope",
+        header: "Сессия",
+        size: 190,
+        meta: { priority: 2 },
         cell: ({ row }) =>
           row.original.scope?.id ? (
             <Link
               to={`/sessions/${row.original.scope.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="text-brand hover:underline text-xs font-mono"
+              title={row.original.scope.id}
+              className="link truncate font-mono text-xs"
             >
               {row.original.scope.id}
             </Link>
           ) : (
-            <span className="text-fg-subtle text-xs">—</span>
+            <span className="text-ddc-placeholder">–</span>
           ),
       },
       {
         id: "created",
         accessorFn: (f) => f.created_at,
-        header: "Created",
+        header: t.common.created,
+        size: 150,
         cell: ({ row }) => (
-          <span className="text-fg-muted text-xs whitespace-nowrap">
-            {new Date(row.original.created_at).toLocaleString()}
+          <span className="text-xs whitespace-nowrap tabular-nums text-ddc-text-muted">
+            {formatDateTime(row.original.created_at)}
           </span>
         ),
       },
     ],
-    // Column renderers only consume row data; row actions own mutations.
-    [],
+    [t],
   );
 
   const filters = (
     <FilterChip
-      label="Scope"
+      label="Сессия"
       active={scopeId !== ALL_SCOPE}
       display={scopeDisplay}
       onClear={() => setScopeId(ALL_SCOPE)}
@@ -207,7 +229,7 @@ export function FilesList() {
           options={scopeOptions}
           value={scopeId}
           onValueChange={(v) => setScopeId(v)}
-          searchPlaceholder="Session id or title..."
+          searchPlaceholder="ID или название сессии…"
         />
       </PopoverContent>
     </FilterChip>
@@ -215,7 +237,9 @@ export function FilesList() {
 
   return (
     <DataTable<FileRecord>
-      searchPlaceholder="Filter loaded files by name…"
+      title={t.nav.files}
+      subtitle="Файлы, которые агенты получили и сохранили в сессиях."
+      searchPlaceholder="Поиск по загруженным файлам…"
       searchValue={search}
       onSearchChange={setSearch}
       filters={filters}
@@ -226,37 +250,56 @@ export function FilesList() {
         ...(file.downloadable
           ? [
               {
-                label: "Download",
+                label: "Скачать",
                 icon: <DownloadIcon className="size-4" />,
                 onSelect: () => void download(file),
               },
             ]
           : []),
         {
-          label: "Delete",
+          label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
           destructive: true,
-          onSelect: () => void remove(file),
+          onSelect: () => {
+            setDeleteTarget(file);
+            setAskDelete(true);
+          },
         },
       ]}
       hasMore={hasMore && !search}
       loadingMore={isLoadingMore}
       onLoadMore={loadMore}
-      emptyTitle={scopeId ? "No files in this scope" : "No files yet"}
+      emptyTitle={scopeId ? "В этой сессии нет файлов" : t.files.noFilesYet}
       emptyKind="file"
       emptySubtitle={
-        scopeId
-          ? "Try clearing the scope filter, or check the session id."
-          : <>Upload via <code className="text-xs">POST /v1/files</code> or the AMA SDK <code className="text-xs">client.beta.files.create()</code>.</>
+        scopeId ? (
+          "Сбросьте фильтр по сессии или проверьте её id."
+        ) : (
+          <>
+            Загрузите файл через <code className="font-mono text-xs">POST /v1/files</code> или SDK:{" "}
+            <code className="font-mono text-xs">client.beta.files.create()</code>.
+          </>
+        )
       }
       columns={columns}
-    />
+    >
+      <ConfirmDialog
+        open={askDelete}
+        title={`Удалить файл «${deleteTarget?.filename ?? ""}»?`}
+        message="Файл и его метаданные будут удалены. Действие нельзя отменить."
+        confirmLabel={t.common.delete}
+        destructive
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setAskDelete(false)}
+      />
+    </DataTable>
   );
 }
 
 function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${sizeFormat.format(n / 1024)} КБ`;
+  if (n < 1024 * 1024 * 1024) return `${sizeFormat.format(n / 1024 / 1024)} МБ`;
+  return `${(n / 1024 / 1024 / 1024).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ГБ`;
 }

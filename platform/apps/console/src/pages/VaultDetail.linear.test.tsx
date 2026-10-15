@@ -32,12 +32,9 @@ vi.mock("../lib/useApiQuery", () => ({
   }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
-vi.mock("../components/PageHeader", () => ({
-  PageHeader: ({ actions }: { actions?: React.ReactNode }) => <div>{actions}</div>,
-}));
 
 describe("VaultDetail Linear rail", () => {
-  it("keeps the resource title in the body, metadata in the rail, and credentials wireless", async () => {
+  it("keeps the resource title in the page header, metadata in the rail, and credentials wireless", async () => {
     render(
       <MemoryRouter initialEntries={["/vaults/vault-1"]}>
         <I18nProvider>
@@ -48,16 +45,23 @@ describe("VaultDetail Linear rail", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Team credentials" }))
-      .toBeInTheDocument();
+    const title = await screen.findByRole("heading", { level: 1, name: "Team credentials" });
+    expect(screen.getByTestId("detail-body")).not.toContainElement(title);
     expect(screen.getByTestId("detail-layout")).toHaveAttribute("data-detail-layout", "rail");
     const rail = screen.getByTestId("detail-rail");
+    expect(within(rail).getByText("Свойства")).toBeInTheDocument();
     expect(within(rail).getByText("ID")).toBeInTheDocument();
     expect(within(rail).getByText("vault-1")).toBeInTheDocument();
-    expect(within(rail).getByText("Status")).toBeInTheDocument();
+    expect(within(rail).getByText("Статус")).toBeInTheDocument();
+    expect(within(rail).getByText("Активно")).toBeInTheDocument();
 
-    expect(screen.getByTestId("credential-list-surface")).toHaveClass(
-      "console-detail-table-wrap",
-    );
+    const surface = screen.getByTestId("credential-list-surface");
+    expect(surface).toHaveClass("console-detail-table-wrap");
+    // Список учётных данных лежит в карточке DDC с заголовком секции.
+    expect(screen.getByRole("heading", { level: 2, name: /Учётные данные/ }))
+      .toBeInTheDocument();
+    expect(within(surface).getByText("Учётных данных пока нет")).toBeInTheDocument();
+    // Кнопка «Добавить» есть в шапке секции и в пустом состоянии.
+    expect(screen.getAllByRole("button", { name: "Добавить" })).toHaveLength(2);
   });
 });

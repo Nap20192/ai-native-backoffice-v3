@@ -4,7 +4,7 @@
  * + turn headers — anywhere we want a compact "took X" indicator.
  */
 export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (!Number.isFinite(ms) || ms < 0) return "–";
   if (ms < 1) return "<1ms";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(2)}s`;
@@ -40,7 +40,7 @@ export function formatRelative(diffMs: number): string {
  * opaque hex in a badge.
  */
 export function shortenId(id: string | undefined): string {
-  if (!id) return "—";
+  if (!id) return "–";
   if (id.length <= 12) return id;
   return id.slice(0, 8) + "…" + id.slice(-3);
 }

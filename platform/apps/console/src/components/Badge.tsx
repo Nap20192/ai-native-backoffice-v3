@@ -1,32 +1,78 @@
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
 
+import { cn } from "@/lib/utils";
+
 /**
- * Status pill — small colored chip that represents a state (idle / running /
- * completed / errored / terminated). Used in session header + turn cards.
- *
- * Tones map to design-system status colors. `running` gets an animated dot
- * to communicate "in progress" without users staring for a status change.
+ * Бейдж статуса DDC (`Badge` + `lib/tone.ts` портала): чип высотой 20px,
+ * `rounded-md`, текст 12px medium. Цвет задаёт один из пяти статусных тонов
+ * (neutral, info, warning, success, danger), контур рисует внутреннее
+ * кольцо `ring-1 ring-inset`, а не рамка. Точку внутри тонового бейджа не
+ * рисуют (раздел 4 правил DDC).
  */
-export type StatusTone = "idle" | "running" | "completed" | "errored" | "terminated" | "neutral";
+export type StatusTone =
+  | "idle"
+  | "running"
+  | "rescheduling"
+  | "completed"
+  | "errored"
+  | "error"
+  | "terminated"
+  | "neutral";
+
+const TONE_NEUTRAL = "bg-ddc-tone-neutral-bg text-ddc-tone-neutral-fg";
+const TONE_INFO =
+  "bg-ddc-tone-info-bg text-ddc-tone-info-fg ring-1 ring-inset ring-ddc-tone-info-ring";
+const TONE_WARNING =
+  "bg-ddc-tone-warning-bg text-ddc-tone-warning-fg ring-1 ring-inset ring-ddc-tone-warning-ring";
+const TONE_SUCCESS =
+  "bg-ddc-tone-success-bg text-ddc-tone-success-fg ring-1 ring-inset ring-ddc-tone-success-ring";
+const TONE_DANGER =
+  "bg-ddc-tone-danger-bg text-ddc-tone-danger-fg ring-1 ring-inset ring-ddc-tone-danger-ring";
 
 const TONE_CLASS: Record<StatusTone, string> = {
-  idle: "bg-bg-surface text-fg-muted",
-  running: "bg-info-subtle text-info",
-  completed: "bg-success-subtle text-success",
-  errored: "bg-danger-subtle text-danger",
-  terminated: "bg-danger-subtle text-danger",
-  neutral: "bg-bg-surface text-fg-muted",
+  idle: TONE_NEUTRAL,
+  running: TONE_INFO,
+  rescheduling: TONE_WARNING,
+  completed: TONE_SUCCESS,
+  errored: TONE_DANGER,
+  error: TONE_DANGER,
+  terminated: TONE_DANGER,
+  neutral: TONE_NEUTRAL,
+};
+
+/** Подписи статусов по-русски. Сырые значения (`running`, `idle`) в
+ *  интерфейс не выводятся (раздел 5 DDC). */
+const STATUS_LABEL: Record<StatusTone, string> = {
+  idle: "Ожидает",
+  running: "Выполняется",
+  rescheduling: "Перезапуск",
+  completed: "Завершено",
+  errored: "Ошибка",
+  error: "Ошибка",
+  terminated: "Остановлено",
+  neutral: "Не указано",
 };
 
 export function StatusPill({ status, label }: { status: StatusTone | string; label?: string }) {
-  const tone: StatusTone = (TONE_CLASS as Record<string, unknown>)[status] ? (status as StatusTone) : "neutral";
-  const text = label ?? (status[0]?.toUpperCase() + status.slice(1));
+  const known = (TONE_CLASS as Record<string, unknown>)[status] !== undefined;
+  const tone: StatusTone = known ? (status as StatusTone) : "neutral";
+  // Неизвестный статус показываем как есть, с заглавной буквы: перевести его
+  // здесь нечем, а прятать значение нельзя.
+  const text =
+    label ??
+    (known
+      ? STATUS_LABEL[tone]
+      : status
+        ? status[0].toUpperCase() + status.slice(1)
+        : STATUS_LABEL.neutral);
   return (
-    <span className={`text-xs px-2 py-0.5 rounded font-medium ${TONE_CLASS[tone]}`}>
-      {tone === "running" && (
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-info animate-pulse mr-1.5 align-middle" />
+    <span
+      className={cn(
+        "inline-flex h-5 items-center gap-1 rounded-md px-2 text-xs leading-4 font-medium whitespace-nowrap",
+        TONE_CLASS[tone],
       )}
+    >
       {text}
     </span>
   );
@@ -37,8 +83,9 @@ export function StatusPill({ status, label }: { status: StatusTone | string; lab
  * optional click. Used by session-header resource badges (agent / env /
  * vault) and similar contexts where a chip should feel clickable.
  *
- * For non-interactive labels (duration, age, count), pass no onClick;
- * the badge renders as a plain span without hover styling.
+ * Для неинтерактивных меток (длительность, возраст, счётчик) onClick не
+ * передают: тогда это обычный приглушённый текст без подложки. Кликабельный
+ * бейдж остаётся чипом 20px, а зона нажатия расширена до 32px.
  */
 export function Badge({
   icon,
@@ -53,15 +100,18 @@ export function Badge({
 }) {
   const inner = (
     <>
-      {icon && <span className="text-fg-subtle shrink-0 flex">{icon}</span>}
-      <span className="truncate">{label}</span>
+      {icon && <span className="flex shrink-0 text-ddc-icon-muted">{icon}</span>}
+      <span className="truncate" title={typeof label === "string" ? label : undefined}>
+        {label}
+      </span>
     </>
   );
   if (onClick) {
     return (
-      <Button variant="ghost"
+      <Button
+        variant="ghost"
         onClick={onClick}
-        className="text-xs px-2 py-0.5 min-h-11 sm:min-h-0 rounded border border-border hover:border-border-strong hover:bg-bg-surface text-fg-muted flex items-center gap-1.5 font-mono max-w-xs"
+        className="relative h-5 min-h-0 max-w-xs gap-1 rounded-md px-2 py-0 text-xs leading-4 font-normal text-ddc-tone-ghost-fg ring-1 ring-ddc-tone-ghost-ring ring-inset after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] hover:bg-ddc-surface-muted hover:text-ddc-text"
         title={title ?? (typeof label === "string" ? label : undefined)}
       >
         {inner}
@@ -70,7 +120,7 @@ export function Badge({
   }
   return (
     <span
-      className="text-xs px-2 py-0.5 text-fg-subtle font-mono flex items-center gap-1.5"
+      className="flex items-center gap-1.5 px-2 py-0.5 text-xs leading-4 text-ddc-text-muted"
       title={title}
     >
       {inner}

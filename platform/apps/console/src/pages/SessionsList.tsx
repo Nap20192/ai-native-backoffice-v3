@@ -1,25 +1,38 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { Controller, useFieldArray, useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArchiveIcon, TrashIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  EyeIcon,
+  EyeOffIcon,
+  FlaskConicalIcon,
+  PlusIcon,
+  TrashIcon,
+} from "lucide-react";
 import type { SessionCreateParams } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
 import { ApiError } from "../lib/api";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { StatusPill } from "../components/Badge";
 import { Select, SelectOption } from "../components/Select";
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
 import { PopoverContent } from "@/components/ui/popover";
 import { Combobox } from "../components/Combobox";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
 import { readManagedMetadataObject } from "../lib/managed-metadata";
+import { useI18n } from "../i18n";
+import { formatDateRu, plural } from "../components/session/format-ru";
 
 import type { SessionRecord as Session } from "../types/session";
 
@@ -35,14 +48,16 @@ type AgentLite = {
 // Session status options for the toolbar status chip. "any" maps to no
 // server filter; the other four match the SessionStatus union in
 // @anthropic-ai/sdk (idle | running | rescheduling | terminated).
+// Подписи совпадают со StatusPill (components/Badge.tsx), чтобы фильтр и
+// значок в строке называли статус одним словом.
 type StatusValue = "any" | "idle" | "running" | "rescheduling" | "terminated";
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "idle", label: "Idle" },
-  { value: "running", label: "Running" },
-  { value: "rescheduling", label: "Rescheduling" },
-  { value: "terminated", label: "Terminated" },
+  { value: "any", label: "Все" },
+  { value: "idle", label: "Ожидает" },
+  { value: "running", label: "Выполняется" },
+  { value: "rescheduling", label: "Перезапуск" },
+  { value: "terminated", label: "Остановлено" },
 ];
 
 // ────────────────────────────────────────────────────────────────────────
@@ -54,8 +69,8 @@ const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
  *  default for (mount_path → /workspace/<repo-name>). */
 const GithubResourceSchema = z.object({
   kind: z.literal("github"),
-  url: z.string().min(1, "Repository URL is required"),
-  token: z.string().min(1, "Authorization token is required"),
+  url: z.string().min(1, "Укажите адрес репозитория"),
+  token: z.string().min(1, "Укажите токен доступа"),
   checkout_type: z.enum(["none", "branch", "commit"]),
   checkout_name: z.string(),
   mount_path: z.string(),
@@ -82,8 +97,8 @@ const ResourceSchema = z.discriminatedUnion("kind", [
 ]);
 
 const FormSchema = z.object({
-  agent: z.string().min(1, "Select an agent"),
-  environment_id: z.string().min(1, "Select an environment"),
+  agent: z.string().min(1, "Выберите агента"),
+  environment_id: z.string().min(1, "Выберите окружение"),
   title: z.string(),
   vault_ids: z.array(z.string()),
   resources: z.array(ResourceSchema),
@@ -110,9 +125,9 @@ function blankResource(kind: ResourceRow["kind"]): ResourceRow {
 
 function kindLabel(kind: ResourceRow["kind"]): string {
   switch (kind) {
-    case "github": return "GitHub repository";
-    case "file": return "File";
-    case "memory_store": return "Memory store";
+    case "github": return "Репозиторий GitHub";
+    case "file": return "Файл";
+    case "memory_store": return "Хранилище памяти";
   }
 }
 
@@ -144,44 +159,7 @@ function defaultMountPath(githubUrl: string): string {
   return name ? `/workspace/${name}` : "/workspace";
 }
 
-/** Tiny "🔗 Linear" pill shown when a session was triggered by a Linear webhook. */
-function LinearBadge({ metadata }: { metadata?: Record<string, string> }) {
-  const linear = readManagedMetadataObject(metadata, "linear") as
-    | { issueIdentifier?: string; issueId?: string; workspaceId?: string }
-    | null;
-  if (!linear || (!linear.issueId && !linear.issueIdentifier)) return null;
-  return (
-    <span
-      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-info-subtle text-info"
-      title={`Linear issue ${linear.issueIdentifier ?? linear.issueId}`}
-    >
-      🔗 {linear.issueIdentifier ?? "Linear"}
-    </span>
-  );
-}
-
-/** Tiny "💬 Slack" pill shown when a session was triggered by a Slack event. */
-function SlackBadge({ metadata }: { metadata?: Record<string, string> }) {
-  const slack = readManagedMetadataObject(metadata, "slack") as
-    | { channelId?: string; threadTs?: string; workspaceId?: string }
-    | null;
-  if (!slack || (!slack.channelId && !slack.threadTs)) return null;
-  const label = slack.channelId
-    ? slack.channelId.startsWith("D")
-      ? "DM"
-      : slack.channelId
-    : "Slack";
-  return (
-    <span
-      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-accent-violet-subtle text-accent-violet"
-      title={`Slack channel ${slack.channelId}${slack.threadTs ? ` thread ${slack.threadTs}` : ""}`}
-    >
-      💬 {label}
-    </span>
-  );
-}
-
-/** Tiny "🧪 Eval" pill shown when a session was spawned by an eval-runner trial. */
+/** Бейдж запуска оценки: сессию породила попытка eval-раннера. */
 function EvalBadge({ metadata }: { metadata?: Record<string, string> }) {
   const ev = readManagedMetadataObject(metadata, "eval") as
     | { run_id?: string; task_id?: string }
@@ -191,10 +169,12 @@ function EvalBadge({ metadata }: { metadata?: Record<string, string> }) {
     <a
       href={`/evals/${ev.run_id}`}
       onClick={(e) => e.stopPropagation()}
-      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-info-subtle text-info hover:opacity-80 transition-opacity"
-      title={`Eval run ${ev.run_id}${ev.task_id ? ` · task ${ev.task_id}` : ""}`}
+      title={`Запуск оценки ${ev.run_id}${ev.task_id ? ` · задача ${ev.task_id}` : ""}`}
     >
-      🧪 {ev.task_id ?? "Eval"}
+      <Badge variant="info">
+        <FlaskConicalIcon aria-hidden="true" />
+        {ev.task_id ?? "Оценка"}
+      </Badge>
     </a>
   );
 }
@@ -202,6 +182,7 @@ function EvalBadge({ metadata }: { metadata?: Record<string, string> }) {
 export function SessionsList() {
   const managedApi = useManagedApi();
   const nav = useNavigate();
+  const { t } = useI18n();
   const [agents, setAgents] = useState<AgentLite[]>([]);
   // Agent's MCP servers (from /v1/agents/{id} fetched on pick). Used to
   // warn the user when their selected vaults don't carry credentials for
@@ -218,6 +199,13 @@ export function SessionsList() {
   const [memoryStores, setMemoryStores] = useState<MemoryStorePick[]>([]);
   const [, setAuxLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  // Удаление сессии идёт через ConfirmDialog (правило 11 DDC), а не через
+  // window.confirm.
+  // Сессию держим и после закрытия окна, чтобы заголовок не мигал пустым
+  // названием, пока окно уходит.
+  const [askDelete, setAskDelete] = useState<Session | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Per-field reveal toggle for any masked input (env value, github token).
   // Keyed by `${idx}:${field}`. We intentionally don't try to keep stale
   // entries valid across resource list mutations — adding/removing a row
@@ -228,8 +216,6 @@ export function SessionsList() {
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
-
-  const inputCls = "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
 
   // Server-driven filter state. Each piece flows into sessionsParams below
   // → useInfiniteApiQuery resets to page 1 on params change → the list
@@ -518,12 +504,17 @@ export function SessionsList() {
     setRevealedSecrets(new Set());
   };
 
-  const statusCls = (status?: string) => {
-    switch (status) {
-      case "idle": return "bg-success-subtle text-success";
-      case "running": return "bg-info-subtle text-info";
-      default: return "bg-bg-surface text-fg-muted";
+  const confirmDelete = async () => {
+    if (!askDelete) return;
+    setDeleting(true);
+    try {
+      await managedApi.sessions.delete(askDelete.id);
+      refreshSessions();
+    } catch {
+      // Ошибку уже показала обёртка api.
     }
+    setDeleting(false);
+    setDeleteOpen(false);
   };
 
   const displayed = useMemo(() => {
@@ -558,7 +549,7 @@ export function SessionsList() {
   const filters = (
     <>
       <FilterChip
-        label="Agent"
+        label="Агент"
         active={!!filterAgent}
         display={agentDisplay}
         onClear={() => setFilterAgent("")}
@@ -573,13 +564,13 @@ export function SessionsList() {
             options={agentOptions}
             value={filterAgent}
             onValueChange={(v) => setFilterAgent(v)}
-            searchPlaceholder="Agent..."
+            searchPlaceholder="Поиск агента…"
           />
         </PopoverContent>
       </FilterChip>
 
       <FilterChip
-        label="Status"
+        label="Статус"
         active={status !== "any"}
         display={statusDisplay}
         onClear={() => setStatus("any")}
@@ -594,7 +585,7 @@ export function SessionsList() {
             options={STATUS_OPTIONS}
             value={status}
             onValueChange={(v) => setStatus(v as StatusValue)}
-            searchPlaceholder="Status..."
+            searchPlaceholder="Поиск статуса…"
           />
         </PopoverContent>
       </FilterChip>
@@ -646,71 +637,75 @@ export function SessionsList() {
   const columns = useMemo<ColumnDef<Session>[]>(
     () => [
       {
+        id: "name",
+        accessorFn: (s) => s.title ?? "",
+        header: "Название",
+        size: 260,
+        meta: { grow: true },
+        cell: ({ row }) => {
+          const title = row.original.title || t.sessions.untitledSession;
+          return (
+            <span className="flex min-w-0 items-center gap-2 font-medium text-ddc-heading">
+              <span className="min-w-0 truncate" title={title}>
+                {title}
+              </span>
+              <EvalBadge metadata={row.original.metadata} />
+            </span>
+          );
+        },
+        enableHiding: false,
+      },
+      {
         id: "id",
         accessorKey: "id",
         header: "ID",
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
+          <span title={row.original.id} className="font-mono text-xs text-ddc-text-muted">
             {row.original.id}
           </span>
         ),
-        enableHiding: false,
-      },
-      {
-        id: "name",
-        accessorFn: (s) => s.title ?? "",
-        header: "Name",
-        cell: ({ row }) => (
-          <span className="inline-flex items-center gap-2 font-medium text-fg">
-            {row.original.title || "Untitled"}
-            <LinearBadge metadata={row.original.metadata} />
-            <SlackBadge metadata={row.original.metadata} />
-            <EvalBadge metadata={row.original.metadata} />
-          </span>
-        ),
-        enableHiding: false,
       },
       {
         id: "status",
         accessorFn: (s) => s.status ?? "idle",
-        header: "Status",
-        cell: ({ row }) => (
-          <span
-            className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${statusCls(row.original.status)}`}
-          >
-            {row.original.status || "idle"}
-          </span>
-        ),
+        header: "Статус",
+        cell: ({ row }) => <StatusPill status={row.original.status || "idle"} />,
       },
       {
         id: "agent",
-        accessorFn: (s) => s.agent.id,
-        header: "Agent",
+        accessorFn: (s) => s.agent.name,
+        header: "Агент",
+        size: 200,
+        meta: { priority: 1 },
         cell: ({ row }) => (
-          <span className="text-fg-muted font-mono text-xs">{row.original.agent.id}</span>
+          <span title={row.original.agent.name} className="min-w-0 truncate text-ddc-text-muted">
+            {row.original.agent.name}
+          </span>
         ),
       },
       {
         id: "created",
         accessorFn: (s) => s.created_at,
-        header: "Created",
+        header: t.common.created,
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-ddc-text-muted tabular-nums">
+            {formatDateRu(row.original.created_at)}
           </span>
         ),
       },
     ],
-    [refreshSessions],
+    [refreshSessions, t.sessions.untitledSession, t.common.created],
   );
 
   const hasActiveFilter = !!search || !!filterAgent || status !== "any" || created.after !== undefined || created.before !== undefined;
 
   return (
     <DataTable<Session>
-      createLabel="+ New session"
+      title={t.nav.sessions}
+      subtitle="Диалоги с агентами: каждая сессия хранит историю, файлы и результаты работы."
+      createLabel={t.sessions.newSession}
       onCreate={openModal}
-      searchPlaceholder="Search sessions..."
+      searchPlaceholder={t.sessions.searchSessions}
       searchValue={search}
       onSearchChange={setSearch}
       filters={filters}
@@ -720,10 +715,9 @@ export function SessionsList() {
       onRowClick={(s) => nav(`/sessions/${s.id}`)}
       rowActions={(session) => {
         const archived = Boolean(session.archived_at);
-        const label = session.title?.trim() || session.id;
         return [
           {
-            label: archived ? "Unarchive" : "Archive",
+            label: archived ? t.common.unarchive : t.common.archive,
             icon: <ArchiveIcon className="size-4" />,
             disabled: archived,
             onSelect: async () => {
@@ -734,15 +728,12 @@ export function SessionsList() {
             },
           },
           {
-            label: "Delete",
+            label: t.common.delete,
             icon: <TrashIcon className="size-4" />,
             destructive: true,
-            onSelect: async () => {
-              if (!confirm(`Delete session "${label}"? This can't be undone.`)) return;
-              try {
-                await managedApi.sessions.delete(session.id);
-                refreshSessions();
-              } catch {}
+            onSelect: () => {
+              setAskDelete(session);
+              setDeleteOpen(true);
             },
           },
         ];
@@ -750,42 +741,55 @@ export function SessionsList() {
       hasMore={hasMore}
       loadingMore={isLoadingMore}
       onLoadMore={loadMore}
-      emptyTitle={hasActiveFilter ? "No matching sessions" : "No sessions yet"}
+      emptyTitle={hasActiveFilter ? t.sessions.noMatchingSessions : t.sessions.noSessionsYet}
       emptyKind="session"
       emptyAction={!hasActiveFilter && (
-        <Button onClick={openModal}>+ New session</Button>
+        <Button onClick={openModal}><PlusIcon />{t.sessions.newSession}</Button>
       )}
       emptySubtitle={
         hasActiveFilter
-          ? "Try different filters."
-          : "Sessions will appear here once created through the API."
+          ? "Измените фильтры или поисковый запрос."
+          : "Создайте первую сессию, чтобы начать диалог с агентом."
       }
       columns={columns}
     >
+      <ConfirmDialog
+        open={deleteOpen}
+        title={`Удалить сессию «${askDelete?.title?.trim() || askDelete?.id || ""}»?`}
+        message="Действие нельзя отменить."
+        confirmLabel="Удалить"
+        destructive
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteOpen(false)}
+      />
       <Modal
         open={showCreate}
         onClose={closeModal}
-        title="New Session"
-        subtitle="Start a conversation with an agent."
+        title="Новая сессия"
+        subtitle="Начните диалог с агентом."
         maxWidth="max-w-2xl"
+        closeDisabled={formState.isSubmitting}
         footer={
           <>
-            <Button variant="ghost" onClick={closeModal}>Cancel</Button>
+            <Button variant="ghost" onClick={closeModal} disabled={formState.isSubmitting}>
+              Отмена
+            </Button>
             <Button
               onClick={handleSubmit(onSubmit)}
               disabled={!formState.isValid || formState.isSubmitting}
               loading={formState.isSubmitting}
             >
-              Create
+              Создать
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <Label className="text-sm text-fg-muted">Agent</Label>
-              <a href="/agents" className="text-xs text-brand hover:underline">Manage agents →</a>
+            <div className="mb-1.5 flex items-center justify-between gap-3">
+              <Label className="text-xs leading-4 font-medium text-ddc-label">Агент</Label>
+              <a href="/agents" className="link text-xs">Управление агентами</a>
             </div>
             <Controller
               control={control}
@@ -801,51 +805,56 @@ export function SessionsList() {
                     getValue={(a) => a.id}
                     getLabel={(a) => (
                       <span>
-                        {a.name} <span className="text-fg-subtle text-sm">({a.id})</span>
+                        {a.name} <span className="text-xs text-ddc-text-muted">({a.id})</span>
                       </span>
                     )}
                     getTextLabel={(a) => `${a.name} (${a.id})`}
-                    placeholder="Select agent..."
+                    placeholder="Выберите агента…"
                   />
                   {showError(fieldState.isTouched, fieldState.error?.message) && (
-                    <p className="text-xs text-danger mt-1">{fieldState.error?.message}</p>
+                    <p className="mt-1.5 text-xs leading-4 text-error">{fieldState.error?.message}</p>
                   )}
                 </>
               )}
             />
           </div>
           <div>
-              <div className="flex items-center justify-between mb-1">
-                <Label className="text-sm text-fg-muted">Environment</Label>
-                <a href="/environments" className="text-xs text-brand hover:underline">Manage environments →</a>
-              </div>
-              <Controller
-                control={control}
-                name="environment_id"
-                render={({ field, fieldState }) => (
-                  <>
-                    <Combobox<{ id: string; name: string }>
-                      value={field.value}
-                      onValueChange={(v) => field.onChange(v)}
-                      endpoint="/v1/environments"
-                      getValue={(e) => e.id}
-                      getLabel={(e) => (
-                        <span>
-                          {e.name} <span className="text-fg-subtle text-sm">({e.id})</span>
-                        </span>
-                      )}
-                      getTextLabel={(e) => `${e.name} (${e.id})`}
-                      placeholder="Select environment..."
-                    />
-                    {showError(fieldState.isTouched, fieldState.error?.message) && (
-                      <p className="text-xs text-danger mt-1">{fieldState.error?.message}</p>
+            <div className="mb-1.5 flex items-center justify-between gap-3">
+              <Label className="text-xs leading-4 font-medium text-ddc-label">Окружение</Label>
+              <a href="/environments" className="link text-xs">Управление окружениями</a>
+            </div>
+            <Controller
+              control={control}
+              name="environment_id"
+              render={({ field, fieldState }) => (
+                <>
+                  <Combobox<{ id: string; name: string }>
+                    value={field.value}
+                    onValueChange={(v) => field.onChange(v)}
+                    endpoint="/v1/environments"
+                    getValue={(e) => e.id}
+                    getLabel={(e) => (
+                      <span>
+                        {e.name} <span className="text-xs text-ddc-text-muted">({e.id})</span>
+                      </span>
                     )}
-                  </>
-                )}
-              />
+                    getTextLabel={(e) => `${e.name} (${e.id})`}
+                    placeholder="Выберите окружение…"
+                  />
+                  {showError(fieldState.isTouched, fieldState.error?.message) && (
+                    <p className="mt-1.5 text-xs leading-4 text-error">{fieldState.error?.message}</p>
+                  )}
+                </>
+              )}
+            />
           </div>
           <div>
-            <Label htmlFor="session-title" className="text-sm text-fg-muted block mb-1">Title <span className="text-fg-subtle">(optional)</span></Label>
+            <Label
+              htmlFor="session-title"
+              className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label"
+            >
+              Название <span className="font-normal text-ddc-text-muted">(необязательно)</span>
+            </Label>
             {/* autoComplete=off + an unrecognised name to defeat Chrome /
                 Safari email autofill — first text input in the dialog
                 got pre-filled with the user's saved email otherwise.
@@ -856,44 +865,51 @@ export function SessionsList() {
               id="session-title"
               {...register("title")}
               name="oma-session-title"
-              className={inputCls}
-              placeholder="My conversation"
+              placeholder="Например, разбор заявки на отпуск"
               autoComplete="off"
             />
           </div>
 
           {vaults.length > 0 && (
             <div>
-            <div className="flex items-center justify-between mb-1">
-              <Label className="text-sm text-fg-muted">Credential Vaults <span className="text-fg-subtle">(optional)</span></Label>
-              <a href="/vaults" className="text-xs text-brand hover:underline">Manage vaults →</a>
-            </div>
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <Label className="text-xs leading-4 font-medium text-ddc-label">
+                  Хранилища секретов <span className="font-normal text-ddc-text-muted">(необязательно)</span>
+                </Label>
+                <a href="/vaults" className="link text-xs">Управление хранилищами</a>
+              </div>
               <div className="space-y-1">
                 {vaults.map((v) => (
-                  <Label key={v.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Label
+                    key={v.id}
+                    className="flex min-h-8 cursor-pointer items-center gap-2 text-sm leading-5 font-normal"
+                  >
                     <Checkbox
                       checked={watchedVaultIds.includes(v.id)}
                       onCheckedChange={() => toggleVault(v.id)}
                     />
-                    <span className="text-fg">{v.display_name}</span>
-                    <span className="text-fg-subtle font-mono text-xs">{v.id}</span>
+                    <span className="min-w-0 truncate text-ddc-text" title={v.display_name}>
+                      {v.display_name}
+                    </span>
+                    <span className="flex-none font-mono text-xs text-ddc-text-muted">{v.id}</span>
                   </Label>
                 ))}
               </div>
               {unauthedMcpServers.length > 0 && (
-                <div className="mt-2 px-3 py-2 rounded-md border border-warning/40 bg-warning/5 text-xs text-warning">
-                  <div className="font-medium mb-1">
-                    {unauthedMcpServers.length === 1
-                      ? "1 MCP server has no matching credential in selected vaults:"
-                      : `${unauthedMcpServers.length} MCP servers have no matching credentials in selected vaults:`}
+                <div className="callout-warning mt-3 flex-col items-stretch gap-1 text-xs">
+                  <div className="font-medium">
+                    {unauthedMcpServers.length}{" "}
+                    {plural(unauthedMcpServers.length, "MCP-сервер", "MCP-сервера", "MCP-серверов")}{" "}
+                    без подходящих учётных данных в выбранных хранилищах:
                   </div>
                   <ul className="space-y-0.5 font-mono">
                     {unauthedMcpServers.map((s) => (
                       <li key={s.url}>· {s.host}</li>
                     ))}
                   </ul>
-                  <div className="mt-1 text-fg-muted font-sans">
-                    Agent will dial these endpoints unauthenticated. Add a vault credential for each, or expect the agent to see 401s mid-conversation.
+                  <div>
+                    Агент будет обращаться к этим адресам без авторизации. Добавьте учётные данные в хранилище
+                    для каждого адреса, иначе в ходе диалога агент получит ответ 401.
                   </div>
                 </div>
               )}
@@ -901,18 +917,18 @@ export function SessionsList() {
           )}
 
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <Label className="text-sm text-fg-muted">Resources <span className="text-fg-subtle">(optional)</span></Label>
-            </div>
-            <p className="text-xs text-fg-subtle mb-2">
-              Mount files, GitHub repositories, memory stores, or pass environment variables into the session.
+            <Label className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">
+              Ресурсы <span className="font-normal text-ddc-text-muted">(необязательно)</span>
+            </Label>
+            <p className="mb-3 text-xs leading-4 text-ddc-text-muted">
+              Подключите к сессии файлы, репозитории GitHub и хранилища памяти.
             </p>
             {resourceFields.length === 0 ? (
-              <div className="text-xs text-fg-subtle border border-dashed border-border rounded-lg px-3 py-3 text-center">
-                No resources added.
+              <div className="rounded-xl border border-dashed border-ddc-border-strong px-3 py-4 text-center text-xs leading-4 text-ddc-text-muted">
+                Ресурсы не добавлены.
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {resourceFields.map((field, i) => {
                   // Live values for the current row — register() drives
                   // input state, but conditional rendering (kind-specific
@@ -921,67 +937,90 @@ export function SessionsList() {
                   const live = watchedResources[i];
                   if (!live) return null;
                   return (
-                    <div key={field.id} className="border border-border rounded-lg bg-bg-surface p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-medium text-fg inline-flex items-center gap-2">
-                          {kindLabel(live.kind)}
+                    <div key={field.id} className="rounded-xl bg-ddc-surface-muted p-3">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <span className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-ddc-heading">
+                          <span className="truncate" title={kindLabel(live.kind)}>{kindLabel(live.kind)}</span>
                           {showPrimaryHint && live.kind === "github" && i === firstGithubIdx && (
-                            <span
-                              className="text-xs font-medium px-1.5 py-0.5 rounded bg-brand/10 border border-brand/30 text-brand"
-                              title="This repo's token is used for GitHub API calls that don't target a specific repo (GraphQL, Search, /user, …)"
+                            <Badge
+                              variant="brand"
+                              title="Токен этого репозитория используется для вызовов GitHub API без указания репозитория (GraphQL, Search, /user и другие)"
                             >
-                              primary
-                            </span>
+                              основной
+                            </Badge>
                           )}
                         </span>
-                        <Button variant="ghost"
+                        <Button
+                          variant="danger-ghost"
+                          size="xs"
                           type="button"
                           onClick={() => removeResource(i)}
-                          className="inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 px-2 text-fg-subtle hover:text-danger text-xs"
-                          aria-label="Remove resource"
+                          aria-label="Убрать ресурс"
                         >
-                          Remove
+                          Убрать
                         </Button>
                       </div>
                       {live.kind === "github" && (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           <div>
-                            <Label htmlFor={`session-resource-${i}-url`} className="text-xs text-fg-muted block mb-0.5">Repository URL <span className="text-danger">*</span></Label>
+                            <Label htmlFor={`session-resource-${i}-url`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">
+                              Адрес репозитория <span className="text-error">*</span>
+                            </Label>
                             <Input
                               id={`session-resource-${i}-url`}
                               {...register(`resources.${i}.url`)}
-                              className={inputCls}
+                              aria-invalid={
+                                showError(
+                                  resourceFieldTouched(i, "url"),
+                                  resourceFieldError(i, "url"),
+                                )
+                                  ? true
+                                  : undefined
+                              }
                               placeholder="https://github.com/owner/repo"
                             />
                             {showError(
                               resourceFieldTouched(i, "url"),
                               resourceFieldError(i, "url"),
                             ) && (
-                              <p className="text-xs text-danger mt-1">
+                              <p className="mt-1.5 text-xs leading-4 text-error">
                                 {resourceFieldError(i, "url")}
                               </p>
                             )}
                           </div>
                           <div>
-                            <Label htmlFor={`session-resource-${i}-token`} className="text-xs text-fg-muted block mb-0.5">
-                              Authorization Token <span className="text-danger">*</span>
+                            <Label htmlFor={`session-resource-${i}-token`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">
+                              Токен доступа <span className="text-error">*</span>
                             </Label>
                             <div className="relative">
                               <Input
                                 id={`session-resource-${i}-token`}
                                 type={revealedSecrets.has(`${i}:token`) ? "text" : "password"}
                                 {...register(`resources.${i}.token`)}
-                                className={`${inputCls} pr-12`}
+                                aria-invalid={
+                                  showError(
+                                    resourceFieldTouched(i, "token"),
+                                    resourceFieldError(i, "token"),
+                                  )
+                                    ? true
+                                    : undefined
+                                }
+                                className="pr-11"
                                 placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
                               />
                               {live.token && (
-                                <Button variant="ghost"
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
                                   type="button"
                                   onClick={() => toggleReveal(`${i}:token`)}
-                                  className="absolute inset-y-0 right-2 my-auto inline-flex h-fit items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 px-1 text-xs text-fg-subtle hover:text-fg"
-                                  aria-label="Toggle token visibility"
+                                  className="absolute inset-y-0 right-1.5 my-auto text-ddc-icon-muted hover:text-ddc-text"
+                                  aria-label={
+                                    revealedSecrets.has(`${i}:token`) ? "Скрыть токен" : "Показать токен"
+                                  }
+                                  title={revealedSecrets.has(`${i}:token`) ? "Скрыть токен" : "Показать токен"}
                                 >
-                                  {revealedSecrets.has(`${i}:token`) ? "hide" : "show"}
+                                  {revealedSecrets.has(`${i}:token`) ? <EyeOffIcon /> : <EyeIcon />}
                                 </Button>
                               )}
                             </div>
@@ -989,14 +1028,14 @@ export function SessionsList() {
                               resourceFieldTouched(i, "token"),
                               resourceFieldError(i, "token"),
                             ) && (
-                              <p className="text-xs text-danger mt-1">
+                              <p className="mt-1.5 text-xs leading-4 text-error">
                                 {resourceFieldError(i, "token")}
                               </p>
                             )}
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="grid gap-3 sm:grid-cols-2">
                             <div>
-                              <Label htmlFor={`session-resource-${i}-checkout-type`} className="text-xs text-fg-muted block mb-0.5">Checkout</Label>
+                              <Label htmlFor={`session-resource-${i}-checkout-type`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">Версия кода</Label>
                               <Select
                                 id={`session-resource-${i}-checkout-type`}
                                 name={`resources.${i}.checkout_type`}
@@ -1012,43 +1051,44 @@ export function SessionsList() {
                                   // doesn't lie about commit-vs-branch.
                                   setValue(`resources.${i}.checkout_name`, "");
                                 }}
-                                className={inputCls}
                               >
-                                <SelectOption value="none">None</SelectOption>
-                                <SelectOption value="branch">Branch</SelectOption>
-                                <SelectOption value="commit">Commit</SelectOption>
+                                <SelectOption value="none">По умолчанию</SelectOption>
+                                <SelectOption value="branch">Ветка</SelectOption>
+                                <SelectOption value="commit">Коммит</SelectOption>
                               </Select>
                             </div>
                             <div>
-                              <Label htmlFor={`session-resource-${i}-checkout-name`} className="text-xs text-fg-muted block mb-0.5">
-                                {live.checkout_type === "commit" ? "Commit SHA" : "Name"}
+                              <Label htmlFor={`session-resource-${i}-checkout-name`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">
+                                {live.checkout_type === "commit" ? "Хеш коммита" : "Название ветки"}
                               </Label>
                               <Input
                                 id={`session-resource-${i}-checkout-name`}
                                 {...register(`resources.${i}.checkout_name`)}
-                                className={inputCls}
                                 disabled={live.checkout_type === "none"}
-                                placeholder={live.checkout_type === "commit" ? "abc123..." : "main"}
+                                placeholder={live.checkout_type === "commit" ? "abc123…" : "main"}
                               />
                             </div>
                           </div>
                           <div>
-                            <Label htmlFor={`session-resource-${i}-mount`} className="text-xs text-fg-muted block mb-0.5">Mount Path <span className="text-fg-subtle">(optional)</span></Label>
+                            <Label htmlFor={`session-resource-${i}-mount`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">
+                              Путь монтирования <span className="font-normal text-ddc-text-muted">(необязательно)</span>
+                            </Label>
                             <Input
                               id={`session-resource-${i}-mount`}
                               {...register(`resources.${i}.mount_path`)}
-                              className={inputCls}
-                              placeholder={`${defaultMountPath(live.url)} (default)`}
+                              placeholder={`${defaultMountPath(live.url)} (по умолчанию)`}
                             />
                           </div>
                         </div>
                       )}
                       {live.kind === "file" && (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           <div>
-                            <div className="flex items-center justify-between mb-0.5">
-                              <Label htmlFor={`session-resource-${i}-file`} className="text-xs text-fg-muted">File <span className="text-danger">*</span></Label>
-                              <a href="/files" className="inline-flex items-center min-h-11 sm:min-h-0 text-xs text-brand hover:underline">Manage files →</a>
+                            <div className="mb-1.5 flex items-center justify-between gap-3">
+                              <Label htmlFor={`session-resource-${i}-file`} className="text-xs leading-4 font-medium text-ddc-label">
+                                Файл <span className="text-error">*</span>
+                              </Label>
+                              <a href="/files" className="link text-xs">Управление файлами</a>
                             </div>
                             <Select
                               id={`session-resource-${i}-file`}
@@ -1061,8 +1101,7 @@ export function SessionsList() {
                                   shouldValidate: true,
                                 })
                               }
-                              placeholder="Select file..."
-                              className={inputCls}
+                              placeholder="Выберите файл…"
                             >
                               {files.map((f) => (
                                 <SelectOption key={f.id} value={f.id}>
@@ -1071,26 +1110,31 @@ export function SessionsList() {
                               ))}
                             </Select>
                             {files.length === 0 && (
-                              <p className="text-xs text-fg-subtle mt-1">No files yet — upload via the AMA SDK or POST /v1/files.</p>
+                              <p className="mt-1.5 text-xs leading-4 text-ddc-text-muted">
+                                Файлов пока нет. Загрузите файл через SDK или запрос POST /v1/files.
+                              </p>
                             )}
                           </div>
                           <div>
-                            <Label htmlFor={`session-resource-${i}-file-mount`} className="text-xs text-fg-muted block mb-0.5">Mount Path <span className="text-fg-subtle">(optional)</span></Label>
+                            <Label htmlFor={`session-resource-${i}-file-mount`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">
+                              Путь монтирования <span className="font-normal text-ddc-text-muted">(необязательно)</span>
+                            </Label>
                             <Input
                               id={`session-resource-${i}-file-mount`}
                               {...register(`resources.${i}.mount_path`)}
-                              className={inputCls}
-                              placeholder="/mnt/session/uploads/<file_id> (default)"
+                              placeholder="/mnt/session/uploads/<file_id> (по умолчанию)"
                             />
                           </div>
                         </div>
                       )}
                       {live.kind === "memory_store" && (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           <div>
-                            <div className="flex items-center justify-between mb-0.5">
-                              <Label htmlFor={`session-resource-${i}-store`} className="text-xs text-fg-muted">Store <span className="text-danger">*</span></Label>
-                              <a href="/memory" className="inline-flex items-center min-h-11 sm:min-h-0 text-xs text-brand hover:underline">Manage stores →</a>
+                            <div className="mb-1.5 flex items-center justify-between gap-3">
+                              <Label htmlFor={`session-resource-${i}-store`} className="text-xs leading-4 font-medium text-ddc-label">
+                                Хранилище <span className="text-error">*</span>
+                              </Label>
+                              <a href="/memory" className="link text-xs">Управление хранилищами</a>
                             </div>
                             <Select
                               id={`session-resource-${i}-store`}
@@ -1103,8 +1147,7 @@ export function SessionsList() {
                                   shouldValidate: true,
                                 })
                               }
-                              placeholder="Select store..."
-                              className={inputCls}
+                              placeholder="Выберите хранилище…"
                             >
                               {memoryStores.map((m) => (
                                 <SelectOption key={m.id} value={m.id}>
@@ -1114,7 +1157,7 @@ export function SessionsList() {
                             </Select>
                           </div>
                           <div>
-                            <Label htmlFor={`session-resource-${i}-access`} className="text-xs text-fg-muted block mb-0.5">Access</Label>
+                            <Label htmlFor={`session-resource-${i}-access`} className="mb-1.5 flex text-xs leading-4 font-medium text-ddc-label">Доступ</Label>
                             <Select
                               id={`session-resource-${i}-access`}
                               name={`resources.${i}.access`}
@@ -1126,10 +1169,9 @@ export function SessionsList() {
                                   { shouldDirty: true, shouldTouch: true, shouldValidate: true },
                                 )
                               }
-                              className={inputCls}
                             >
-                              <SelectOption value="read_write">Read / Write</SelectOption>
-                              <SelectOption value="read_only">Read only</SelectOption>
+                              <SelectOption value="read_write">Чтение и запись</SelectOption>
+                              <SelectOption value="read_only">Только чтение</SelectOption>
                             </Select>
                           </div>
                         </div>
@@ -1139,10 +1181,19 @@ export function SessionsList() {
                 })}
               </div>
             )}
-            <div className="flex flex-wrap gap-2 mt-2">
-              <Button variant="ghost" type="button" onClick={() => addResource("github")} className="inline-flex items-center justify-center min-h-11 sm:min-h-0 text-xs px-2.5 py-1.5 border border-border rounded-md hover:bg-bg-surface text-fg-muted hover:text-fg">+ GitHub repo</Button>
-              <Button variant="ghost" type="button" onClick={() => addResource("file")} className="inline-flex items-center justify-center min-h-11 sm:min-h-0 text-xs px-2.5 py-1.5 border border-border rounded-md hover:bg-bg-surface text-fg-muted hover:text-fg">+ File</Button>
-              <Button variant="ghost" type="button" onClick={() => addResource("memory_store")} className="inline-flex items-center justify-center min-h-11 sm:min-h-0 text-xs px-2.5 py-1.5 border border-border rounded-md hover:bg-bg-surface text-fg-muted hover:text-fg">+ Memory store</Button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <PlainButton type="button" className="btn-add min-h-8" onClick={() => addResource("github")}>
+                <PlusIcon aria-hidden="true" />
+                Репозиторий GitHub
+              </PlainButton>
+              <PlainButton type="button" className="btn-add min-h-8" onClick={() => addResource("file")}>
+                <PlusIcon aria-hidden="true" />
+                Файл
+              </PlainButton>
+              <PlainButton type="button" className="btn-add min-h-8" onClick={() => addResource("memory_store")}>
+                <PlusIcon aria-hidden="true" />
+                Хранилище памяти
+              </PlainButton>
             </div>
           </div>
         </div>

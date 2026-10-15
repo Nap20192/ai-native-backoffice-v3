@@ -7,14 +7,18 @@ import { useApiQuery } from "../lib/useApiQuery";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip } from "../components/FilterChip";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PopoverContent } from "@/components/ui/popover";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { useI18n } from "../i18n";
+import { EvalStatusPill, evalStatusLabel, type EvalStatus } from "./eval-status";
+import { EMPTY, formatAgo, formatDateTime, formatSpan } from "./ru-format";
 
 interface EvalRunSummary {
   id: string;
   agent_id: string;
   environment_id: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: EvalStatus;
   started_at: string;
   ended_at?: string;
   error?: string;
@@ -29,43 +33,10 @@ interface EvalRunSummary {
   }>;
 }
 
-type StatusValue = "any" | "pending" | "running" | "completed" | "failed";
+type StatusValue = "any" | EvalStatus;
 
-const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "pending", label: "Pending" },
-  { value: "running", label: "Running" },
-  { value: "completed", label: "Completed" },
-  { value: "failed", label: "Failed" },
-];
-
-function statusCls(s: string): string {
-  switch (s) {
-    case "completed": return "bg-success-subtle text-success";
-    case "failed":    return "bg-danger-subtle text-danger";
-    case "running":   return "bg-info-subtle text-info";
-    default:          return "bg-bg-surface text-fg-muted";
-  }
-}
-
-function timeAgo(iso?: string): string {
-  if (!iso) return "—";
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
-  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
-  return `${Math.round(ms / 86_400_000)}d ago`;
-}
-
-function durationStr(start?: string, end?: string): string {
-  if (!start) return "—";
-  const s = new Date(start).getTime();
-  const e = end ? new Date(end).getTime() : Date.now();
-  const sec = Math.round((e - s) / 1000);
-  if (sec < 60) return `${sec}s`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
-  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-}
+/** Значение фильтра и его подпись. «Все» берётся из словаря. */
+const STATUS_VALUES: StatusValue[] = ["any", "pending", "running", "completed", "failed"];
 
 function passRateStr(r: EvalRunSummary): string {
   let pass = 0;
@@ -74,19 +45,28 @@ function passRateStr(r: EvalRunSummary): string {
     pass += t.trial_pass_count ?? 0;
     total += t.trial_total ?? 0;
   }
-  if (total === 0) return "—";
+  if (total === 0) return EMPTY;
   return `${pass}/${total}`;
 }
+
+/** Действие над строкой, которое ждёт подтверждения. */
+type PendingAction = { kind: "cancel" | "delete"; run: EvalRunSummary };
 
 export function EvalRunsList() {
   const nav = useNavigate();
   const { api } = useApi();
   const { t } = useI18n();
 
+  const statusOptions = STATUS_VALUES.map((value) => ({
+    value,
+    label: value === "any" ? t.common.all : evalStatusLabel(value),
+  }));
+
   // Server-driven status filter. "any" → omit the param entirely so the
   // server returns all runs; anything else is whitelisted by the route's
   // strict enum validator (400 on typo).
   const [status, setStatus] = useState<StatusValue>("any");
+  const [search, setSearch] = useState("");
 
   const params = useMemo(
     () => ({
@@ -114,7 +94,13 @@ export function EvalRunsList() {
       },
     },
   );
-  const runs = runsRes?.data ?? [];
+  const allRuns = runsRes?.data ?? [];
+  const runs = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    return needle
+      ? allRuns.filter((run) => run.id.toLocaleLowerCase().includes(needle))
+      : allRuns;
+  }, [allRuns, search]);
 
   // TanStack column defs. Order, filtering, and search all flow through
   // server params — no per-column sort/filter UI. Required columns (id,
@@ -127,7 +113,7 @@ export function EvalRunsList() {
         accessorKey: "id",
         header: "ID",
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
+          <span title={row.original.id} className="font-mono text-xs text-ddc-label">
             {row.original.id}
           </span>
         ),
@@ -136,78 +122,92 @@ export function EvalRunsList() {
       {
         id: "status",
         accessorKey: "status",
-        header: "Status",
-        cell: ({ row }) => (
-          <span
-            className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${statusCls(row.original.status)}`}
-          >
-            {row.original.status}
-          </span>
-        ),
+        header: t.common.status,
+        cell: ({ row }) => <EvalStatusPill status={row.original.status} />,
         enableHiding: false,
       },
       {
         id: "pass_rate",
         accessorFn: (r) => passRateStr(r),
-        header: "Pass rate",
+        header: "Результат",
         cell: ({ row }) => (
-          <span className="text-fg font-medium">{passRateStr(row.original)}</span>
+          <span className="font-medium text-ddc-text tabular-nums">{passRateStr(row.original)}</span>
         ),
       },
       {
         id: "tasks",
         accessorFn: (r) => `${r.completed_count}/${r.task_count}`,
-        header: "Tasks",
+        header: "Задачи",
         cell: ({ row }) => (
-          <span className="text-fg-muted">
+          <span className="text-ddc-label tabular-nums">
             {row.original.completed_count}/{row.original.task_count}
             {row.original.failed_count > 0 && (
-              <span className="text-danger ml-1">({row.original.failed_count} fail)</span>
+              <span className="text-error ml-1">({row.original.failed_count} с ошибкой)</span>
             )}
           </span>
         ),
       },
       {
         id: "duration",
-        accessorFn: (r) => durationStr(r.started_at, r.ended_at),
-        header: "Duration",
+        accessorFn: (r) => formatSpan(r.started_at, r.ended_at),
+        header: "Длительность",
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {durationStr(row.original.started_at, row.original.ended_at)}
+          <span className="text-ddc-label tabular-nums">
+            {formatSpan(row.original.started_at, row.original.ended_at)}
           </span>
         ),
       },
       {
         id: "started",
         accessorFn: (r) => r.started_at,
-        header: "Started",
+        header: "Запущен",
         cell: ({ row }) => (
-          <span title={row.original.started_at} className="text-fg-muted">
-            {timeAgo(row.original.started_at)}
+          <span title={formatDateTime(row.original.started_at)} className="text-ddc-label tabular-nums">
+            {formatAgo(row.original.started_at)}
           </span>
         ),
       },
       {
         id: "agent",
         accessorKey: "agent_id",
-        header: "Agent",
+        header: t.dashboard.agent,
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-fg-muted">{row.original.agent_id}</span>
+          <span className="font-mono text-xs text-ddc-label">{row.original.agent_id}</span>
         ),
       },
     ],
-    [api, refetch],
+    [t],
   );
+
+  // Отмена и удаление спрашивают подтверждение в окне (правило 11 DDC).
+  // Цель не сбрасывается при закрытии, чтобы заголовок не мигал.
+  const [target, setTarget] = useState<PendingAction | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const ask = (kind: PendingAction["kind"], run: EvalRunSummary) => {
+    setTarget({ kind, run });
+    setConfirmOpen(true);
+  };
+  const confirmAction = useAsyncAction(async () => {
+    if (!target) return;
+    try {
+      await api(`/v1/oma/evals/runs/${target.run.id}`, { method: "DELETE" });
+      void refetch();
+    } catch {
+      // Ошибку уже показал api() тостом.
+    } finally {
+      setConfirmOpen(false);
+    }
+  });
 
   // Active-filter chip display — kept null when matching the default so
   // the chip reads "Status ▾" rather than "Status: All ▾". The clear-X
   // only renders when the chip is in non-default state.
   const statusDisplay =
-    status === "any" ? undefined : STATUS_OPTIONS.find((o) => o.value === status)?.label;
+    status === "any" ? undefined : statusOptions.find((o) => o.value === status)?.label;
 
   const filters = (
     <FilterChip
-      label="Status"
+      label={t.common.status}
       active={status !== "any"}
       display={statusDisplay}
       onClear={() => setStatus("any")}
@@ -219,10 +219,10 @@ export function EvalRunsList() {
         className="w-48 p-0"
       >
         <FacetedFilter
-          options={STATUS_OPTIONS}
+          options={statusOptions}
           value={status}
           onValueChange={(v) => setStatus(v as StatusValue)}
-          searchPlaceholder="Status..."
+          searchPlaceholder={`${t.common.status}…`}
         />
       </PopoverContent>
     </FilterChip>
@@ -230,6 +230,12 @@ export function EvalRunsList() {
 
   return (
     <DataTable<EvalRunSummary>
+      defaultHiddenColumns={[]}
+      title={t.nav.evalRuns}
+      subtitle="Проверки агентов на наборах задач: результат, длительность и статус каждого запуска."
+      searchPlaceholder={t.evals.searchEvalRuns}
+      searchValue={search}
+      onSearchChange={setSearch}
       filters={filters}
       data={runs}
       loading={loading}
@@ -237,45 +243,51 @@ export function EvalRunsList() {
       onRowClick={(r) => nav(`/evals/${r.id}`)}
       rowActions={(run) => [
         {
-          label: "Cancel",
+          label: "Отменить запуск",
           icon: <XCircleIcon className="size-4" />,
           disabled: run.status !== "pending" && run.status !== "running",
-          onSelect: async () => {
-            if (!confirm(`Cancel eval run ${run.id}? In-flight tasks will be marked failed.`)) return;
-            try {
-              await api(`/v1/oma/evals/runs/${run.id}`, { method: "DELETE" });
-              void refetch();
-            } catch {}
-          },
+          onSelect: () => ask("cancel", run),
         },
         {
-          label: "Delete",
+          label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
           destructive: true,
-          onSelect: async () => {
-            if (!confirm(`Delete eval run ${run.id}? This can't be undone.`)) return;
-            try {
-              await api(`/v1/oma/evals/runs/${run.id}`, { method: "DELETE" });
-              void refetch();
-            } catch {}
-          },
+          onSelect: () => ask("delete", run),
         },
       ]}
       columns={columns}
-      emptyTitle={status === "any" ? "No eval runs yet" : "No matching eval runs"}
+      emptyTitle={
+        status === "any" && !search.trim() ? t.evals.noEvalRunsYet : t.evals.noMatchingEvalRuns
+      }
       emptyKind="eval"
       emptySubtitle={
-        status === "any" ? (
+        status === "any" && !search.trim() ? (
           <p>
-            Submit one with{" "}
-            <code className="px-1 py-0.5 bg-bg-surface rounded text-fg-muted">POST /v1/oma/evals/runs</code>{" "}
-            or{" "}
-            <code className="px-1 py-0.5 bg-bg-surface rounded text-fg-muted">npx tsx rl/tasks/terminal-bench/run-cloud.ts</code>.
+            Создайте запуск через{" "}
+            <code className="rounded-md bg-ddc-surface-sunken px-1.5 py-0.5 font-mono text-xs text-ddc-label">POST /v1/oma/evals/runs</code>{" "}
+            или командой{" "}
+            <code className="rounded-md bg-ddc-surface-sunken px-1.5 py-0.5 font-mono text-xs text-ddc-label">npx tsx rl/tasks/terminal-bench/run-cloud.ts</code>.
           </p>
         ) : (
-          "Try clearing the status filter."
+          "Сбросьте фильтр по статусу или измените поисковый запрос."
         )
       }
-    />
+    >
+      <ConfirmDialog
+        open={confirmOpen && !!target}
+        title={target?.kind === "delete" ? "Удалить запуск оценки?" : "Отменить запуск оценки?"}
+        message={
+          target?.kind === "delete"
+            ? `Запуск ${target.run.id}. Действие нельзя отменить.`
+            : `Запуск ${target?.run.id ?? ""}. Выполняемые задачи будут помечены как неудачные.`
+        }
+        confirmLabel={target?.kind === "delete" ? t.common.delete : "Отменить запуск"}
+        cancelLabel={target?.kind === "delete" ? t.common.cancel : "Назад"}
+        destructive
+        busy={confirmAction.loading}
+        onConfirm={() => void confirmAction.run()}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </DataTable>
   );
 }

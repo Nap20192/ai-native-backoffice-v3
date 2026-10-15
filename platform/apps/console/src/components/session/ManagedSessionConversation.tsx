@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
-import { AgentChatView } from "@openma/common/chat-ui";
+import { AgentChatView, type AgentChatViewSlots } from "@openma/common/chat-ui";
+import { Button } from "@/components/ui/button";
 import type { CanonicalChatTurn } from "@openma/common/session-events/managed";
 import {
   CanonicalSessionTurn,
@@ -14,6 +15,26 @@ export interface ManagedSessionConversationProps {
   sessionId?: string;
   turns: readonly CanonicalChatTurn[];
 }
+
+/** Кнопка «вниз» поверх чата: кнопка-иконка DDC с русской подписью вместо
+ *  английской «Scroll to bottom» из общего пакета. */
+const renderScrollButton: NonNullable<AgentChatViewSlots["renderScrollButton"]> = ({
+  onClick,
+  className,
+  icon,
+}) => (
+  <Button
+    type="button"
+    variant="outline"
+    size="icon"
+    className={className}
+    onClick={onClick}
+    aria-label="Прокрутить вниз"
+    title="Прокрутить вниз"
+  >
+    {icon}
+  </Button>
+);
 
 /**
  * Console supplies data and product slots; OpenMA UI owns the transcript,
@@ -55,8 +76,9 @@ export function ManagedSessionConversation({
         composer,
         beforeComposer,
         conversationContentAfter: afterTurns,
+        renderScrollButton,
         empty: empty ?? (
-          <p className="text-sm text-fg-muted">Send a message to start this session.</p>
+          <p className="text-sm text-ddc-text-muted">Отправьте сообщение, чтобы начать сессию.</p>
         ),
       }}
       surface="console"

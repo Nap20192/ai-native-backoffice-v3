@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { formatDuration, formatRelative, pickTickStep, shortenId } from "./format";
 
 describe("formatDuration", () => {
-  it("returns em-dash for non-finite or negative input", () => {
-    expect(formatDuration(NaN)).toBe("—");
-    expect(formatDuration(-1)).toBe("—");
+  it("returns en-dash for non-finite or negative input", () => {
+    expect(formatDuration(NaN)).toBe("–");
+    expect(formatDuration(-1)).toBe("–");
   });
   it("clamps sub-millisecond values", () => {
     expect(formatDuration(0.4)).toBe("<1ms");
@@ -35,8 +35,8 @@ describe("formatRelative", () => {
 });
 
 describe("shortenId", () => {
-  it("returns em-dash when id is missing", () => {
-    expect(shortenId(undefined)).toBe("—");
+  it("returns en-dash when id is missing", () => {
+    expect(shortenId(undefined)).toBe("–");
   });
   it("passes through short ids unchanged", () => {
     expect(shortenId("abc")).toBe("abc");

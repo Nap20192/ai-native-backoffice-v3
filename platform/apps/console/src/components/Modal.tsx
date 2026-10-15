@@ -18,37 +18,35 @@ import { cn } from "@/lib/utils";
 // our chosen width over it. Add new entries here if a caller starts
 // passing a wider value.
 //
-// !max-w-sm !max-w-md !max-w-lg !max-w-xl !max-w-2xl !max-w-3xl !max-w-4xl
+// !max-w-sm !max-w-md !max-w-lg !max-w-xl !max-w-2xl !max-w-3xl !max-w-4xl !max-w-5xl
 
 /**
- * Project-level modal convention built on shadcn `Dialog` primitives.
- * Keeps a small controlled API (open/onClose/title/subtitle/maxWidth/
- * children/footer) because the same modal pattern recurs across 18+
- * call sites and each direct `<Dialog>…<DialogContent><DialogHeader>…`
- * expansion would add the same boilerplate. Internals delegate to
- * shadcn so theming, close button (lucide X via DialogContent's
- * showCloseButton default), focus trap, and animations stay aligned
- * with the rest of the design system.
+ * Окно DDC (правило 11): любое окно только через Modal. Карточка rounded-2xl
+ * по центру экрана под затемнением, шапка `px-6 pt-5 pb-4` с разделителем,
+ * тело `px-6 py-5` с собственной прокруткой, подвал `px-6 py-4` на
+ * подложке ink-50 с разделителем: «Отмена» (`ghost`) и действие справа,
+ * обе 40px. Размеры: sm max-w-sm, md max-w-md, lg max-w-lg (по умолчанию),
+ * xl max-w-2xl, 2xl max-w-5xl.
  *
- * Footer is rendered into `DialogFooter` only when provided so unused
- * modals don't get an empty bordered band at the bottom.
- *
- * The children block is wrapped in a scroll container so long forms
- * stay reachable when content exceeds the modal's max height. shadcn's
- * `DialogContent` doesn't auto-scroll; pulling it out of the dialog
- * shell keeps the header sticky and the footer pinned.
+ * Built on shadcn `Dialog` primitives: focus trap, Escape, возврат фокуса и
+ * кнопка «Закрыть» (lucide X) приходят из DialogContent. Footer рендерится
+ * только если передан, чтобы пустое окно не получило полосу снизу. Тело
+ * прокручивается, шапка и подвал остаются на экране.
  */
 interface ModalProps {
   open: boolean;
   onClose: () => void;
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   /** Tailwind max-width class WITHOUT the `!` prefix (e.g. `max-w-lg`,
    *  `max-w-2xl`). Modal applies `!important` internally to beat
    *  shadcn's baked-in `sm:max-w-sm` cap. Default: `max-w-lg`. */
   maxWidth?: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** Пока идёт действие, окно нельзя закрыть ни крестиком, ни Escape, ни
+   *  кликом по затемнению (`closeDisabled` из Modal портала). */
+  closeDisabled?: boolean;
 }
 
 export function Modal({
@@ -59,42 +57,58 @@ export function Modal({
   maxWidth = "max-w-lg",
   children,
   footer,
+  closeDisabled = false,
 }: ModalProps): JSX.Element {
   // Strip a stray `!` prefix from caller for back-compat, then apply
   // our own — guarantees exactly one `!` is present in the final class.
   const widthClass = `!${maxWidth.replace(/^!/, "")}`;
+  // Окно подтверждения без тела: между шапкой и подвалом нет содержимого, и
+  // два разделителя подряд давали бы двойную линию.
+  const hasBody = children !== null && children !== undefined && children !== false;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) onClose();
+        if (!next && !closeDisabled) onClose();
       }}
     >
       <DialogContent
-        aria-describedby={subtitle ? undefined : undefined}
-        className={cn(
-          "console-modal max-h-[calc(85vh-var(--overlay-top))] flex flex-col gap-0 p-0",
-          widthClass,
-        )}
+        showCloseButton={!closeDisabled}
+        // Без подзаголовка явный aria-describedby={undefined} гасит
+        // предупреждение Radix об отсутствующем описании. С подзаголовком
+        // свойство не передаём вовсе: иначе undefined перебьёт связь с
+        // DialogDescription, и диктор не прочитает описание окна.
+        {...(subtitle ? {} : { "aria-describedby": undefined })}
+        className={cn("console-modal flex flex-col gap-0 p-0", widthClass)}
       >
-        <DialogHeader className="gap-1 px-6 py-4">
-          <DialogTitle className="truncate font-display text-sm font-semibold leading-5">
+        <DialogHeader
+          className={cn(
+            "gap-1 px-6 pt-5 pr-14 pb-4",
+            hasBody && "border-b border-ddc-divider",
+          )}
+        >
+          <DialogTitle
+            className="truncate text-lg leading-7 font-semibold text-ddc-heading"
+            title={typeof title === "string" ? title : undefined}
+          >
             {title}
           </DialogTitle>
           {subtitle && (
-            <DialogDescription className="text-sm text-fg-muted">
+            <DialogDescription className="text-sm text-ddc-text-muted">
               {subtitle}
             </DialogDescription>
           )}
         </DialogHeader>
 
-        <div data-console-modal-body className="flex-1 overflow-y-auto px-6 py-4">
-          {children}
-        </div>
+        {hasBody && (
+          <div data-console-modal-body className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            {children}
+          </div>
+        )}
 
         {footer && (
-          <DialogFooter className="m-0 gap-2 rounded-none bg-transparent px-6 py-4 sm:justify-end">
+          <DialogFooter className="m-0 gap-2 border-t border-ddc-divider bg-ddc-footer px-6 py-4">
             {footer}
           </DialogFooter>
         )}

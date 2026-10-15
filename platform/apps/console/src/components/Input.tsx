@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 
+import { cn } from "@/lib/utils";
+
 import { Field } from "./Field";
 
 type CommonProps = Omit<
@@ -20,20 +22,14 @@ type CommonProps = Omit<
   hint?: ReactNode;
 };
 
-// Mobile touch target. shadcn's <Input> defaults to h-8 (~32px) which is
-// below iOS HIG / WCAG 2.5.5 — bump the minimum on small viewports and
-// fall back to shadcn's intrinsic height on sm+ so dense forms don't
-// grow on desktop.
-const TOUCH_TARGET = "min-h-11 sm:min-h-0";
-
 /**
  * Plain text input. Defaults `autoComplete="off"` to prevent the browser
  * from offering saved credentials in non-login contexts (persona names,
  * agent ids, paths…). Add a specific `autoComplete` token (e.g. "email"
  * or "username") at the call site if a real autofill is wanted.
  *
- * Built on shadcn `Input`; the 1Password / LastPass opt-out attrs +
- * touch-target sizing live here so every caller gets them automatically.
+ * Built on shadcn `Input` (40px, DDC `.input`); the 1Password / LastPass
+ * opt-out attrs live here so every caller gets them automatically.
  */
 export function TextInput({
   className,
@@ -48,7 +44,7 @@ export function TextInput({
       autoComplete={autoComplete ?? "off"}
       data-1p-ignore
       data-lpignore="true"
-      className={[TOUCH_TARGET, className].filter(Boolean).join(" ")}
+      className={className}
       {...rest}
     />
   );
@@ -88,17 +84,17 @@ export function SecretInput({
         autoComplete="new-password"
         data-1p-ignore
         data-lpignore="true"
-        className={[TOUCH_TARGET, "pr-10", className].filter(Boolean).join(" ")}
+        className={cn("pr-11", className)}
         {...rest}
       />
       <Button
         type="button"
         variant="ghost"
-        size="icon-sm"
+        size="icon-xs"
         onClick={() => setRevealed((r) => !r)}
-        className="absolute inset-y-0 right-1 my-auto text-fg-subtle hover:text-fg-muted"
-        title={revealed ? "Hide" : "Show"}
-        aria-label={revealed ? "Hide secret" : "Show secret"}
+        className="absolute inset-y-0 right-1.5 my-auto text-ddc-icon-muted hover:text-ddc-text"
+        title={revealed ? "Скрыть" : "Показать"}
+        aria-label={revealed ? "Скрыть секрет" : "Показать секрет"}
       >
         {revealed ? <EyeOffIcon /> : <EyeIcon />}
       </Button>

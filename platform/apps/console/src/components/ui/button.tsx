@@ -3,37 +3,48 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
-import { BrandLoader } from "@/components/BrandLoader"
+import { Spinner } from "@/components/ui/spinner"
 
+/**
+ * Кнопка DDC (раздел 3 docs/ddc-design-system.md, классы `.btn*` портала).
+ *
+ * Высоту даёт размер, а не `h-*` на месте вызова: lg 44, по умолчанию 40,
+ * sm 36, xs 32 (правило 1). Кнопка-иконка квадратная тех же размеров.
+ * Фокус рисует глобальное кольцо `:focus-visible`, поэтому `outline-none`
+ * здесь нет. Отключённая кнопка получает opacity-50 и cursor-not-allowed.
+ * Цвета берутся из смысловых токенов `ddc-*`, которые сами меняются между
+ * светлой и тёмной темой.
+ */
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-fg-muted focus-visible:ring-1 focus-visible:ring-fg/10 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-transparent text-sm leading-5 font-medium whitespace-nowrap transition select-none active:not-aria-[haspopup]:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
+        default:
+          "bg-ddc-primary text-ddc-on-primary shadow-card dark:shadow-none hover:bg-ddc-primary-hover",
         outline:
-          "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border-ddc-border-strong bg-ddc-outline-bg text-foreground hover:bg-ddc-outline-hover aria-expanded:bg-ddc-outline-hover",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80 aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
+          "bg-ddc-surface-sunken text-ddc-text hover:bg-ddc-border-strong/60 aria-expanded:bg-ddc-border-strong/60",
         ghost:
-          "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+          "text-ddc-ghost-text hover:bg-ddc-ghost-hover aria-expanded:bg-ddc-ghost-hover",
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+          "bg-ddc-danger text-white shadow-card dark:shadow-none hover:bg-ddc-danger-hover active:bg-rose-800",
+        "danger-ghost":
+          "text-ddc-danger-text hover:bg-ddc-tone-danger-bg hover:text-ddc-tone-danger-fg aria-expanded:bg-ddc-tone-danger-bg",
         link:
-          "text-primary underline-offset-4 hover:underline focus-visible:border-transparent focus-visible:ring-0 focus-visible:underline focus-visible:decoration-2",
+          "text-ddc-link underline-offset-2 hover:text-ddc-link-hover hover:underline focus-visible:underline focus-visible:decoration-2",
       },
       size: {
         default:
-          "h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-sm in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        icon: "size-8",
-        "icon-xs":
-          "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm":
-          "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
-        "icon-lg": "size-9",
+          "h-10 px-4 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
+        xs: "h-8 gap-1.5 rounded-lg px-2.5 text-xs leading-4 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-9 px-3 has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5",
+        lg: "h-11 px-5 font-semibold has-data-[icon=inline-end]:pr-4 has-data-[icon=inline-start]:pl-4",
+        icon: "size-10 p-0",
+        "icon-xs": "size-8 rounded-lg p-0",
+        "icon-sm": "size-9 p-0",
+        "icon-lg": "size-11 p-0",
       },
     },
     defaultVariants: {
@@ -45,11 +56,12 @@ const buttonVariants = cva(
 
 type ButtonOwnProps = {
   asChild?: boolean
-  /** Disables the button and renders a BrandLoader; pair with useAsyncAction
-   *  so a fast double-click can't fire the handler twice (the bug that made
-   *  Create-Key produce duplicate records). Ignored when `asChild` is set. */
+  /** Занятая кнопка (правило 11): подпись остаётся, иконку заменяет
+   *  спиннер, кнопка отключена и получает `aria-busy`. Работает вместе с
+   *  useAsyncAction, чтобы быстрый двойной клик не вызвал обработчик дважды.
+   *  Игнорируется вместе с `asChild`. */
   loading?: boolean
-  /** Replaces children while loading. Defaults to children unchanged. */
+  /** Заменяет содержимое на время загрузки. По умолчанию подпись та же. */
   loadingLabel?: React.ReactNode
 }
 
@@ -68,10 +80,9 @@ function Button({
   ButtonOwnProps) {
   const Comp = asChild ? Slot.Root : "button"
 
-  // asChild forwards props onto its single child element, which won't be a
-  // <button> (it's whatever the caller renders). The disabled / aria-busy
-  // / loader overlay only make sense on real buttons, so loading is a
-  // no-op when asChild is true rather than silently breaking the slot.
+  // asChild пробрасывает свойства единственному потомку, а он не обязан быть
+  // <button>. disabled / aria-busy / спиннер осмысленны только у настоящей
+  // кнопки, поэтому loading при asChild ничего не делает.
   const showLoader = loading && !asChild
 
   return (
@@ -81,12 +92,18 @@ function Button({
       data-size={size}
       disabled={asChild ? undefined : disabled || showLoader}
       aria-busy={showLoader || undefined}
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size }),
+        // Спиннер встаёт на место иконки: собственные иконки кнопки на время
+        // загрузки скрыты.
+        showLoader && "[&>svg:not([data-slot=spinner])]:hidden",
+        className
+      )}
       {...props}
     >
       {showLoader ? (
         <>
-          <BrandLoader size="sm" label="Loading" className="!text-current" />
+          <Spinner aria-label="Загрузка" />
           {loadingLabel ?? children}
         </>
       ) : (

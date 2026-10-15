@@ -1,34 +1,32 @@
-import { Button } from "@/components/ui/button";
+import { SearchIcon, ServerIcon } from "lucide-react";
+import { PlainButton } from "@/components/ui/plain-button";
+import { useState, type JSX } from "react";
+
 import { Input } from "@/components/ui/input";
-// Pick a known MCP server from the shared MCP_REGISTRY (same registry the
-// vault page's "Connect a service" flow uses). Keeps the agent-config
-// form, the vault-credential flow, and any future consumer (session
-// creation, integration UI, etc.) in sync — adding a new server to the
-// registry surfaces it everywhere automatically.
+
+import { MCP_REGISTRY, type McpRegistryEntry } from "../data/mcp-registry";
+import { Modal } from "./Modal";
+
+// Выбор известного MCP-сервера из общего реестра MCP_REGISTRY. Тот же реестр
+// используется в потоке «Подключить сервис» хранилища секретов, поэтому форма
+// агента и хранилище не расходятся: новый сервер в реестре появляется везде.
 //
-// Usage:
+// Пример:
 //
 //   <McpServerPickerModal
 //     open={...}
 //     onClose={...}
-//     alreadyAddedUrls={form.mcpServers.map((s) => s.url)}  // disables row + shows "Added"
+//     alreadyAddedUrls={form.mcpServers.map((s) => s.url)}  // строка неактивна, подпись «Добавлен»
 //     onPick={(entry) => { addToYourForm(entry); }}
 //   />
 //
-// The modal closes itself after a pick — caller doesn't need to manage that.
-
-import { useState, type JSX } from "react";
-import { Modal } from "./Modal";
-import { MCP_REGISTRY, type McpRegistryEntry } from "../data/mcp-registry";
-
-const inputCls =
-  "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
+// Окно закрывается само после выбора, вызывающему коду закрывать его не нужно.
 
 export interface McpServerPickerModalProps {
   open: boolean;
   onClose: () => void;
-  /** URLs already added in the calling form — picker shows them disabled
-   *  with an "Added" badge instead of letting the user double-add. */
+  /** URL, которые уже есть в форме вызывающего кода: строки с ними
+   *  неактивны и подписаны «Добавлен», чтобы не добавить сервер дважды. */
   alreadyAddedUrls?: ReadonlyArray<string>;
   onPick: (entry: McpRegistryEntry) => void;
 }
@@ -41,11 +39,12 @@ export function McpServerPickerModal({
 }: McpServerPickerModalProps): JSX.Element {
   const [search, setSearch] = useState("");
   const addedSet = new Set(alreadyAddedUrls);
-  const filtered = search
+  const needle = search.trim().toLocaleLowerCase();
+  const filtered = needle
     ? MCP_REGISTRY.filter(
         (e) =>
-          e.name.toLowerCase().includes(search.toLowerCase()) ||
-          e.url.toLowerCase().includes(search.toLowerCase()),
+          e.name.toLocaleLowerCase().includes(needle) ||
+          e.url.toLocaleLowerCase().includes(needle),
       )
     : MCP_REGISTRY;
 
@@ -56,23 +55,33 @@ export function McpServerPickerModal({
         onClose();
         setSearch("");
       }}
-      title="Pick a known MCP server"
-      subtitle="Same registry the vault's Connect Service flow uses."
+      title="Выбор MCP-сервера"
+      subtitle="Реестр известных MCP-серверов."
       maxWidth="max-w-lg"
     >
-      <div className="space-y-3">
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className={inputCls}
-          placeholder="Search services"
-          autoFocus
-        />
-        <div className="max-h-80 overflow-y-auto -mx-1">
+      <div className="space-y-4">
+        <div className="relative">
+          <SearchIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ddc-placeholder"
+          />
+          <Input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+            placeholder="Поиск сервисов"
+            aria-label="Поиск сервисов"
+            autoComplete="off"
+            autoFocus
+          />
+        </div>
+        <div className="-mx-1.5 max-h-80 overflow-y-auto">
           {filtered.map((entry) => {
             const alreadyAdded = addedSet.has(entry.url);
             return (
-              <Button variant="ghost"
+              <PlainButton
+                type="button"
                 key={entry.id}
                 onClick={() => {
                   if (alreadyAdded) return;
@@ -81,39 +90,26 @@ export function McpServerPickerModal({
                   setSearch("");
                 }}
                 disabled={alreadyAdded}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-left transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
-                  alreadyAdded
-                    ? "opacity-50 cursor-default"
-                    : "hover:bg-bg-surface cursor-pointer"
-                }`}
+                className="menu-item gap-3 py-2.5"
               >
-                {entry.icon ? (
-                  <img
-                    src={entry.icon}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="w-5 h-5 rounded shrink-0"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                ) : (
-                  <div className="w-5 h-5 rounded bg-bg-surface shrink-0" />
-                )}
+                <ServerIcon aria-hidden="true" className="size-4 shrink-0 text-ddc-icon-muted" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-fg">{entry.name}</div>
-                  <div className="text-xs text-fg-muted font-mono truncate">{entry.url}</div>
+                  <div className="truncate text-sm font-medium text-ddc-heading" title={entry.name}>
+                    {entry.name}
+                  </div>
+                  <div className="truncate font-mono text-xs text-ddc-text-muted" title={entry.url}>
+                    {entry.url}
+                  </div>
                 </div>
                 {alreadyAdded && (
-                  <span className="text-xs text-fg-subtle shrink-0">Added</span>
+                  <span className="shrink-0 text-xs text-ddc-text-muted">Добавлен</span>
                 )}
-              </Button>
+              </PlainButton>
             );
           })}
           {filtered.length === 0 && (
-            <div className="text-center py-6 text-fg-subtle text-sm">
-              No matches. Use "+ Custom URL" to add a custom MCP server.
+            <div className="py-6 text-center text-sm text-ddc-text-muted">
+              Ничего не найдено. Добавьте свой сервер кнопкой «Свой сервер».
             </div>
           )}
         </div>

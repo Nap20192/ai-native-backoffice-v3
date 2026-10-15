@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
 import {
   useCallback,
   useEffect,
@@ -7,33 +8,35 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { PanelLeftOpenIcon } from "lucide-react";
+import { MenuIcon, PanelLeftOpenIcon } from "lucide-react";
+import { useLocation } from "react-router";
 
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useI18n } from "../i18n";
 
 interface ConsoleShellProps {
   sidebar: ReactNode;
   breadcrumb: ReactNode;
-  pageHeaderSlotRef: (element: HTMLDivElement | null) => void;
-  pageHeaderScrolled?: boolean;
   children: ReactNode;
 }
 
-const DEFAULT_SIDEBAR_WIDTH = 236;
+// Ширина бокового меню как в портале DDC: 256px (w-64).
+const DEFAULT_SIDEBAR_WIDTH = 256;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 320;
 const COLLAPSE_THRESHOLD = 170;
 
-/** Stable, route-agnostic console frame. Authentication and routing live in
- * AppShell; this component owns only the five sidebar states and slot geometry. */
+/** Постоянный каркас консоли, не зависящий от маршрута. Вход и маршрутизация
+ * живут в AppShell, а здесь только пять состояний бокового меню и геометрия
+ * слотов. */
 export function ConsoleShell({
   sidebar,
   breadcrumb,
-  pageHeaderSlotRef,
-  pageHeaderScrolled = false,
   children,
 }: ConsoleShellProps) {
   const isMobile = useIsMobile();
+  const { t } = useI18n();
+  const { pathname } = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(
     () => typeof window === "undefined" || window.innerWidth >= 768,
   );
@@ -75,6 +78,12 @@ export function ConsoleShell({
     setSidebarOpen(false);
     setPreviewOpen(false);
   }, []);
+
+  // Выдвижное меню на телефоне закрывает страницу: после перехода оно
+  // закрывается само, как в портале DDC.
+  useEffect(() => {
+    if (isMobile) closeSidebar();
+  }, [pathname, isMobile, closeSidebar]);
 
   const showSidebar = useCallback(() => {
     setPreviewOpen(false);
@@ -204,7 +213,8 @@ export function ConsoleShell({
             variant="ghost"
             type="button"
             className="console-sidebar-resize"
-            aria-label="Resize sidebar"
+            aria-label={t.shell.resizeSidebar}
+            title={t.shell.resizeSidebar}
             onPointerDown={(event) => {
               event.preventDefault();
               dragRef.current = { startX: event.clientX, startWidth: sidebarWidth };
@@ -223,11 +233,10 @@ export function ConsoleShell({
       )}
 
       {isMobile && sidebarOpen && (
-        <Button
-          variant="ghost"
-          type="button"
+        <PlainButton
           className="console-sidebar-scrim"
-          aria-label="Close sidebar"
+          aria-label={t.shell.closeSidebar}
+          title={t.shell.closeSidebar}
           onClick={closeSidebar}
         />
       )}
@@ -252,10 +261,15 @@ export function ConsoleShell({
               variant="ghost"
               type="button"
               className="console-sidebar-restore"
-              aria-label="Show sidebar"
+              aria-label={t.shell.showSidebar}
+              title={t.shell.showSidebar}
               onClick={showSidebar}
             >
-              <PanelLeftOpenIcon aria-hidden="true" />
+              {isMobile ? (
+                <MenuIcon aria-hidden="true" />
+              ) : (
+                <PanelLeftOpenIcon aria-hidden="true" />
+              )}
             </Button>
           )}
           {breadcrumb}
@@ -265,12 +279,6 @@ export function ConsoleShell({
           className="console-route-surface"
           data-testid="console-route-surface"
         >
-          <div
-            ref={pageHeaderSlotRef}
-            className="console-page-header-slot"
-            data-scrolled={pageHeaderScrolled || undefined}
-          />
-
           {children}
         </section>
       </div>

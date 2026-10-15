@@ -61,14 +61,14 @@ describe("Login mature component contract", () => {
     const { container } = renderLogin();
 
     expectMatureButtons(container);
-    await user.click(screen.getByRole("button", { name: "Continue with email" }));
+    await user.click(screen.getByRole("button", { name: "Продолжить с почтой" }));
     expectMatureFormControls(container);
 
-    await user.click(screen.getByRole("button", { name: "Sign up" }));
+    await user.click(screen.getByRole("button", { name: "Зарегистрироваться" }));
     expectMatureFormControls(container);
 
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
-    await user.click(screen.getByRole("button", { name: "Sign in with email code" }));
+    await user.click(screen.getByRole("button", { name: "Войти" }));
+    await user.click(screen.getByRole("button", { name: "Войти по коду из письма" }));
     expectMatureFormControls(container);
   });
 });

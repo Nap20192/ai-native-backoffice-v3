@@ -52,14 +52,9 @@ export function FilterChip({
             type="button"
             className="console-filter-chip-trigger"
           >
-            <span className="font-medium">{label}</span>
-            {display && (
-              <>
-                <span className="text-fg-subtle">:</span>
-                <span>{display}</span>
-              </>
-            )}
-            {!active && <ChevronDownIcon className="size-3.5 opacity-60" />}
+            <span className="font-medium">{display ? `${label}:` : label}</span>
+            {display && <span>{display}</span>}
+            {!active && <ChevronDownIcon className="size-4 text-ddc-placeholder" />}
           </Button>
         </PopoverTrigger>
         {active && onClear && (
@@ -70,9 +65,10 @@ export function FilterChip({
               onClear();
             }}
             className="console-filter-chip-clear"
-            aria-label={`Clear ${label} filter`}
+            aria-label={`Сбросить фильтр «${label}»`}
+            title="Сбросить фильтр"
           >
-            <XIcon className="size-3" />
+            <XIcon className="size-3.5" />
           </Button>
         )}
       </div>
@@ -97,13 +93,13 @@ export type CreatedPreset =
   | "custom";
 
 export const CREATED_PRESET_LABELS: Record<CreatedPreset, string> = {
-  any: "All time",
-  today: "Today",
-  "last-hour": "Last hour",
-  "last-day": "Last day",
-  "last-7d": "Last 7 days",
-  "last-30d": "Last 30 days",
-  custom: "Custom range",
+  any: "Всё время",
+  today: "Сегодня",
+  "last-hour": "Последний час",
+  "last-day": "Последние сутки",
+  "last-7d": "Последние 7 дней",
+  "last-30d": "Последние 30 дней",
+  custom: "Свой период",
 };
 
 function computePresetRange(
@@ -147,11 +143,11 @@ export function msToDateInput(ms: number | undefined): string {
  * onChange so the parent can drop them straight into a server query
  * param.
  *
- * Label is configurable — pass "Created" / "Updated" / "Submitted"
- * etc. depending on the resource.
+ * Подпись настраивается: «Создано» / «Обновлено» / «Отправлено» и так
+ * далее, смотря по ресурсу.
  */
 export function CreatedFilterChip({
-  label = "Created",
+  label = "Создано",
   value,
   onChange,
 }: {
@@ -196,27 +192,28 @@ export function CreatedFilterChip({
         align="start"
         sideOffset={4}
         collisionPadding={8}
-        className="w-60 p-1"
+        className="w-60 gap-0 p-1.5"
       >
         {(Object.keys(CREATED_PRESET_LABELS) as CreatedPreset[]).map((p) => (
           <Button variant="ghost"
+            size="sm"
             key={p}
             type="button"
             onClick={() => apply(p)}
             className={cn(
-              "w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-sm",
-              "hover:bg-bg-surface",
-              preset === p && "text-fg font-medium",
+              "w-full justify-between gap-2 rounded-lg text-sm font-normal text-ddc-ghost-text",
+              "hover:bg-ddc-surface-muted",
+              preset === p && "font-medium text-ddc-text",
             )}
           >
             {CREATED_PRESET_LABELS[p]}
-            {preset === p && <CheckIcon className="size-3.5 text-brand" />}
+            {preset === p && <CheckIcon className="size-4 text-ddc-link" />}
           </Button>
         ))}
         {preset === "custom" && (
-          <div className="mt-1 pt-2 border-t border-border space-y-2 px-1 pb-1">
+          <div className="mt-1 space-y-3 border-t border-ddc-divider px-1.5 pt-3 pb-1.5">
             <Label className="block">
-              <span className="text-xs text-fg-muted mb-1 block">From</span>
+              <span className="mb-1.5 block text-xs leading-4 font-medium text-ddc-label">С</span>
               <Input
                 type="date"
                 value={msToDateInput(customAfter)}
@@ -229,7 +226,7 @@ export function CreatedFilterChip({
               />
             </Label>
             <Label className="block">
-              <span className="text-xs text-fg-muted mb-1 block">To</span>
+              <span className="mb-1.5 block text-xs leading-4 font-medium text-ddc-label">По</span>
               <Input
                 type="date"
                 value={msToDateInput(customBefore)}

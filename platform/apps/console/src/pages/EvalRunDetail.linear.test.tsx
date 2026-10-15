@@ -49,4 +49,27 @@ describe("EvalRunDetail Linear surface", () => {
       "console-detail-table-wrap",
     );
   });
+
+  it("renders the run summary, status and task columns in Russian", async () => {
+    render(
+      <MemoryRouter initialEntries={["/evals/eval-1"]}>
+        <Routes>
+          <Route path="/evals/:id" element={<EvalRunDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Запуск оценки" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Завершено").length).toBeGreaterThan(0);
+    for (const label of ["Запущен", "Результат", "Задачи", "Длительность", "Агент", "Окружение"]) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByRole("columnheader", { name: "Задача" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Развернуть задачу" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
 });

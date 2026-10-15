@@ -1,15 +1,17 @@
-// Skill sources: install skills from any site that publishes the Agent Skills
-// discovery index (the `npx skills add <url>` protocol) and keep them updated.
-// Backed by /v1/oma/skill-sources on the self-hosted control plane; when the
-// route is absent the console hides these controls.
+// Источники навыков: установка навыков с любого сайта, который публикует
+// индекс Agent Skills (протокол `npx skills add <url>`), и их обновление.
+// Работает через /v1/oma/skill-sources на собственном управляющем сервере;
+// если маршрута нет, консоль прячет эти элементы.
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Modal } from "./Modal";
+import { SkeletonRows } from "./Skeleton";
+import { plural } from "./knowledge-format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getActiveTenantId, useApi } from "../lib/api";
+import { ApiError, getActiveTenantId, useApi } from "../lib/api";
 
 export const SKILL_SOURCES_API = "/v1/oma/skill-sources";
 
@@ -55,10 +57,10 @@ export function sourceLabel(url: string): string {
 }
 
 /**
- * Tracking records for installed source skills, keyed by skill id.
- * `available` is null while loading and false when the deployment has no
- * skill-source routes. The probe uses fetch directly so a missing route does
- * not raise the global error toast.
+ * Записи об отслеживаемых навыках, установленных из источников, по id навыка.
+ * `available` равен null, пока идёт проверка, и false, когда на этом
+ * развёртывании нет маршрутов источников. Проверка идёт напрямую через fetch,
+ * чтобы отсутствующий маршрут не вызывал общий тост об ошибке.
  */
 export function useSkillSources() {
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -91,21 +93,30 @@ export function useSkillSources() {
 }
 
 const STATUS_TEXT: Record<InstallResult["status"], string> = {
-  installed: "Installed",
-  updated: "Updated",
-  unchanged: "Already up to date",
-  error: "Failed",
+  installed: "Установлен",
+  updated: "Обновлён",
+  unchanged: "Уже актуален",
+  error: "Ошибка",
+};
+
+const STATUS_TONE: Record<InstallResult["status"], string> = {
+  installed: "tone-success",
+  updated: "tone-success",
+  unchanged: "tone-neutral",
+  error: "tone-danger",
 };
 
 function ResultList({ results }: { results: InstallResult[] }) {
   return (
-    <ul className="divide-y divide-border border border-border rounded-lg" aria-label="Results">
+    <ul className="divide-y divide-ddc-divider rounded-xl border border-ddc-border" aria-label="Результаты">
       {results.map((r) => (
-        <li key={r.name} className="px-3 py-2 text-sm flex items-start justify-between gap-3">
-          <span className="font-mono">{r.name}</span>
-          <span className={r.status === "error" ? "text-danger text-right" : "text-fg-muted text-right"}>
-            {STATUS_TEXT[r.status]}
-            {r.status === "error" && <span className="block text-xs">{r.error}</span>}
+        <li key={r.name} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
+          <span className="min-w-0 flex-1 truncate font-mono text-ddc-text" title={r.name}>
+            {r.name}
+          </span>
+          <span className="flex flex-none flex-col items-end gap-1 text-right">
+            <span className={`chip ${STATUS_TONE[r.status]}`}>{STATUS_TEXT[r.status]}</span>
+            {r.status === "error" && <span className="text-xs text-error">{r.error}</span>}
           </span>
         </li>
       ))}
@@ -113,9 +124,16 @@ function ResultList({ results }: { results: InstallResult[] }) {
   );
 }
 
-const errorBox = "text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2";
+/** Сообщение об ошибке внутри окна: выноска DDC `callout-danger`. */
+function ErrorNote({ children }: { children: string }) {
+  return (
+    <div role="alert" className="callout-danger">
+      {children}
+    </div>
+  );
+}
 
-/* ---------- install from URL ---------- */
+/* ---------- установка по ссылке ---------- */
 
 export function InstallFromUrlModal({
   open,
@@ -160,7 +178,13 @@ export function InstallFromUrlModal({
       setSelected(new Set(body.data.filter((s) => !s.installed_skill_id).map((s) => s.name)));
     } catch (err) {
       setFound(null);
-      setError(err instanceof Error ? err.message : "Could not read that source");
+      setError(
+        err instanceof ApiError && err.status === 404
+          ? "Индекс навыков по этому адресу не найден. Проверьте ссылку."
+          : err instanceof Error
+            ? err.message
+            : "Не удалось прочитать источник",
+      );
     } finally {
       setBusy(null);
     }
@@ -178,7 +202,7 @@ export function InstallFromUrlModal({
       setResults(body.data);
       onInstalled();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Install failed");
+      setError(err instanceof Error ? err.message : "Не удалось установить навыки");
     } finally {
       setBusy(null);
     }
@@ -201,34 +225,34 @@ export function InstallFromUrlModal({
         if (busy) return;
         onClose();
       }}
-      title="Install skills from a URL"
-      subtitle="Any site that publishes an Agent Skills index, the same URL you would pass to npx skills add."
-      maxWidth="max-w-xl"
+      closeDisabled={!!busy}
+      title="Установка навыков по ссылке"
+      subtitle="Любой сайт с индексом Agent Skills. Адрес тот же, что вы передали бы в npx skills add."
+      maxWidth="max-w-2xl"
       footer={
         results ? (
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={onClose}>Готово</Button>
         ) : (
           <>
             <Button variant="ghost" disabled={!!busy} onClick={onClose}>
-              Cancel
+              Отмена
             </Button>
             <Button
               onClick={install}
               disabled={!found || selected.size === 0 || !!busy}
               loading={busy === "install"}
-              loadingLabel="Installing..."
             >
-              {selected.size > 0 ? `Install ${selected.size}` : "Install"}
+              {selected.size > 0 ? `Установить ${selected.size}` : "Установить"}
             </Button>
           </>
         )
       }
     >
       <div className="space-y-4">
-        <form onSubmit={discover} className="flex gap-2 items-end">
-          <div className="flex-1">
-            <Label htmlFor="skill-source-url" className="text-sm text-fg-muted block mb-1">
-              Source URL
+        <form onSubmit={discover} className="flex flex-wrap items-end gap-2">
+          <div className="min-w-0 flex-1 basis-56">
+            <Label htmlFor="skill-source-url" className="mb-1.5 block text-xs leading-4 font-medium text-ddc-label">
+              Адрес источника
             </Label>
             <Input
               id="skill-source-url"
@@ -244,38 +268,39 @@ export function InstallFromUrlModal({
             variant="outline"
             disabled={!url.trim() || !!busy || !!results}
             loading={busy === "discover"}
-            loadingLabel="Finding..."
           >
-            Find skills
+            Найти навыки
           </Button>
         </form>
 
-        {error && <div className={errorBox}>{error}</div>}
+        {error && <ErrorNote>{error}</ErrorNote>}
 
         {results ? (
           <ResultList results={results} />
         ) : found ? (
           found.skills.length === 0 ? (
-            <p className="text-sm text-fg-subtle">This source lists no skills.</p>
+            <p className="text-sm text-ddc-text-muted">В этом источнике нет навыков.</p>
           ) : (
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-fg-muted">
-                <span>
-                  {found.skills.length} skill{found.skills.length === 1 ? "" : "s"} at {sourceLabel(found.url)}
+              <div className="flex items-center justify-between gap-3 text-xs text-ddc-text-muted">
+                <span className="min-w-0 truncate" title={sourceLabel(found.url)}>
+                  Найдено: {found.skills.length} {plural(found.skills.length, "навык", "навыка", "навыков")} ·{" "}
+                  {sourceLabel(found.url)}
                 </span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="xs"
+                  className="flex-none"
                   onClick={() => setSelected(allSelected ? new Set() : new Set(found.skills.map((s) => s.name)))}
                 >
-                  {allSelected ? "Clear selection" : "Select all"}
+                  {allSelected ? "Снять выбор" : "Выбрать все"}
                 </Button>
               </div>
-              <ul className="border border-border rounded-lg divide-y divide-border max-h-80 overflow-y-auto">
+              <ul className="max-h-80 divide-y divide-ddc-divider overflow-y-auto rounded-xl border border-ddc-border">
                 {found.skills.map((s) => (
                   <li key={s.name}>
-                    <Label className="flex items-start gap-3 px-3 py-2 cursor-pointer font-normal hover:bg-bg-surface/60">
+                    <Label className="flex cursor-pointer items-start gap-3 px-3 py-2 font-normal hover:bg-ddc-surface-muted">
                       <Checkbox
                         className="mt-0.5"
                         checked={selected.has(s.name)}
@@ -283,22 +308,18 @@ export function InstallFromUrlModal({
                         aria-label={s.name}
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span className="font-mono text-sm text-fg">{s.name}</span>
-                          {s.installed_skill_id && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-bg-surface text-fg-muted">
-                              installed
-                            </span>
-                          )}
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm text-ddc-text">{s.name}</span>
+                          {s.installed_skill_id && <span className="chip tone-neutral">Установлен</span>}
                         </span>
-                        <span className="block text-xs text-fg-muted">{s.description}</span>
+                        <span className="block text-xs text-ddc-text-muted">{s.description}</span>
                       </span>
                     </Label>
                   </li>
                 ))}
               </ul>
-              <p className="text-xs text-fg-subtle">
-                Reinstalling an installed skill adds a new version only when its contents changed.
+              <p className="text-xs text-ddc-text-muted">
+                Повторная установка добавляет новую версию, только если содержимое навыка изменилось.
               </p>
             </div>
           )
@@ -308,13 +329,20 @@ export function InstallFromUrlModal({
   );
 }
 
-/* ---------- check for updates ---------- */
+/* ---------- проверка обновлений ---------- */
 
 const CHECK_TEXT: Record<UpdateCheck["skills"][number]["status"], string> = {
-  current: "Up to date",
-  update_available: "Update available",
-  removed: "No longer at source",
-  error: "Check failed",
+  current: "Актуален",
+  update_available: "Есть обновление",
+  removed: "Удалён из источника",
+  error: "Проверка не удалась",
+};
+
+const CHECK_TONE: Record<UpdateCheck["skills"][number]["status"], string> = {
+  current: "tone-neutral",
+  update_available: "tone-warning",
+  removed: "tone-danger",
+  error: "tone-danger",
 };
 
 export function SkillUpdatesModal({
@@ -327,9 +355,9 @@ export function SkillUpdatesModal({
   open: boolean;
   onClose: () => void;
   onUpdated: () => void;
-  /** Opens the install dialog for a source that lists skills not yet installed. */
+  /** Открывает окно установки для источника, где есть ещё не установленные навыки. */
   onInstallNew?: (url: string) => void;
-  /** Restrict to these skills; all tracked skills when omitted. */
+  /** Ограничить проверку этими навыками; если не передано, проверяются все отслеживаемые. */
   skillIds?: string[];
 }) {
   const { api } = useApi();
@@ -351,7 +379,7 @@ export function SkillUpdatesModal({
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not check for updates");
+      setError(err instanceof Error ? err.message : "Не удалось проверить обновления");
     } finally {
       setChecking(false);
     }
@@ -382,7 +410,7 @@ export function SkillUpdatesModal({
       onUpdated();
       await runCheck();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Update failed");
+      setError(err instanceof Error ? err.message : "Не удалось обновить навыки");
     } finally {
       setUpdating(null);
     }
@@ -398,66 +426,61 @@ export function SkillUpdatesModal({
         if (updating) return;
         onClose();
       }}
-      title="Skill updates"
-      subtitle="Compares installed skills with their sources, like npx skills update."
-      maxWidth="max-w-xl"
+      closeDisabled={updating !== null}
+      title="Обновления навыков"
+      subtitle="Сравнивает установленные навыки с их источниками, как npx skills update."
+      maxWidth="max-w-2xl"
       footer={
         <>
           <Button variant="ghost" disabled={updating !== null} onClick={onClose}>
-            Close
+            Закрыть
           </Button>
           <Button
             onClick={() => void update(pending)}
             disabled={pending.length === 0 || busy}
             loading={updating !== null && updating.length > 1}
-            loadingLabel="Updating..."
           >
-            {pending.length > 0 ? `Update all (${pending.length})` : "Update all"}
+            {pending.length > 0 ? `Обновить все (${pending.length})` : "Обновить все"}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
-        {error && <div className={errorBox}>{error}</div>}
+        {error && <ErrorNote>{error}</ErrorNote>}
         {results && results.some((r) => r.status !== "unchanged") && <ResultList results={results} />}
         {!check && checking ? (
-          <div className="text-fg-subtle text-sm py-6 text-center">Checking sources...</div>
+          <SkeletonRows count={3} height={48} />
         ) : check && check.skills.length === 0 ? (
-          <p className="text-sm text-fg-subtle">No skills installed from a URL yet.</p>
+          <p className="text-sm text-ddc-text-muted">Навыков, установленных по ссылке, пока нет.</p>
         ) : check ? (
-          <ul className="border border-border rounded-lg divide-y divide-border" aria-label="Installed from sources">
+          <ul
+            className="divide-y divide-ddc-divider rounded-xl border border-ddc-border"
+            aria-label="Навыки из источников"
+          >
             {check.skills.map((s) => (
-              <li key={s.skill_id} className="px-3 py-2 flex items-center justify-between gap-3">
+              <li key={s.skill_id} className="flex items-center justify-between gap-3 px-3 py-2">
                 <div className="min-w-0">
-                  <div className="font-mono text-sm text-fg truncate">{s.name}</div>
-                  <div className="text-xs text-fg-subtle truncate" title={s.source_url}>
+                  <div className="truncate font-mono text-sm text-ddc-text" title={s.name}>
+                    {s.name}
+                  </div>
+                  <div className="truncate text-xs text-ddc-text-muted" title={s.source_url}>
                     {sourceLabel(s.source_url)}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span
-                    className={
-                      s.status === "update_available"
-                        ? "text-xs font-medium text-warning"
-                        : s.status === "error" || s.status === "removed"
-                          ? "text-xs text-danger"
-                          : "text-xs text-fg-muted"
-                    }
-                    title={s.error}
-                  >
+                <div className="flex flex-none items-center gap-2">
+                  <span className={`chip ${CHECK_TONE[s.status]}`} title={s.error}>
                     {CHECK_TEXT[s.status]}
                   </span>
                   {s.status === "update_available" && (
                     <Button
-                      size="sm"
+                      size="xs"
                       variant="outline"
                       disabled={busy}
                       loading={updating?.length === 1 && updating[0] === s.skill_id}
-                      loadingLabel="Updating..."
                       onClick={() => void update([s.skill_id])}
-                      aria-label={`Update ${s.name}`}
+                      aria-label={`Обновить ${s.name}`}
                     >
-                      Update
+                      Обновить
                     </Button>
                   )}
                 </div>
@@ -466,14 +489,14 @@ export function SkillUpdatesModal({
           </ul>
         ) : null}
         {newSkills.map((source) => (
-          <div key={source.url} className="text-xs text-fg-muted flex items-center justify-between gap-3">
-            <span>
-              {source.new_skills.length} more skill{source.new_skills.length === 1 ? "" : "s"} available from{" "}
-              {sourceLabel(source.url)}: {source.new_skills.map((s) => s.name).join(", ")}
+          <div key={source.url} className="flex items-center justify-between gap-3 text-xs text-ddc-text-muted">
+            <span className="min-w-0">
+              Ещё {source.new_skills.length} {plural(source.new_skills.length, "навык", "навыка", "навыков")} в
+              источнике {sourceLabel(source.url)}: {source.new_skills.map((s) => s.name).join(", ")}
             </span>
             {onInstallNew && (
-              <Button size="sm" variant="ghost" onClick={() => onInstallNew(source.url)}>
-                Install...
+              <Button size="xs" variant="outline" className="flex-none" onClick={() => onInstallNew(source.url)}>
+                Установить…
               </Button>
             )}
           </div>

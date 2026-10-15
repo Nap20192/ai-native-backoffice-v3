@@ -24,22 +24,24 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={effective}
       className="toaster group"
-      // Match the previous Radix Toast placement: bottom-right on desktop,
-      // top-center on narrow viewports. swipeDirections / closeButton fall
-      // back to sonner defaults.
-      position="bottom-right"
-      duration={4000}
-      richColors
+      // Тост DDC: белая карточка (поверхность, рамка, тень card) с цветной
+      // иконкой по статусу, а не залитая цветом плашка. Справа сверху, ниже
+      // ряда действий шапки страницы: шапка приложения 4rem, поле страницы
+      // 2rem, кнопка 2.5rem и зазор 0.5rem, то есть 9rem. Выше тост закрыл бы
+      // заголовок и главную кнопку страницы. Показ 3500ms.
+      position="top-right"
+      duration={3500}
       expand
       gap={8}
       visibleToasts={3}
-      offset={16}
-      mobileOffset={12}
+      offset={{ top: "9rem", right: 16 }}
+      mobileOffset={{ top: "9rem", right: 16, left: 16 }}
+      containerAriaLabel="Уведомления"
       icons={{
-        success: <CircleCheckIcon className="size-4" />,
-        info: <InfoIcon className="size-4" />,
-        warning: <TriangleAlertIcon className="size-4" />,
-        error: <OctagonXIcon className="size-4" />,
+        success: <CircleCheckIcon className="size-4 text-ddc-success-text" />,
+        info: <InfoIcon className="size-4 text-ddc-tone-info-fg" />,
+        warning: <TriangleAlertIcon className="size-4 text-ddc-warning-text" />,
+        error: <OctagonXIcon className="size-4 text-ddc-danger-text" />,
         loading: <Loader2Icon className="size-4 animate-spin" />,
       }}
       style={
@@ -47,29 +49,13 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--bg)",
           "--normal-text": "var(--fg)",
           "--normal-border": "var(--border)",
-          "--success-bg": "var(--success-subtle)",
-          "--success-text": "var(--success)",
-          "--success-border":
-            "color-mix(in srgb, var(--success) 24%, var(--border))",
-          "--info-bg": "var(--info-subtle)",
-          "--info-text": "var(--info)",
-          "--info-border":
-            "color-mix(in srgb, var(--info) 24%, var(--border))",
-          "--warning-bg": "var(--warning-subtle)",
-          "--warning-text": "var(--warning)",
-          "--warning-border":
-            "color-mix(in srgb, var(--warning) 24%, var(--border))",
-          "--error-bg": "var(--danger-subtle)",
-          "--error-text": "var(--danger)",
-          "--error-border":
-            "color-mix(in srgb, var(--danger) 24%, var(--border))",
-          "--border-radius": "var(--radius-md)",
+          "--border-radius": "var(--console-radius-popover)",
           "--width": "min(22rem, calc(100vw - 2rem))",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast !gap-2 !p-3 !font-sans !text-sm !shadow-sm",
+          toast: "cn-toast !gap-2 !p-3 !font-sans !text-sm !shadow-card",
         },
       }}
       {...props}

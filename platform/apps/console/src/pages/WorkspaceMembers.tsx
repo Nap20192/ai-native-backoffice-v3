@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
+import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,13 +12,59 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Modal } from "../components/Modal";
-import { useApi, setActiveTenantId } from "../lib/api";
+import { Spinner } from "@/components/ui/spinner";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { LoadError } from "../components/LoadError";
+import { PageHeader } from "../components/PageHeader";
+import { Skeleton } from "../components/Skeleton";
+import { ApiError, useApi, setActiveTenantId } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../i18n";
 import { useAsyncAction } from "../hooks/useAsyncAction";
+import { formatDateTime } from "./ru-format";
 
 const copy = {
+  ru: {
+    title: "Участники",
+    subtitle: "Кто имеет доступ к этому рабочему пространству.",
+    shared:
+      "Участники работают с общими ресурсами пространства. Владельцы управляют ролями, администраторы приглашают и удаляют участников.",
+    owner: "Владелец",
+    admin: "Администратор",
+    member: "Участник",
+    name: "Участник",
+    role: "Роль",
+    remove: "Удалить",
+    cancel: "Отмена",
+    invite: "Создать ссылку-приглашение",
+    invites: "Ожидающие приглашения",
+    inviteHelp:
+      "По ссылке можно присоединиться один раз в течение 7 дней. Передайте её только тому, кого приглашаете.",
+    link: "Ссылка-приглашение",
+    copy: "Скопировать ссылку",
+    copied: "Скопировано",
+    revoke: "Отозвать",
+    expires: "Действует до",
+    noInvites: "Ожидающих приглашений нет.",
+    loading: "Загрузка участников…",
+    retry: "Повторить",
+    loadFailed: "Не удалось загрузить участников",
+    actionFailed: "Не удалось выполнить действие. Проверьте соединение и повторите попытку.",
+    copyFailed: "Не удалось скопировать ссылку",
+    expired:
+      "Срок действия приглашения истёк. Попросите администратора прислать новую ссылку.",
+    removeTitle: (name: string) => `Удалить участника ${name}?`,
+    removeHelp:
+      "Участник потеряет доступ к рабочему пространству и свои личные API-ключи для него. Если у него была копия общих ключей пространства, замените их.",
+    join: "Присоединиться к рабочему пространству",
+    joinHelp:
+      "Примите приглашение, чтобы работать с ресурсами пространства вместе с остальными участниками.",
+    login: "Войти и принять приглашение",
+    missing:
+      "Ссылка-приглашение неполная. Попросите администратора пространства прислать новую.",
+    back: "К рабочему пространству",
+    loadingAuth: "Проверяем вход…",
+  },
   en: {
     title: "Members",
     subtitle: "Manage who can access this workspace.",
@@ -41,6 +89,11 @@ const copy = {
     noInvites: "No pending invitations.",
     loading: "Loading members…",
     retry: "Retry",
+    loadFailed: "Could not load members",
+    actionFailed: "The action failed. Check your connection and try again.",
+    copyFailed: "Could not copy the link",
+    expired: "This invitation has expired. Ask the workspace admin for a new link.",
+    removeTitle: (name: string) => `Remove ${name}?`,
     removeHelp:
       "They will lose access to this workspace and their personal API keys for it. Rotate shared workspace keys if they had a copy.",
     join: "Join workspace",
@@ -75,6 +128,11 @@ const copy = {
     noInvites: "暂无待接受的邀请。",
     loading: "正在加载成员…",
     retry: "重试",
+    loadFailed: "无法加载成员",
+    actionFailed: "操作失败，请检查网络后重试。",
+    copyFailed: "无法复制链接",
+    expired: "邀请已过期，请向工作区管理员索取新链接。",
+    removeTitle: (name: string) => `移除 ${name}？`,
     removeHelp:
       "该用户将失去工作区访问权，其个人 API Key 也将失效。如果曾分享过工作区公共密钥，请更换这些密钥。",
     join: "加入工作区",
@@ -103,6 +161,25 @@ interface Members {
   user_id: string;
 }
 
+/** Плитка роли: владелец и администратор в тоне brand, участник нейтральный. */
+function RoleChip({ role, label }: { role: Role; label: string }) {
+  return (
+    <span className={`chip ${role === "member" ? "tone-neutral" : "tone-brand"}`}>{label}</span>
+  );
+}
+
+/** Аватар 40px с первой буквой имени (размеры аватара DDC: 24, 32, 40, 64, 96). */
+function MemberAvatar({ name }: { name: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex size-10 flex-none items-center justify-center rounded-full bg-ddc-primary text-sm font-semibold tracking-tight text-ddc-on-primary shadow-xs select-none"
+    >
+      {name.charAt(0).toUpperCase() || "·"}
+    </span>
+  );
+}
+
 export function WorkspaceMembers() {
   const { api } = useApi();
   const { locale } = useI18n();
@@ -113,37 +190,44 @@ export function WorkspaceMembers() {
   } | null>(null);
   const [members, setMembers] = useState<Members | null>(null);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
+  // Ошибка загрузки страницы (рисует LoadError) и ошибка действия в окне
+  // удаления (рисует окно) хранятся отдельно: страница не краснеет из-за сбоя
+  // в окне, а окно не показывает сбой загрузки.
+  const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [link, setLink] = useState("");
   const [copied, setCopied] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
+  // Имя удаляемого участника остаётся в заголовке, пока окно закрывается.
+  const [removeName, setRemoveName] = useState("");
   const load = useCallback(async () => {
     const me = await api<{ tenant: { id: string; name: string } }>(
       "/v1/oma/me",
+      { quiet: true },
     );
     const base = `/v1/oma/tenants/${encodeURIComponent(me.tenant.id)}`;
-    const result = await api<Members>(`${base}/members`);
+    const result = await api<Members>(`${base}/members`, { quiet: true });
     const pending =
       result.role === "member"
         ? []
-        : (await api<{ data: Invitation[] }>(`${base}/invitations`)).data;
+        : (await api<{ data: Invitation[] }>(`${base}/invitations`, { quiet: true })).data;
     setWorkspace(me.tenant);
     setMembers(result);
     setInvitations(pending);
   }, [api]);
   const refresh = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setLoadError("");
     try {
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setLoadError(e instanceof ApiError ? e.message : t.actionFailed);
     } finally {
       setLoading(false);
     }
-  }, [load]);
+  }, [load, t.actionFailed]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -153,7 +237,7 @@ export function WorkspaceMembers() {
       await work();
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof ApiError ? e.message : t.actionFailed);
     }
   });
   const base = `/v1/oma/tenants/${encodeURIComponent(workspace?.id ?? "")}`;
@@ -168,32 +252,48 @@ export function WorkspaceMembers() {
       setCopied(false);
     });
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-8 p-4 sm:p-6">
-      <header className="space-y-2">
-        <h1 className="text-xl font-semibold text-fg">{t.title}</h1>
-        <p className="text-sm text-fg-muted">
-          {workspace?.name ? `${workspace.name} · ` : ""}
-          {t.subtitle}
-        </p>
-      </header>
-      {error && (
-        <div role="alert" className="space-y-2 text-sm text-destructive">
-          <p>{error}</p>
-          <Button variant="outline" onClick={() => void refresh()}>
-            {t.retry}
-          </Button>
-        </div>
+    <div className="page w-full max-w-4xl space-y-6">
+      <PageHeader
+        title={t.title}
+        description={`${workspace?.name ? `${workspace.name} · ` : ""}${t.subtitle}`}
+      />
+      {loadError && !loading && (
+        <LoadError
+          title={t.loadFailed}
+          message={loadError}
+          retryLabel={t.retry}
+          onRetry={() => void refresh()}
+        />
       )}
       {loading ? (
-        <p role="status" className="text-sm text-fg-muted">
-          {t.loading}
-        </p>
+        <div role="status" aria-busy="true" className="card overflow-hidden">
+          <span className="sr-only">{t.loading}</span>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div
+              key={index}
+              className="flex items-center gap-3 border-t border-ddc-divider px-5 py-3 first-of-type:border-t-0"
+            >
+              <Skeleton className="size-10 flex-none" rounded="full" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-56 max-w-full" />
+              </div>
+              <Skeleton className="h-5 w-24" rounded="md" />
+            </div>
+          ))}
+        </div>
       ) : (
         members && (
           <>
-            <section className="space-y-4" aria-label={t.title}>
-              <p className="max-w-2xl text-sm text-fg-muted">{t.shared}</p>
-              <ul className="divide-y divide-border border-y border-border">
+            <section className="card overflow-hidden" aria-label={t.title}>
+              <div className="border-b border-ddc-divider px-5 py-4">
+                <h2 className="section-title">
+                  {t.title}
+                  <span className="count-pill">{members.data.length}</span>
+                </h2>
+                <p className="mt-1 max-w-2xl text-xs text-muted">{t.shared}</p>
+              </div>
+              <ul className="divide-y divide-ddc-divider">
                 {members.data.map((member) => {
                   const name = member.name || member.email || member.user_id;
                   const removable =
@@ -203,19 +303,22 @@ export function WorkspaceMembers() {
                   return (
                     <li
                       key={member.user_id}
-                      className="flex flex-wrap items-center justify-between gap-3 py-4"
+                      className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
                     >
-                      <div className="min-w-0 flex-1 basis-40">
-                        <p className="break-words text-sm font-medium text-fg">
-                          {name}
-                        </p>
-                        {member.email && (
-                          <p className="break-all text-sm text-fg-muted">
-                            {member.email}
+                      <div className="flex min-w-0 flex-1 basis-48 items-center gap-3">
+                        <MemberAvatar name={name} />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-ddc-heading" title={name}>
+                            {name}
                           </p>
-                        )}
+                          {member.email && (
+                            <p className="truncate text-xs text-muted" title={member.email}>
+                              {member.email}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-none items-center gap-2">
                         {members.role === "owner" && member.role !== "owner" ? (
                           <Select
                             value={member.role}
@@ -241,17 +344,17 @@ export function WorkspaceMembers() {
                             </SelectContent>
                           </Select>
                         ) : (
-                          <span className="text-sm text-fg-muted">
-                            {t[member.role]}
-                          </span>
+                          <RoleChip role={member.role} label={t[member.role]} />
                         )}
                         {removable && (
                           <Button
-                            variant="ghost"
+                            variant="danger-ghost"
+                            size="sm"
                             disabled={action.loading}
                             aria-label={`${t.remove} ${name}`}
                             onClick={() => {
                               setError("");
+                              setRemoveName(name);
                               setRemoving(member);
                             }}
                           >
@@ -266,22 +369,24 @@ export function WorkspaceMembers() {
             </section>
             {canManage && (
               <section
-                className="space-y-4"
+                className="card space-y-4 p-5"
                 aria-labelledby="workspace-invitations"
               >
-                <h2
-                  id="workspace-invitations"
-                  className="text-base font-semibold text-fg"
-                >
-                  {t.invites}
-                </h2>
-                <p className="max-w-2xl text-sm text-fg-muted">
-                  {t.inviteHelp}
-                </p>
+                <div>
+                  <h2 id="workspace-invitations" className="section-title">
+                    {t.invites}
+                    {invitations.length > 0 && (
+                      <span className="count-pill">{invitations.length}</span>
+                    )}
+                  </h2>
+                  <p className="mt-1 max-w-2xl text-xs text-muted">{t.inviteHelp}</p>
+                </div>
                 <div className="flex flex-wrap items-end gap-3">
                   {members.role === "owner" && (
-                    <div className="space-y-2">
-                      <Label htmlFor="invite-role">{t.role}</Label>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="invite-role" className="text-xs leading-4 text-ddc-label">
+                        {t.role}
+                      </Label>
                       <Select
                         value={inviteRole}
                         onValueChange={(role) =>
@@ -307,12 +412,14 @@ export function WorkspaceMembers() {
                   </Button>
                 </div>
                 {link && (
-                  <div className="space-y-2">
-                    <Label htmlFor="invitation-link">{t.link}</Label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="invitation-link" className="text-xs leading-4 text-ddc-label">
+                      {t.link}
+                    </Label>
                     <div className="flex flex-wrap gap-2">
                       <Input
                         id="invitation-link"
-                        className="min-w-0 flex-1 basis-56"
+                        className="min-w-0 flex-1 basis-56 font-mono text-xs"
                         readOnly
                         value={link}
                         onFocus={(e) => e.target.select()}
@@ -323,42 +430,37 @@ export function WorkspaceMembers() {
                           try {
                             await navigator.clipboard.writeText(link);
                             setCopied(true);
-                          } catch (e) {
-                            setError(
-                              e instanceof Error ? e.message : String(e),
-                            );
+                          } catch {
+                            toast.error(t.copyFailed);
                           }
                         }}
                       >
+                        {copied ? <CheckIcon /> : <CopyIcon />}
                         {copied ? t.copied : t.copy}
                       </Button>
                     </div>
                   </div>
                 )}
                 {invitations.length === 0 ? (
-                  <p className="text-sm text-fg-muted">{t.noInvites}</p>
+                  <p className="text-sm text-muted">{t.noInvites}</p>
                 ) : (
-                  <ul className="divide-y divide-border">
+                  <ul className="-mx-5 divide-y divide-ddc-divider border-t border-ddc-divider">
                     {invitations.map((invitation) => (
                       <li
                         key={invitation.id}
-                        className="flex flex-wrap items-center justify-between gap-3 py-3"
+                        className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
                       >
-                        <div>
-                          <p className="text-sm text-fg">
-                            {t[invitation.role]}
-                          </p>
-                          <p className="text-sm text-fg-muted">
-                            {t.expires}:{" "}
-                            {new Date(invitation.expires_at).toLocaleString(
-                              locale,
-                            )}
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                          <RoleChip role={invitation.role} label={t[invitation.role]} />
+                          <p className="text-sm text-muted tabular-nums">
+                            {t.expires}: {formatDateTime(invitation.expires_at)}
                           </p>
                         </div>
                         {(members.role === "owner" ||
                           invitation.role === "member") && (
                           <Button
-                            variant="ghost"
+                            variant="danger-ghost"
+                            size="sm"
                             disabled={action.loading}
                             onClick={() =>
                               void action.run(async () => {
@@ -382,53 +484,40 @@ export function WorkspaceMembers() {
           </>
         )
       )}
-      <Modal
+      <ConfirmDialog
         open={!!removing}
-        title={`${t.remove} ${removing?.name || removing?.email || removing?.user_id || ""}`}
-        onClose={() => {
+        title={t.removeTitle(removeName)}
+        message={
+          <>
+            {t.removeHelp}
+            {error && (
+              <span role="alert" className="text-error mt-2 block">
+                {error}
+              </span>
+            )}
+          </>
+        }
+        confirmLabel={t.remove}
+        cancelLabel={t.cancel}
+        destructive
+        busy={action.loading}
+        onCancel={() => {
           if (!action.loading) {
             setRemoving(null);
             setError("");
           }
         }}
-        footer={
-          <>
-            <Button
-              variant="ghost"
-              disabled={action.loading}
-              onClick={() => {
-                setRemoving(null);
-                setError("");
-              }}
-            >
-              {t.cancel}
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={action.loading}
-              onClick={() =>
-                void action.run(async () => {
-                  if (!removing) return;
-                  await api(
-                    `${base}/members/${encodeURIComponent(removing.user_id)}`,
-                    { method: "DELETE" },
-                  );
-                  setRemoving(null);
-                })
-              }
-            >
-              {t.remove}
-            </Button>
-          </>
+        onConfirm={() =>
+          void action.run(async () => {
+            if (!removing) return;
+            await api(
+              `${base}/members/${encodeURIComponent(removing.user_id)}`,
+              { method: "DELETE", quiet: true },
+            );
+            setRemoving(null);
+          })
         }
-      >
-        <p className="text-sm text-fg-muted">{t.removeHelp}</p>
-        {error && (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        )}
-      </Modal>
+      />
     </div>
   );
 }
@@ -455,40 +544,52 @@ export function JoinWorkspace() {
       setActiveTenantId(result.tenant_id);
       window.location.replace("/members");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // 410: приглашение просрочено или уже использовано.
+      setError(
+        e instanceof ApiError
+          ? e.status === 410
+            ? t.expired
+            : e.message
+          : t.actionFailed,
+      );
     }
   });
   return (
-    <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-5 p-6">
-      <h1 className="text-2xl font-semibold text-fg">{t.join}</h1>
-      <p className="text-sm text-fg-muted">{token ? t.joinHelp : t.missing}</p>
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      {token &&
-        (auth.isLoading ? (
-          <p role="status">{t.loadingAuth}</p>
-        ) : auth.isAuthenticated ? (
-          <Button disabled={join.loading} onClick={() => void join.run()}>
-            {t.join}
-          </Button>
-        ) : (
-          <Button asChild>
-            <Link
-              to={`/login?next=${encodeURIComponent(location.pathname + location.hash)}`}
-            >
-              {t.login}
-            </Link>
-          </Button>
-        ))}
-      <Link
-        to="/"
-        className="text-sm text-fg-muted underline underline-offset-4"
-      >
-        {t.back}
-      </Link>
+    <main className="flex min-h-dvh items-center justify-center bg-ddc-bg p-6">
+      <div className="card w-full max-w-md space-y-5 p-6 sm:p-8">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-ddc-heading">{t.join}</h1>
+          <p className="mt-1 text-sm text-muted">{token ? t.joinHelp : t.missing}</p>
+        </div>
+        {error && (
+          <div role="alert" className="callout-danger">
+            <AlertCircleIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
+            <span className="min-w-0 break-words">{error}</span>
+          </div>
+        )}
+        {token &&
+          (auth.isLoading ? (
+            <p role="status" className="flex items-center gap-2 text-sm text-muted">
+              <Spinner aria-hidden="true" />
+              {t.loadingAuth}
+            </p>
+          ) : auth.isAuthenticated ? (
+            <Button className="w-full" loading={join.loading} onClick={() => void join.run()}>
+              {t.join}
+            </Button>
+          ) : (
+            <Button asChild className="w-full">
+              <Link
+                to={`/login?next=${encodeURIComponent(location.pathname + location.hash)}`}
+              >
+                {t.login}
+              </Link>
+            </Button>
+          ))}
+        <Link to="/" className="link inline-flex text-sm">
+          {t.back}
+        </Link>
+      </div>
     </main>
   );
 }

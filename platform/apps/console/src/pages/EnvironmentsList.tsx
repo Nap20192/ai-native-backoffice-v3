@@ -1,13 +1,15 @@
+import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, TrashIcon } from "lucide-react";
+import { ArchiveIcon, TrashIcon, PlusIcon } from "lucide-react";
 import type { BetaEnvironment as Env } from "@anthropic-ai/sdk/resources/beta/environments/environments";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
 import { Select, SelectOption } from "../components/Select";
@@ -19,21 +21,31 @@ import { useI18n } from "../i18n";
 type StatusValue = "any" | "active" | "archived";
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
+  { value: "any", label: "Все" },
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
 ];
+
+/** Подписи типов окружения. Неизвестный тип показываем как есть. */
+const ENV_TYPE_LABEL: Record<string, string> = {
+  cloud: "Облако",
+  self_hosted: "Свой сервер",
+};
 
 export function EnvironmentsList() {
   const managedApi = useManagedApi();
   const nav = useNavigate();
   const { t } = useI18n();
   const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: "", description: "" });
+  const [deleteTarget, setDeleteTarget] = useState<Env | null>(null);
+  const [askDelete, setAskDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  // Server-driven filter state. Each piece flows into envsParams below
-  // → useInfiniteApiQuery resets to page 1 on params change → the list
-  // reflects exactly what the server returned (no client-side faking).
+  // Фильтры идут на сервер: каждое значение попадает в envsParams,
+  // useInfiniteApiQuery при смене параметров возвращается на первую
+  // страницу, и список показывает ровно то, что вернул сервер.
   const [status, setStatus] = useState<StatusValue>("active");
   const [created, setCreated] = useState<{ after?: number; before?: number }>({});
   const [search, setSearch] = useState("");
@@ -66,86 +78,108 @@ export function EnvironmentsList() {
   }, [created.after, created.before, envs, search, status]);
 
   const create = async () => {
-    await managedApi.environments.create({
-      name: form.name,
-      config: { type: "cloud" },
-      description: form.description || undefined,
-    });
-    setShowCreate(false); setForm({ name: "", description: "" }); load();
+    setCreating(true);
+    try {
+      await managedApi.environments.create({
+        name: form.name,
+        config: { type: "cloud" },
+        description: form.description || undefined,
+      });
+      setShowCreate(false);
+      setForm({ name: "", description: "" });
+      load();
+    } catch {
+      // Ошибку уже показал клиент API, окно остаётся открытым.
+    } finally {
+      setCreating(false);
+    }
   };
 
-  // TanStack column defs. Order, filtering, and search all flow through
-  // server params now — no per-column sort/filter UI. Required columns
-  // (id, name) opt out of the Columns hide menu.
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await managedApi.environments.delete(deleteTarget.id);
+      load();
+    } catch {
+      // Ошибку уже показал клиент API.
+    } finally {
+      setDeleting(false);
+      setAskDelete(false);
+    }
+  };
+
+  // Порядок, фильтры и поиск идут через серверные параметры, поэтому
+  // сортировки и фильтров по столбцам нет. Обязательные столбцы (id,
+  // название) нельзя скрыть через меню «Столбцы».
   const columns = useMemo<ColumnDef<Env>[]>(
     () => [
       {
-        id: "id",
-        accessorKey: "id",
-        header: "ID",
+        id: "name",
+        accessorKey: "name",
+        header: t.common.name,
+        size: 240,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
-            {row.original.id}
+          <span title={row.original.name} className="min-w-0 truncate font-medium text-ddc-heading">
+            {row.original.name}
           </span>
         ),
         enableHiding: false,
       },
       {
-        id: "name",
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => <span className="font-medium text-fg">{row.original.name}</span>,
-        enableHiding: false,
+        id: "id",
+        accessorKey: "id",
+        header: t.common.id,
+        cell: ({ row }) => (
+          <span title={row.original.id} className="truncate font-mono text-xs text-ddc-text-muted">
+            {row.original.id}
+          </span>
+        ),
       },
       {
         id: "type",
         accessorFn: (e) => (e.config?.type as string) || "cloud",
-        header: "Type",
-        cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {(row.original.config?.type as string) || "cloud"}
-          </span>
-        ),
+        header: "Тип",
+        cell: ({ row }) => {
+          const type = (row.original.config?.type as string) || "cloud";
+          return <span className="text-ddc-text-muted">{ENV_TYPE_LABEL[type] ?? type}</span>;
+        },
       },
       {
         id: "status",
         accessorFn: (e) => (e.archived_at ? "archived" : "active"),
-        header: "Status",
-        cell: ({ row }) => (
-          <span
-            className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full ${
-              row.original.archived_at
-                ? "bg-bg-surface text-fg-subtle"
-                : "bg-success-subtle text-success"
-            }`}
-          >
-            {row.original.archived_at ? "archived" : "active"}
-          </span>
-        ),
+        header: t.common.status,
+        cell: ({ row }) =>
+          row.original.archived_at ? (
+            <span className="chip tone-ghost">{t.common.archived}</span>
+          ) : (
+            <span className="chip tone-success">Активно</span>
+          ),
       },
       {
         id: "created",
         accessorFn: (e) => e.created_at,
-        header: "Created",
+        header: t.common.created,
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="tabular-nums text-ddc-text-muted">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
     ],
-    [load],
+    [t],
   );
 
-  // Active-filter chip displays — kept null when matching the default so
-  // the chip reads "Status ▾" rather than "Status: All ▾".
+  // Подпись активного фильтра пуста, пока выбрано значение по умолчанию:
+  // чип читается как «Статус», а не «Статус: Все».
   const statusDisplay =
     status === "any" ? undefined : STATUS_OPTIONS.find((o) => o.value === status)?.label;
 
   const filters = (
     <>
       <FilterChip
-        label="Status"
+        label={t.common.status}
         active={status !== "any"}
         display={statusDisplay}
         onClear={() => setStatus("any")}
@@ -160,7 +194,7 @@ export function EnvironmentsList() {
             options={STATUS_OPTIONS}
             value={status}
             onValueChange={(v) => setStatus(v as StatusValue)}
-            searchPlaceholder="Status..."
+            searchPlaceholder="Найти статус…"
           />
         </PopoverContent>
       </FilterChip>
@@ -171,6 +205,8 @@ export function EnvironmentsList() {
 
   return (
     <DataTable<Env>
+      title={t.nav.environments}
+      subtitle="Изолированные песочницы, в которых агенты выполняют код."
       createLabel={t.environments.newEnvironment}
       onCreate={() => setShowCreate(true)}
       searchPlaceholder={t.environments.searchEnvironments}
@@ -183,26 +219,25 @@ export function EnvironmentsList() {
       onRowClick={(e) => nav(`/environments/${e.id}`)}
       rowActions={(environment) => [
         {
-          label: "Archive",
+          label: t.common.archive,
           icon: <ArchiveIcon className="size-4" />,
           disabled: Boolean(environment.archived_at),
           onSelect: async () => {
             try {
               await managedApi.environments.archive(environment.id);
               load();
-            } catch {}
+            } catch {
+              // Ошибку уже показал клиент API.
+            }
           },
         },
         {
-          label: "Delete",
+          label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
           destructive: true,
-          onSelect: async () => {
-            if (!confirm(`Delete environment ${environment.name}? This can't be undone.`)) return;
-            try {
-              await managedApi.environments.delete(environment.id);
-              load();
-            } catch {}
+          onSelect: () => {
+            setDeleteTarget(environment);
+            setAskDelete(true);
           },
         },
       ]}
@@ -212,59 +247,70 @@ export function EnvironmentsList() {
       emptyTitle={search ? t.environments.noMatchingEnvironments : t.environments.noEnvironmentsYet}
       emptyKind="env"
       emptyAction={
-        !search && <Button onClick={() => setShowCreate(true)}>{t.environments.newEnvironment}</Button>
+        !search && <Button onClick={() => setShowCreate(true)}><PlusIcon />{t.environments.newEnvironment}</Button>
       }
       emptySubtitle={
         search
           ? t.agents.tryDifferentSearch
-          : t.environments.noEnvironmentsYet
+          : "Окружение даёт агентам изолированную песочницу для выполнения кода."
       }
       columns={columns}
     >
       <Modal
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        title="Add Environment"
-        subtitle="Environments provide isolated sandboxes for code execution."
+        title="Новое окружение"
+        subtitle="Окружения дают изолированные песочницы для выполнения кода."
+        closeDisabled={creating}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={create} disabled={!form.name}>Create</Button>
+            <Button variant="ghost" onClick={() => setShowCreate(false)} disabled={creating}>
+              {t.common.cancel}
+            </Button>
+            <Button onClick={create} disabled={!form.name} loading={creating}>
+              {t.common.create}
+            </Button>
           </>
         }
       >
         <div className="space-y-4">
-          <div>
-            <Label htmlFor="env-create-name" className="text-sm text-fg-muted block mb-1">Name</Label>
+          <Field
+            label={t.common.name}
+            hint={<span className="tabular-nums">{form.name.length}/50 символов</span>}
+          >
             <Input
-              id="env-create-name"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value.slice(0, 50) })}
-              className="w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm outline-none focus:border-brand bg-bg text-fg transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle"
-              placeholder="production"
+              placeholder="Рабочее окружение"
             />
-            <p className="text-xs text-fg-subtle mt-1">{form.name.length}/50 characters</p>
-          </div>
-          <div>
-            <span className="text-sm text-fg-muted block mb-1">Hosting Type</span>
+          </Field>
+          <Field label="Тип размещения" hint="После создания изменить нельзя.">
             <Select value="cloud" onValueChange={() => {}} disabled>
-              <SelectOption value="cloud">Cloud</SelectOption>
+              <SelectOption value="cloud">Облако</SelectOption>
             </Select>
-            <p className="text-xs text-fg-subtle mt-1">This cannot be changed after creation.</p>
-          </div>
-          <div>
-            <Label htmlFor="env-create-description" className="text-sm text-fg-muted block mb-1">Description <span className="text-fg-subtle">(optional)</span></Label>
+          </Field>
+          <Field label="Описание (необязательно)">
             <Textarea
-              id="env-create-description"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={3}
-              className="w-full border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-brand bg-bg text-fg resize-none transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle"
-              placeholder="Production environment for customer-facing agents..."
+              placeholder="Для чего нужно это окружение"
+              className="resize-y"
             />
-          </div>
+          </Field>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={askDelete}
+        title={`Удалить окружение «${deleteTarget?.name ?? ""}»?`}
+        message="Действие нельзя отменить."
+        confirmLabel={t.common.delete}
+        destructive
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setAskDelete(false)}
+      />
     </DataTable>
   );
 }

@@ -37,6 +37,6 @@ describe("extractManagedSkillFiles", () => {
 
   it("rejects an empty archive before making a request", async () => {
     const zip = new File([fromBase64(EMPTY_ZIP)], "empty.zip");
-    await expect(extractManagedSkillFiles(zip)).rejects.toThrow("does not contain any files");
+    await expect(extractManagedSkillFiles(zip)).rejects.toThrow("нет файлов");
   });
 });

@@ -1,27 +1,23 @@
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
-import { useEffect, useMemo, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router";
+import { ArchiveIcon, PencilIcon, TriangleAlertIcon } from "lucide-react";
 import { useApi } from "../lib/api";
 import { useApiQuery, useQueryClient } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
-import { FeishuIcon, GitHubIcon, LinearIcon, SlackIcon } from "../components/icons";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { EmptyState } from "../components/EmptyState";
 import { Page } from "../components/Page";
 import { PageHeader } from "../components/PageHeader";
+import { Skeleton } from "../components/Skeleton";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ModelCard } from "@open-managed-agents/api-types";
 import type { AgentRecord as Agent } from "../types/agent";
 import { AgentFormDialog } from "./agents/AgentFormDialog";
+import { formatDateTime, speedLabel, toolLabel } from "./agents/format";
+import { useCrumbName } from "../lib/crumb-names";
 import { useI18n } from "../i18n";
-
-/** Shared publication shape across Linear / GitHub / Slack — they all
- *  expose the same id / status / mode / persona / workspace_name fields. */
-interface Pub {
-  id: string;
-  status: string;
-  mode: string;
-  persona: { name: string; avatarUrl: string | null };
-  workspace_name: string | null;
-}
 
 export function AgentDetail() {
   const { id } = useParams();
@@ -32,17 +28,16 @@ export function AgentDetail() {
   const queryClient = useQueryClient();
 
   const [showEdit, setShowEdit] = useState(false);
+  const [askArchive, setAskArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [customSkills, setCustomSkills] = useState<
     Array<{ id: string; name: string; description: string }>
   >([]);
   const [modelCards, setModelCards] = useState<ModelCard[]>([]);
 
-  // Single-resource fetches via TQ. `enabled: !!id` defers until the route
-  // param is available; the publication queries inherit the same gate.
-  // Each query runs independently — failures on the publication endpoints
-  // (404 / not-installed) don't block the agent detail render, same as
-  // the previous behavior where each had its own .catch.
+  // Запросы одной записи через TanStack Query. `enabled: !!id` откладывает
+  // запрос, пока в адресе нет id.
   const enabled = !!id;
   const { data: managedAgent, error: agentError } = useApiQuery<Agent>(
     id ? `/v1/agents/${id}` : null,
@@ -54,30 +49,6 @@ export function AgentDetail() {
     undefined,
     { enabled },
   );
-  // Reverse-lookup publications per provider. Each endpoint exists thanks
-  // to the /linear/agents/:id/publications + /slack/agents/:id/publications
-  // + /github/agents/:id/publications routes added on the main worker.
-  const { data: linearRes } = useApiQuery<{ data: Pub[] }>(
-    id ? `/v1/oma/integrations/linear/agents/${id}/publications` : null,
-    undefined,
-    { enabled },
-  );
-  const { data: githubRes } = useApiQuery<{ data: Pub[] }>(
-    id ? `/v1/oma/integrations/github/agents/${id}/publications` : null,
-    undefined,
-    { enabled },
-  );
-  const { data: slackRes } = useApiQuery<{ data: Pub[] }>(
-    id ? `/v1/oma/integrations/slack/agents/${id}/publications` : null,
-    undefined,
-    { enabled },
-  );
-  const { data: feishuRes } = useApiQuery<{ data: Pub[] }>(
-    id ? `/v1/oma/integrations/feishu/agents/${id}/publications` : null,
-    undefined,
-    { enabled },
-  );
-
   // Aux data for the edit dialog pickers — same sources as AgentsList.
   useEffect(() => {
     let cancelled = false;
@@ -117,27 +88,11 @@ export function AgentDetail() {
 
   const agent = managedAgent;
   const versions = versionsRes?.data ?? [];
-  // Filter to live publications only — same predicate the old useEffect ran.
-  const linearPubs = useMemo(
-    () => (linearRes?.data ?? []).filter((p) => p.status === "live"),
-    [linearRes],
-  );
-  const githubPubs = useMemo(
-    () => (githubRes?.data ?? []).filter((p) => p.status === "live"),
-    [githubRes],
-  );
-  const slackPubs = useMemo(
-    () => (slackRes?.data ?? []).filter((p) => p.status === "live"),
-    [slackRes],
-  );
-  const feishuPubs = useMemo(
-    () => (feishuRes?.data ?? []).filter((p) => p.status === "live"),
-    [feishuRes],
-  );
-
+  useCrumbName(id, agent?.name);
   const error = agentError instanceof Error ? agentError.message : agentError ? String(agentError) : "";
 
-  const modelStr = (m: Agent["model"]) => typeof m === "string" ? m : `${m?.id} (${m?.speed || "standard"})`;
+  const modelStr = (m: Agent["model"]) =>
+    typeof m === "string" ? m : `${m?.id} (${speedLabel(m?.speed)})`;
 
   const refreshAgent = () => {
     if (!id) return;
@@ -146,31 +101,66 @@ export function AgentDetail() {
     void queryClient.invalidateQueries({ queryKey: ["/v1/agents"] });
   };
 
+  // Архивация необратима, поэтому спрашиваем через ConfirmDialog (правило 11
+  // DDC), а не через window.confirm. Пока идёт запрос, окно не закрывается.
   const archive = async () => {
-    if (!confirm("Archive this agent?")) return;
     if (!id) return;
-    await managedApi.agents.archive(id);
-    nav("/agents");
+    setArchiving(true);
+    try {
+      await managedApi.agents.archive(id);
+      setAskArchive(false);
+      nav("/agents");
+    } catch {
+      // Сообщение об ошибке уже показал useApi, окно остаётся для новой попытки.
+    } finally {
+      setArchiving(false);
+    }
   };
 
-  if (error) return <div className="p-10 text-danger">Error: {error}</div>;
-  if (!agent) return <div className="p-10 text-fg-subtle">Loading...</div>;
+  if (error) {
+    return (
+      <Page>
+        <EmptyState
+          tone="danger"
+          icon={<TriangleAlertIcon />}
+          title="Не удалось загрузить агента"
+          body={<span role="alert">{error}</span>}
+          action={
+            <Button variant="outline" onClick={() => nav("/agents")}>
+              К списку агентов
+            </Button>
+          }
+        />
+      </Page>
+    );
+  }
+  if (!agent) return <AgentDetailSkeleton />;
 
   const archived = !!agent.archived_at;
+  const toolsLabel = (agent.tools || []).map((tool: any) => toolLabel(tool)).join(", ") || "Нет";
 
   return (
     <Page
       layout="rail"
       header={
         <PageHeader
+          title={
+            <>
+              <span className="min-w-0">{agent.name}</span>
+              {archived && <Badge variant="neutral">{t.common.archived}</Badge>}
+            </>
+          }
+          description={agent.description || undefined}
           actions={
             <>
               {!archived && (
-                <Button variant="outline" size="sm" onClick={() => setShowEdit(true)}>
+                <Button variant="outline" onClick={() => setShowEdit(true)}>
+                  <PencilIcon />
                   {t.common.edit}
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={archive} disabled={archived}>
+              <Button variant="outline" onClick={() => setAskArchive(true)} disabled={archived}>
+                <ArchiveIcon />
                 {t.common.archive}
               </Button>
             </>
@@ -178,24 +168,26 @@ export function AgentDetail() {
         />
       }
       rail={
-        <section className="console-property-group" aria-label="Agent properties">
-          <h2 className="console-property-group-title">Properties</h2>
+        <section className="console-property-group" aria-label="Свойства агента">
+          <h2 className="console-property-group-title">Свойства</h2>
           <dl className="console-property-list">
             <PropertyRow label="ID"><span className="font-mono">{agent.id}</span></PropertyRow>
-            <PropertyRow label="Model">{modelStr(agent.model)}</PropertyRow>
-            <PropertyRow label="Version">v{agent.version}</PropertyRow>
-            <PropertyRow label="Tools">
-              {(agent.tools || [])
-                .map((tool: any) => tool.type === "custom" ? `Custom: ${tool.name}` : tool.type)
-                .join(", ") || "None"}
+            <PropertyRow label="Модель">{modelStr(agent.model)}</PropertyRow>
+            <PropertyRow label="Версия"><span className="tabular-nums">v{agent.version}</span></PropertyRow>
+            <PropertyRow label="Инструменты">{toolsLabel}</PropertyRow>
+            <PropertyRow label="Создан">
+              <span className="tabular-nums">{formatDateTime(agent.created_at)}</span>
             </PropertyRow>
-            <PropertyRow label="Created">{new Date(agent.created_at).toLocaleString()}</PropertyRow>
-            <PropertyRow label="Updated">
-              {new Date(agent.updated_at || agent.created_at).toLocaleString()}
+            <PropertyRow label="Обновлён">
+              <span className="tabular-nums">
+                {formatDateTime(agent.updated_at || agent.created_at)}
+              </span>
             </PropertyRow>
             {agent.archived_at && (
-              <PropertyRow label="Archived">
-                <span className="text-warning">{new Date(agent.archived_at).toLocaleString()}</span>
+              <PropertyRow label="В архиве">
+                <span className="tabular-nums text-ddc-warning-text">
+                  {formatDateTime(agent.archived_at)}
+                </span>
               </PropertyRow>
             )}
           </dl>
@@ -203,85 +195,65 @@ export function AgentDetail() {
       }
     >
       <div className="console-detail-stack">
-        <header className="console-detail-title-block">
-          <h1>{agent.name}</h1>
-          {agent.description && <p>{agent.description}</p>}
-        </header>
+        {/* Системный промпт */}
+        {agent.system && (
+          <section className="card min-w-0 overflow-hidden" aria-labelledby="agent-system-title">
+            <header className="border-b border-ddc-divider px-5 py-4">
+              <h2 id="agent-system-title" className="section-title">
+                Системный промпт
+              </h2>
+            </header>
+            <div className="p-5">
+              <pre className="console-detail-code-block">{agent.system}</pre>
+            </div>
+          </section>
+        )}
 
-      {/* Integrations — one fold per provider so adding a 4th / 5th doesn't
-          push the rest of the page below the viewport. Default-open when
-          there's at least one live publication so the user sees what's wired
-          up at a glance; otherwise default-closed. */}
-      <section className="console-detail-section">
-        <h2>Integrations</h2>
-        <div className="console-integration-list">
-          <IntegrationFold
-            kind="linear"
-            label="Linear"
-            icon={<LinearIcon className="w-4 h-4" />}
-            pubs={linearPubs}
-            agentId={agent.id}
-          />
-          <IntegrationFold
-            kind="github"
-            label="GitHub"
-            icon={<GitHubIcon className="w-4 h-4" />}
-            pubs={githubPubs}
-            agentId={agent.id}
-          />
-          <IntegrationFold
-            kind="slack"
-            label="Slack"
-            icon={<SlackIcon className="w-4 h-4" />}
-            pubs={slackPubs}
-            agentId={agent.id}
-          />
-          <IntegrationFold
-            kind="feishu"
-            label="Feishu"
-            icon={<FeishuIcon className="w-4 h-4" />}
-            pubs={feishuPubs}
-            agentId={agent.id}
-          />
-        </div>
-      </section>
-
-      {/* System prompt */}
-      {agent.system && (
-        <section className="console-detail-section">
-          <h2>System Prompt</h2>
-          <pre className="console-detail-code-block">
-            {agent.system}
-          </pre>
-        </section>
-      )}
-
-      {/* Version history */}
-      {versions.length > 0 && (
-        <section className="console-detail-section">
-          <h2>Version History</h2>
-          <div className="console-detail-table-wrap">
-            <Table className="console-detail-table">
-              <TableHeader variant="wireless">
-                <TableRow variant="wireless">
-                  <TableHead>Version</TableHead>
-                  <TableHead>Model</TableHead>
-                  <TableHead>System Prompt</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {versions.map((v) => (
-                  <TableRow variant="wireless" key={v.version}>
-                    <TableCell>v{v.version}</TableCell>
-                    <TableCell className="text-fg-muted">{modelStr(v.model)}</TableCell>
-                    <TableCell className="max-w-xs truncate text-fg-muted">{v.system || "—"}</TableCell>
+        {/* История версий */}
+        {versions.length > 0 && (
+          <section
+            className="card min-w-0 overflow-hidden"
+            aria-labelledby="agent-versions-title"
+          >
+            <header className="border-b border-ddc-divider px-5 py-4">
+              <h2 id="agent-versions-title" className="section-title">
+                История версий
+              </h2>
+            </header>
+            <div className="console-detail-table-wrap">
+              <Table container={false} className="console-detail-table" style={{ minWidth: 0 }}>
+                <TableHeader variant="wireless">
+                  <TableRow variant="wireless">
+                    <TableHead>Версия</TableHead>
+                    <TableHead>Модель</TableHead>
+                    <TableHead className="hidden md:table-cell">Системный промпт</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </section>
-      )}
+                </TableHeader>
+                <TableBody>
+                  {versions.map((v) => (
+                    <TableRow variant="wireless" key={v.version}>
+                      <TableCell className="tabular-nums">
+                        v{v.version}
+                        {v.version === agent.version && (
+                          <Badge variant="brand" className="ml-2">Текущая</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="truncate text-ddc-text-muted" title={modelStr(v.model)}>
+                        {modelStr(v.model)}
+                      </TableCell>
+                      <TableCell
+                        className="hidden max-w-xs truncate text-ddc-text-muted md:table-cell"
+                        title={v.system || undefined}
+                      >
+                        {v.system || <span className="text-ddc-placeholder">Не задан</span>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </section>
+        )}
       </div>
 
       <AgentFormDialog
@@ -296,77 +268,61 @@ export function AgentDetail() {
         customSkills={customSkills}
         modelCards={modelCards}
       />
+
+      <ConfirmDialog
+        open={askArchive}
+        title="Отправить агента в архив?"
+        message={`Агент станет доступен только для чтения, новые сессии с ним создать нельзя. ${t.agents.confirmDelete}`}
+        confirmLabel={t.common.archive}
+        destructive
+        busy={archiving}
+        onConfirm={() => void archive()}
+        onCancel={() => setAskArchive(false)}
+      />
     </Page>
   );
 }
 
-/**
- * One foldable provider section. Default-open when there's a live
- * publication, default-closed otherwise — opening an empty section
- * just to find the "Publish to X" link is wasteful.
- */
-function IntegrationFold({
-  kind,
-  label,
-  icon,
-  pubs,
-  agentId,
-}: {
-  kind: "linear" | "github" | "slack" | "feishu";
-  label: string;
-  icon: React.ReactNode;
-  pubs: Pub[];
-  agentId: string;
-}) {
+/** Скелетон страницы агента: повторяет разметку (заголовок, свойства справа,
+ *  секции слева), чтобы страница не прыгала, когда придут данные. */
+function AgentDetailSkeleton() {
   return (
-    <details
-      open={pubs.length > 0}
-      className="console-integration-fold [&_summary::-webkit-details-marker]:hidden"
-    >
-      <summary className="console-integration-summary">
-        <span className="text-fg-muted shrink-0">{icon}</span>
-        <span className="font-medium text-fg">{label}</span>
-        <span className="ml-auto text-xs text-fg-subtle">
-          {pubs.length === 0 ? "Not published" : `${pubs.length} live`}
-        </span>
-      </summary>
-      <div className="console-integration-content">
-        {pubs.length === 0 ? (
-          <Link
-            to={`/integrations/${kind}/publish?agent_id=${agentId}`}
-            className="console-detail-link"
-          >
-            Publish to {label} →
-          </Link>
-        ) : (
-          <>
-            {pubs.map((p) => (
-              <Link
-                key={p.id}
-                to={`/integrations/${kind}`}
-                className="console-detail-link text-fg-muted hover:text-fg"
-              >
-                <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-success-subtle text-success">
-                  Live
-                </span>
-                <span>
-                  as <strong>{p.persona.name}</strong> in {p.workspace_name ?? `${label} workspace`}
-                </span>
-                {p.mode === "full" && (
-                  <span className="text-xs text-fg-subtle">(full identity)</span>
-                )}
-              </Link>
+    <Page
+      layout="rail"
+      header={
+        <div className="mb-6 space-y-2" aria-hidden="true">
+          <Skeleton className="h-8 w-64 max-w-full" />
+          <Skeleton className="h-4 w-96 max-w-full" />
+        </div>
+      }
+      rail={
+        <section className="console-property-group" aria-hidden="true">
+          <Skeleton className="mb-3 h-6 w-24" />
+          <div className="console-property-list">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="console-property-row">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 w-32" />
+              </div>
             ))}
-            <Link
-              to={`/integrations/${kind}/publish?agent_id=${agentId}`}
-              className="console-detail-link text-brand hover:underline"
-            >
-              + Publish to another workspace
-            </Link>
-          </>
-        )}
+          </div>
+        </section>
+      }
+    >
+      <div className="console-detail-stack" aria-busy="true">
+        <span role="status" className="sr-only">Загрузка…</span>
+        <div className="card space-y-3 p-5" aria-hidden="true">
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+        <div className="card space-y-3 p-5" aria-hidden="true">
+          <Skeleton className="h-6 w-32" />
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full" />
+          ))}
+        </div>
       </div>
-    </details>
+    </Page>
   );
 }
 

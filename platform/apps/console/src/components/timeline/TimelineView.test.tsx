@@ -67,25 +67,57 @@ describe("TimelineView live append", () => {
     const { rerender } = render(<TimelineView events={first} />);
 
     // One expand control; latest is open (▾).
-    expect(screen.getAllByTitle("Collapse")).toHaveLength(1);
-    expect(screen.queryByTitle("Expand")).toBeNull();
+    expect(screen.getAllByTitle("Свернуть")).toHaveLength(1);
+    expect(screen.queryByTitle("Развернуть")).toBeNull();
 
     const two = [...first, ...turnEvents(2, "2026-08-11T10:01:00.000Z")];
     rerender(<TimelineView events={two} />);
 
     // Previous latest collapsed; new latest expanded.
-    expect(screen.getAllByTitle("Expand")).toHaveLength(1);
-    expect(screen.getAllByTitle("Collapse")).toHaveLength(1);
+    expect(screen.getAllByTitle("Развернуть")).toHaveLength(1);
+    expect(screen.getAllByTitle("Свернуть")).toHaveLength(1);
 
     const three = [...two, ...turnEvents(3, "2026-08-11T10:02:00.000Z")];
     rerender(<TimelineView events={three} />);
 
-    expect(screen.getAllByTitle("Expand")).toHaveLength(2);
-    expect(screen.getAllByTitle("Collapse")).toHaveLength(1);
+    expect(screen.getAllByTitle("Развернуть")).toHaveLength(2);
+    expect(screen.getAllByTitle("Свернуть")).toHaveLength(1);
 
     // Explicit override: keep an older turn open while latest stays open.
-    await user.click(screen.getAllByTitle("Expand")[0]);
-    expect(screen.getAllByTitle("Collapse")).toHaveLength(2);
-    expect(screen.getAllByTitle("Expand")).toHaveLength(1);
+    await user.click(screen.getAllByTitle("Развернуть")[0]);
+    expect(screen.getAllByTitle("Свернуть")).toHaveLength(2);
+    expect(screen.getAllByTitle("Развернуть")).toHaveLength(1);
+  });
+});
+
+describe("TimelineView по-русски", () => {
+  it("называет вид запуска и статус хода словами, а не сырыми значениями", () => {
+    render(<TimelineView events={turnEvents(1, "2026-08-11T10:00:00.000Z")} />);
+
+    expect(screen.getAllByText("Сообщение пользователя").length).toBeGreaterThan(0);
+    expect(screen.getByText("Завершён")).toBeInTheDocument();
+    expect(screen.queryByText("completed")).toBeNull();
+    expect(screen.queryByText("user message")).toBeNull();
+  });
+
+  it("называет строки графика по-русски и пишет длительность русскими единицами", () => {
+    render(<TimelineView events={turnEvents(1, "2026-08-11T10:00:00.000Z")} />);
+
+    expect(screen.getAllByText("Ответ агента").length).toBeGreaterThan(0);
+    expect(screen.queryByText("agent.message")).toBeNull();
+    expect(screen.queryByText(/\d\s?(ms|s)\b/)).toBeNull();
+  });
+
+  it("пустая хронология показывает пустое состояние", () => {
+    render(<TimelineView events={[]} />);
+
+    expect(screen.getByText("Хронология пока пуста")).toBeInTheDocument();
+  });
+
+  it("пока история грузится, вместо пустого состояния стоит скелетон", () => {
+    render(<TimelineView events={[]} loading />);
+
+    expect(screen.queryByText("Хронология пока пуста")).toBeNull();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
   });
 });

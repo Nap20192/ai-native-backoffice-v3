@@ -1,0 +1,428 @@
+/*
+  DDC (портал БСБ): токены оформления для Tailwind v4.
+
+  Источник значений (только чтение):
+    dco-portal/client/tailwind.config.js      шкалы brand и ink, шрифт, text-2xs, тени, анимации
+    dco-portal/client/src/styles/index.css    фон оболочки, фокус, полоса прокрутки, классы компонентов
+    dco-portal/client/src/lib/tone.ts         тона бейджей и подложек иконок
+    dco-portal/docs/DESIGN-RULES.md           точки статусов, роли текста
+  Цвета rose, amber, emerald, sky: значения Tailwind 3.4.19 из node_modules портала.
+  В Tailwind v4 эти шкалы заданы в oklch и немного отличаются, поэтому здесь
+  они закреплены в hex, как в портале.
+
+  Подключение: после @import "tailwindcss". Тёмная тема по классу .dark на <html>.
+  Описание и правила: docs/ddc-design-system.md.
+*/
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Шрифт: только системный стек, внешних шрифтов нет. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Микротекст 11/16: время, счётчики, подписи под строкой. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  /* Бренд: зелёный НБК. 600 = фирменный тон, основная кнопка. */
+  --color-brand-50: #e3f0ea;
+  --color-brand-100: #c2dfd4;
+  --color-brand-200: #a5e0c9;
+  --color-brand-300: #6ecdab;
+  --color-brand-400: #3eb58c;
+  --color-brand-500: #189a72;
+  --color-brand-600: #00805e;
+  --color-brand-700: #005a43;
+  --color-brand-800: #00432f;
+  --color-brand-900: #0f2b22;
+  --color-brand-950: #061713;
+
+  /* Нейтральные: холодный сланцевый серый. */
+  --color-ink-50: #f6f8fb;
+  --color-ink-100: #eceff4;
+  --color-ink-200: #d8dee6;
+  --color-ink-300: #b6bfcb;
+  --color-ink-400: #8b95a3;
+  --color-ink-500: #69727f;
+  --color-ink-600: #525a66;
+  --color-ink-700: #3f4651;
+  --color-ink-800: #2a2f38;
+  --color-ink-900: #0f141a;
+  --color-ink-950: #070a0e;
+
+  /* Статусы: шкалы Tailwind v3 в hex. */
+  --color-rose-50: #fff1f2;
+  --color-rose-100: #ffe4e6;
+  --color-rose-200: #fecdd3;
+  --color-rose-300: #fda4af;
+  --color-rose-400: #fb7185;
+  --color-rose-500: #f43f5e;
+  --color-rose-600: #e11d48;
+  --color-rose-700: #be123c;
+  --color-rose-800: #9f1239;
+  --color-rose-900: #881337;
+  --color-rose-950: #4c0519;
+
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef3c7;
+  --color-amber-200: #fde68a;
+  --color-amber-300: #fcd34d;
+  --color-amber-400: #fbbf24;
+  --color-amber-500: #f59e0b;
+  --color-amber-600: #d97706;
+  --color-amber-700: #b45309;
+  --color-amber-800: #92400e;
+  --color-amber-900: #78350f;
+  --color-amber-950: #451a03;
+
+  --color-emerald-50: #ecfdf5;
+  --color-emerald-100: #d1fae5;
+  --color-emerald-200: #a7f3d0;
+  --color-emerald-300: #6ee7b7;
+  --color-emerald-400: #34d399;
+  --color-emerald-500: #10b981;
+  --color-emerald-600: #059669;
+  --color-emerald-700: #047857;
+  --color-emerald-800: #065f46;
+  --color-emerald-900: #064e3b;
+  --color-emerald-950: #022c22;
+
+  --color-sky-50: #f0f9ff;
+  --color-sky-100: #e0f2fe;
+  --color-sky-200: #bae6fd;
+  --color-sky-300: #7dd3fc;
+  --color-sky-400: #38bdf8;
+  --color-sky-500: #0ea5e9;
+  --color-sky-600: #0284c7;
+  --color-sky-700: #0369a1;
+  --color-sky-800: #075985;
+  --color-sky-900: #0c4a6e;
+  --color-sky-950: #082f49;
+
+  /* Тени. card: карточки, кнопки primary и danger в светлой теме. soft: лист документа. */
+  --shadow-card: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-soft: 0 8px 24px -12px rgba(15, 20, 26, 0.14);
+
+  /* Анимации. Не зависят от prefers-reduced-motion: так решено в портале. */
+  --animate-fade: fade 0.15s ease-out;
+  --animate-fade-in: fadeIn 0.15s ease-out;
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-ping-soft: pingSoft 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+
+  @keyframes fade {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes fadeIn {
+    0% { opacity: 0; transform: translateY(4px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  @keyframes pingSoft {
+    75%, 100% { transform: scale(1.6); opacity: 0; }
+  }
+}
+
+/*
+  Смысловые переменные. Каждая повторяет пару классов портала
+  «светлая / dark:», указанную в комментарии.
+*/
+:root {
+  --ddc-bg: #f6f8fb;                         /* body: bg-ink-50 */
+  --ddc-shell: #eef6f2;                      /* .app-shell: color-mix(brand-50 60%, #fff), вычислено */
+  --ddc-shell-glow-1: rgb(110 205 171 / 0.3);  /* пятно 1: brand-300 / 30% */
+  --ddc-shell-glow-2: rgb(24 154 114 / 0.14);  /* пятно 2: brand-500 / 14% */
+  --ddc-surface: #ffffff;                    /* .card: bg-white */
+  --ddc-surface-muted: #f6f8fb;              /* bg-ink-50: вложенная панель, наведение строки */
+  --ddc-surface-sunken: #eceff4;             /* bg-ink-100: дорожка сегментов, count-pill, скелетон */
+  --ddc-footer: rgb(246 248 251 / 0.6);      /* подвал Modal: bg-ink-50/60 */
+  --ddc-overlay: rgb(7 10 14 / 0.4);         /* фон под окном: bg-ink-950/40 */
+
+  --ddc-text: #0f141a;                       /* body: text-ink-900 */
+  --ddc-heading: #0f141a;                    /* text-ink-900 */
+  --ddc-text-muted: #69727f;                 /* .text-muted: ink-500 */
+  --ddc-label: #525a66;                      /* .label: ink-600 */
+  --ddc-placeholder: #8b95a3;                /* placeholder:text-ink-400 */
+  --ddc-icon-muted: #8b95a3;                 /* text-ink-400 */
+
+  --ddc-border: rgb(236 239 244 / 0.8);      /* .card: border-ink-100/80 */
+  --ddc-divider: #eceff4;                    /* divide-ink-100, border-ink-100 */
+  --ddc-border-strong: #d8dee6;              /* .input, .btn-outline: border-ink-200 */
+
+  --ddc-primary: #00805e;                    /* .btn-primary: bg-brand-600 */
+  --ddc-primary-hover: #005a43;              /* hover:bg-brand-700 */
+  --ddc-on-primary: #ffffff;
+  --ddc-accent-text: #005a43;                /* text-brand-700 */
+  --ddc-selected-bg: #e3f0ea;                /* bg-brand-50: вкладка, пункт меню, строка */
+  --ddc-selected-text: #005a43;              /* .tab[aria-selected]: text-brand-700 */
+  --ddc-link: #00805e;                       /* .link: text-brand-600 */
+  --ddc-link-hover: #005a43;                 /* hover:text-brand-700 */
+  --ddc-ring: #189a72;                       /* :focus-visible: brand-500 */
+  --ddc-accent: #00805e;                     /* accent-color: brand-600 */
+
+  --ddc-ghost-text: #3f4651;                 /* .btn-ghost: text-ink-700 */
+  --ddc-ghost-hover: #eceff4;                /* hover:bg-ink-100 */
+  --ddc-outline-bg: #ffffff;                 /* .btn-outline: bg-white */
+  --ddc-outline-hover: #f6f8fb;              /* hover:bg-ink-50 */
+  --ddc-switch-off: #b6bfcb;                 /* .switch: bg-ink-300 */
+
+  --ddc-danger: #e11d48;                     /* .btn-danger: bg-rose-600 */
+  --ddc-danger-hover: #be123c;               /* hover:bg-rose-700 */
+  --ddc-danger-text: #e11d48;                /* .text-error: rose-600 */
+  --ddc-warning-text: #b45309;               /* text-amber-700 */
+  --ddc-success-text: #047857;               /* text-emerald-700 */
+
+  --ddc-scroll-thumb: rgb(0 128 94 / 0.45);  /* полоса прокрутки: brand-600 / 45% */
+  --ddc-scroll-thumb-hover: #00805e;
+  --ddc-scroll-thumb-ff: rgb(0 128 94 / 0.35);  /* Firefox: brand-600 / 35% */
+
+  /* Тона (lib/tone.ts): подложка, текст, внутреннее кольцо бейджа. */
+  --ddc-tone-neutral-bg: #eceff4;            /* bg-ink-100 */
+  --ddc-tone-neutral-fg: #3f4651;            /* text-ink-700 */
+  --ddc-tone-brand-bg: #e3f0ea;              /* bg-brand-50 */
+  --ddc-tone-brand-fg: #005a43;              /* text-brand-700 */
+  --ddc-tone-brand-ring: rgb(165 224 201 / 0.6);   /* ring-brand-200/60 */
+  --ddc-tone-success-bg: #ecfdf5;            /* bg-emerald-50 */
+  --ddc-tone-success-fg: #047857;            /* text-emerald-700 */
+  --ddc-tone-success-ring: rgb(167 243 208 / 0.6); /* ring-emerald-200/60 */
+  --ddc-tone-warning-bg: #fffbeb;            /* bg-amber-50 */
+  --ddc-tone-warning-fg: #b45309;            /* text-amber-700 */
+  --ddc-tone-warning-ring: rgb(253 230 138 / 0.6); /* ring-amber-200/60 */
+  --ddc-tone-danger-bg: #fff1f2;             /* bg-rose-50 */
+  --ddc-tone-danger-fg: #be123c;             /* text-rose-700 */
+  --ddc-tone-danger-ring: rgb(254 205 211 / 0.6);  /* ring-rose-200/60 */
+  --ddc-tone-info-bg: #f0f9ff;               /* bg-sky-50 */
+  --ddc-tone-info-fg: #0369a1;               /* text-sky-700 */
+  --ddc-tone-info-ring: rgb(186 230 253 / 0.6);    /* ring-sky-200/60 */
+  --ddc-tone-ghost-fg: #69727f;              /* text-ink-500 */
+  --ddc-tone-ghost-ring: rgb(216 222 230 / 0.6);   /* ring-ink-200/60 */
+
+  /* Точки статусов (DESIGN-RULES, раздел 4). */
+  --ddc-dot-neutral: #b6bfcb;                /* bg-ink-300 */
+  --ddc-dot-info: #0ea5e9;                   /* bg-sky-500 */
+  --ddc-dot-warning: #f59e0b;                /* bg-amber-500 */
+  --ddc-dot-success: #10b981;                /* bg-emerald-500 */
+  --ddc-dot-danger: #f43f5e;                 /* bg-rose-500 */
+
+  /* Тень кнопок primary и danger: в тёмной теме её нет. */
+  --ddc-btn-shadow: var(--shadow-card);
+}
+
+.dark {
+  --ddc-bg: #070a0e;                         /* dark:bg-ink-950 */
+  --ddc-shell: #070a0e;                      /* .dark .app-shell: ink-950 */
+  --ddc-shell-glow-1: rgb(24 154 114 / 0.12);  /* brand-500 / 12% */
+  --ddc-shell-glow-2: rgb(0 128 94 / 0.12);    /* brand-600 / 12% */
+  --ddc-surface: #0f141a;                    /* dark:bg-ink-900 */
+  --ddc-surface-muted: rgb(42 47 56 / 0.6);  /* dark:bg-ink-800/60 */
+  --ddc-surface-sunken: #2a2f38;             /* dark:bg-ink-800 */
+  --ddc-footer: rgb(7 10 14 / 0.4);          /* dark:bg-ink-950/40 */
+  --ddc-overlay: rgb(7 10 14 / 0.4);
+
+  --ddc-text: #eceff4;                       /* dark:text-ink-100 */
+  --ddc-heading: #f6f8fb;                    /* dark:text-ink-50 */
+  --ddc-text-muted: #8b95a3;                 /* dark:text-ink-400 */
+  --ddc-label: #b6bfcb;                      /* dark:text-ink-300 */
+  --ddc-placeholder: #8b95a3;                /* ink-400 в обеих темах */
+  --ddc-icon-muted: #69727f;                 /* dark:text-ink-500 */
+
+  --ddc-border: rgb(42 47 56 / 0.8);         /* dark:border-ink-800/80 */
+  --ddc-divider: #2a2f38;                    /* dark:divide-ink-800 */
+  --ddc-border-strong: #3f4651;              /* dark .input, .btn-outline: border-ink-700 */
+
+  --ddc-primary: #00805e;                    /* кнопка не меняется */
+  --ddc-primary-hover: #005a43;
+  --ddc-on-primary: #ffffff;
+  --ddc-accent-text: #6ecdab;                /* dark:text-brand-300 */
+  --ddc-selected-bg: rgb(24 154 114 / 0.15); /* dark:bg-brand-500/15 */
+  --ddc-selected-text: #6ecdab;              /* dark:text-brand-300 */
+  --ddc-link: #6ecdab;                       /* dark:text-brand-300 */
+  --ddc-link-hover: #a5e0c9;                 /* dark:hover:text-brand-200 */
+  --ddc-ring: #3eb58c;                       /* brand-400 */
+  --ddc-accent: #3eb58c;                     /* accent-color: brand-400 */
+
+  --ddc-ghost-text: #d8dee6;                 /* :where(.dark) .btn-ghost: ink-200 */
+  --ddc-ghost-hover: #2a2f38;                /* dark:hover:bg-ink-800 */
+  --ddc-outline-bg: #0f141a;                 /* bg-ink-900 */
+  --ddc-outline-hover: #2a2f38;              /* bg-ink-800 */
+  --ddc-switch-off: #3f4651;                 /* dark:bg-ink-700 */
+
+  --ddc-danger: #e11d48;
+  --ddc-danger-hover: #be123c;
+  --ddc-danger-text: #fb7185;                /* dark:text-rose-400 */
+  --ddc-warning-text: #fbbf24;               /* dark:text-amber-400 */
+  --ddc-success-text: #34d399;               /* dark:text-emerald-400 */
+
+  --ddc-scroll-thumb: rgb(62 181 140 / 0.4); /* brand-400 / 40% */
+  --ddc-scroll-thumb-hover: #3eb58c;
+  --ddc-scroll-thumb-ff: rgb(62 181 140 / 0.3); /* Firefox: brand-400 / 30% */
+
+  --ddc-tone-neutral-bg: #2a2f38;            /* dark:bg-ink-800 */
+  --ddc-tone-neutral-fg: #d8dee6;            /* dark:text-ink-200 */
+  --ddc-tone-brand-bg: rgb(24 154 114 / 0.15);     /* dark:bg-brand-500/15 */
+  --ddc-tone-brand-fg: #a5e0c9;              /* dark:text-brand-200 */
+  --ddc-tone-brand-ring: rgb(0 90 67 / 0.6);       /* dark:ring-brand-700/60 */
+  --ddc-tone-success-bg: rgb(6 78 59 / 0.3);       /* dark:bg-emerald-900/30 */
+  --ddc-tone-success-fg: #6ee7b7;            /* dark:text-emerald-300 */
+  --ddc-tone-success-ring: rgb(4 120 87 / 0.6);    /* dark:ring-emerald-700/60 */
+  --ddc-tone-warning-bg: rgb(120 53 15 / 0.3);     /* dark:bg-amber-900/30 */
+  --ddc-tone-warning-fg: #fcd34d;            /* dark:text-amber-300 */
+  --ddc-tone-warning-ring: rgb(180 83 9 / 0.6);    /* dark:ring-amber-700/60 */
+  --ddc-tone-danger-bg: rgb(136 19 55 / 0.3);      /* dark:bg-rose-900/30 */
+  --ddc-tone-danger-fg: #fda4af;             /* dark:text-rose-300 */
+  --ddc-tone-danger-ring: rgb(190 18 60 / 0.6);    /* dark:ring-rose-700/60 */
+  --ddc-tone-info-bg: rgb(12 74 110 / 0.3);        /* dark:bg-sky-900/30 */
+  --ddc-tone-info-fg: #7dd3fc;               /* dark:text-sky-300 */
+  --ddc-tone-info-ring: rgb(3 105 161 / 0.6);      /* dark:ring-sky-700/60 */
+  --ddc-tone-ghost-fg: #8b95a3;              /* dark:text-ink-400 */
+  --ddc-tone-ghost-ring: rgb(63 70 81 / 0.6);      /* dark:ring-ink-700/60 */
+
+  --ddc-dot-neutral: #525a66;                /* dark:bg-ink-600 */
+
+  --ddc-btn-shadow: none;                    /* dark:shadow-none */
+}
+
+/* Утилиты из смысловых переменных: bg-ddc-surface, text-ddc-text-muted и т. д. */
+@theme inline {
+  --color-ddc-bg: var(--ddc-bg);
+  --color-ddc-shell: var(--ddc-shell);
+  --color-ddc-surface: var(--ddc-surface);
+  --color-ddc-surface-muted: var(--ddc-surface-muted);
+  --color-ddc-surface-sunken: var(--ddc-surface-sunken);
+  --color-ddc-footer: var(--ddc-footer);
+  --color-ddc-overlay: var(--ddc-overlay);
+  --color-ddc-text: var(--ddc-text);
+  --color-ddc-heading: var(--ddc-heading);
+  --color-ddc-text-muted: var(--ddc-text-muted);
+  --color-ddc-label: var(--ddc-label);
+  --color-ddc-placeholder: var(--ddc-placeholder);
+  --color-ddc-icon-muted: var(--ddc-icon-muted);
+  --color-ddc-border: var(--ddc-border);
+  --color-ddc-divider: var(--ddc-divider);
+  --color-ddc-border-strong: var(--ddc-border-strong);
+  --color-ddc-primary: var(--ddc-primary);
+  --color-ddc-primary-hover: var(--ddc-primary-hover);
+  --color-ddc-on-primary: var(--ddc-on-primary);
+  --color-ddc-accent-text: var(--ddc-accent-text);
+  --color-ddc-selected-bg: var(--ddc-selected-bg);
+  --color-ddc-selected-text: var(--ddc-selected-text);
+  --color-ddc-link: var(--ddc-link);
+  --color-ddc-link-hover: var(--ddc-link-hover);
+  --color-ddc-ring: var(--ddc-ring);
+  --color-ddc-ghost-text: var(--ddc-ghost-text);
+  --color-ddc-ghost-hover: var(--ddc-ghost-hover);
+  --color-ddc-outline-bg: var(--ddc-outline-bg);
+  --color-ddc-outline-hover: var(--ddc-outline-hover);
+  --color-ddc-switch-off: var(--ddc-switch-off);
+  --color-ddc-danger: var(--ddc-danger);
+  --color-ddc-danger-hover: var(--ddc-danger-hover);
+  --color-ddc-danger-text: var(--ddc-danger-text);
+  --color-ddc-warning-text: var(--ddc-warning-text);
+  --color-ddc-success-text: var(--ddc-success-text);
+  --color-ddc-tone-neutral-bg: var(--ddc-tone-neutral-bg);
+  --color-ddc-tone-neutral-fg: var(--ddc-tone-neutral-fg);
+  --color-ddc-tone-brand-bg: var(--ddc-tone-brand-bg);
+  --color-ddc-tone-brand-fg: var(--ddc-tone-brand-fg);
+  --color-ddc-tone-brand-ring: var(--ddc-tone-brand-ring);
+  --color-ddc-tone-success-bg: var(--ddc-tone-success-bg);
+  --color-ddc-tone-success-fg: var(--ddc-tone-success-fg);
+  --color-ddc-tone-success-ring: var(--ddc-tone-success-ring);
+  --color-ddc-tone-warning-bg: var(--ddc-tone-warning-bg);
+  --color-ddc-tone-warning-fg: var(--ddc-tone-warning-fg);
+  --color-ddc-tone-warning-ring: var(--ddc-tone-warning-ring);
+  --color-ddc-tone-danger-bg: var(--ddc-tone-danger-bg);
+  --color-ddc-tone-danger-fg: var(--ddc-tone-danger-fg);
+  --color-ddc-tone-danger-ring: var(--ddc-tone-danger-ring);
+  --color-ddc-tone-info-bg: var(--ddc-tone-info-bg);
+  --color-ddc-tone-info-fg: var(--ddc-tone-info-fg);
+  --color-ddc-tone-info-ring: var(--ddc-tone-info-ring);
+  --color-ddc-tone-ghost-fg: var(--ddc-tone-ghost-fg);
+  --color-ddc-tone-ghost-ring: var(--ddc-tone-ghost-ring);
+  --color-ddc-dot-neutral: var(--ddc-dot-neutral);
+  --color-ddc-dot-info: var(--ddc-dot-info);
+  --color-ddc-dot-warning: var(--ddc-dot-warning);
+  --color-ddc-dot-success: var(--ddc-dot-success);
+  --color-ddc-dot-danger: var(--ddc-dot-danger);
+  --shadow-ddc-btn: var(--ddc-btn-shadow);
+}
+
+/* База портала (index.css, @layer base), переписанная на переменные. */
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    color-scheme: light;
+    accent-color: var(--ddc-accent);
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    min-height: 100vh;
+    background-color: var(--ddc-bg);
+    color: var(--ddc-text);
+  }
+
+  /* В Tailwind v4 у кнопок курсор по умолчанию, в v3 (на нём портал) был pointer. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Одно кольцо фокуса на всё приложение: 2px, отступ 2px, цвет бренда. */
+  :focus-visible {
+    outline: 2px solid var(--ddc-ring);
+    outline-offset: 2px;
+  }
+
+  /* Нативные чекбокс и радио: 16px, не сжимаются, цвет даёт accent-color. */
+  :where(input[type="checkbox"], input[type="radio"]) {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  :where(input[type="checkbox"], input[type="radio"]):disabled {
+    cursor: not-allowed;
+  }
+
+  /* Полоса прокрутки 6px, ползунок виден только при наведении на область. */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 9999px;
+    transition: background-color 0.15s ease-out;
+  }
+  :hover::-webkit-scrollbar-thumb {
+    background-color: var(--ddc-scroll-thumb);
+  }
+  :hover::-webkit-scrollbar-thumb:hover {
+    background-color: var(--ddc-scroll-thumb-hover);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--ddc-scroll-thumb-ff) transparent;
+    }
+  }
+}
+
+/* Фон оболочки приложения. ОТСТУПЛЕНИЕ от docs/ddc-design-system.md (раздел
+   2.4 «Фон оболочки» и блок раздела 6): в портале это зелёная тонировка #EEF6F2
+   с двумя радиальными пятнами brand, а в консоли утилита намеренно сведена к
+   нейтральному фону body (ink-50, в тёмной теме ink-950). Карточки на нём
+   читаются чище, а тест «нейтральный холст страницы» (ddc-wiring.test.ts)
+   держит это решение. Файл токенов поэтому не совпадает с блоком раздела 6 в
+   этой одной утилите, остальное совпадает. */
+@utility ddc-app-shell {
+  background-color: var(--ddc-bg);
+}

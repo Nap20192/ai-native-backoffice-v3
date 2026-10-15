@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "@openma/common/brand/tokens.css";
 @import "./styles/console-tokens.css";
+/* Оформление DDC (зелёный НБК). Подключается после brand/tokens.css и
+   console-tokens.css: ddc-tokens.css даёт шкалы brand и ink, статусные тона,
+   тени, анимации, кольцо фокуса; ddc-bridge.css переопределяет на них токены
+   консоли (--bg, --fg, --brand, --border, высоты контролов, радиусы). */
+@import "./styles/ddc-tokens.css";
+@import "./styles/ddc-bridge.css";
+@import "./styles/ddc-components.css";
 @import "@openma/common/chat-ui/styles.css";
 @import "./styles/console-shell.css";
 @import "./styles/console-list.css";
@@ -9,29 +16,34 @@
 /* Code highlight theme — light by default */
 @import "highlight.js/styles/github.css";
 
-/* ---------- Dark mode: class-based ---------- */
-@custom-variant dark (&:where(.dark, .dark *));
+/* Тёмная тема по классу .dark на <html>: вариант dark объявлен в ddc-tokens.css. */
 
 /* ---------- Tailwind theme tokens ---------- */
 @theme {
-  /* Fonts */
-  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
-  --font-sans: "Geist Variable", -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  /* Шрифты. Основной шрифт и шкалы brand / ink / статусов задаёт
+     ddc-tokens.css (системный стек, внешних шрифтов нет). Засечечный
+     display-шрифт убран: заголовки DDC набираются тем же системным шрифтом
+     полужирным начертанием. Моноширинный стек стандартный для Tailwind:
+     в DDC он только для кода, cron, IP и технических идентификаторов. */
+  --font-display: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
 
-  /* Tailwind typography utilities resolve to the console scale. Keeping
-     the semantic utilities canonical means feature code cannot quietly
-     introduce adjacent 1px sizes and break the density rhythm. */
-  --text-xs: var(--console-type-label);
-  --text-xs--line-height: 16px;
-  --text-sm: var(--console-type-body);
-  --text-sm--line-height: var(--type-line);
-  --text-base: var(--console-type-ui);
-  --text-base--line-height: 20px;
-  --text-lg: var(--console-type-section);
-  --text-lg--line-height: 24px;
-  --text-xl: var(--console-type-title);
-  --text-xl--line-height: 34px;
+  /* Шкала текста DDC (раздел 2.5 docs/ddc-design-system.md). text-2xs
+     (11/16) приходит из ddc-tokens.css. Основной размер интерфейса text-sm
+     14/20, подписи полей и таблиц text-xs 12/16. */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
 
   /* Color palette — resolves dynamically via :root / .dark vars */
   --color-brand: var(--brand);
@@ -63,7 +75,8 @@
   --color-accent-violet: var(--accent-violet);
   --color-accent-violet-subtle: var(--accent-violet-subtle);
 
-  --color-ring: var(--fg);
+  /* Кольцо фокуса DDC: brand-500 в светлой теме, brand-400 в тёмной. */
+  --color-ring: var(--ddc-ring);
 
   --shadow-card-soft: var(--shadow-card-soft);
   --shadow-card-press: var(--shadow-card-press);
@@ -77,58 +90,68 @@
      aliases Tailwind v4 emits no rule for `bg-secondary`, `text-muted-
      foreground`, `bg-popover`, `border-input` (the lookup just silently
      yields nothing) and the lifted shadcn surfaces render unstyled.
-     Mapping straight onto the existing OMA palette keeps the chat surface
-     visually consistent with the rest of the console — no second palette
-     to maintain. Both themes (light + dark) get correct values automatically
-     because the OMA tokens above are theme-aware. */
+     Алиасы смотрят на токены консоли, а те в ddc-bridge.css смотрят на
+     палитру DDC, поэтому обе темы получают верные значения сами. */
   --color-background: var(--bg);
   --color-foreground: var(--fg);
   --color-card: var(--bg);
   --color-card-foreground: var(--fg);
   --color-popover: var(--bg);
   --color-popover-foreground: var(--fg);
-  --color-primary: var(--brand);
-  --color-primary-foreground: var(--brand-fg);
+  /* primary в DDC всегда фирменный зелёный 600 с белым текстом в обеих
+     темах (кнопка не меняется), поэтому он не зависит от --brand, который
+     в тёмной теме светлеет под акцентный текст. */
+  --color-primary: var(--ddc-primary);
+  --color-primary-foreground: var(--ddc-on-primary);
   --color-secondary: var(--bg-surface);
   --color-secondary-foreground: var(--fg);
   --color-muted: var(--bg-surface);
-  --color-muted-foreground: var(--fg-muted);
+  --color-muted-foreground: var(--fg-subtle);
   --color-accent: var(--bg-surface);
   --color-accent-foreground: var(--fg);
   --color-destructive: var(--danger);
   --color-destructive-foreground: #ffffff;
-  --color-input: var(--border);
+  --color-input: var(--border-strong);
 
-  /* shadcn primitives derive button + input rounding from --radius
-     via `rounded-[min(var(--radius-md),12px)]` and similar. OMA's
-     existing rounded utilities use the Tailwind defaults, so pin a
-     value that matches our existing chat bubble feel (rounded-lg). */
-  --radius: 0.5rem;
-  --radius-md: 0.5rem;
+  /* shadcn-примитивы берут скругления из --radius. В DDC базовый радиус
+     контролов 12px (rounded-xl); rounded-md остаётся 6px по умолчанию
+     Tailwind (бейджи и kbd), rounded-lg 8px, rounded-2xl 16px. */
+  --radius: 0.75rem;
 
   /* shadcn `Sidebar` primitive lookups. The sidebar component reaches
      for its own --sidebar* family so its theming can drift from the
      main canvas (typical use: subtly different bg, darker borders).
-     OMA wants the sidebar to share the existing palette, so we alias
-     straight through — bg-sidebar / fg / brand are all already
-     theme-aware via :root / .dark. */
+     Здесь он делит палитру с остальной консолью. */
   --color-sidebar: var(--bg-sidebar);
   --color-sidebar-foreground: var(--fg);
-  --color-sidebar-primary: var(--brand);
-  --color-sidebar-primary-foreground: var(--brand-fg);
-  --color-sidebar-accent: var(--bg-surface);
-  --color-sidebar-accent-foreground: var(--fg);
+  --color-sidebar-primary: var(--ddc-primary);
+  --color-sidebar-primary-foreground: var(--ddc-on-primary);
+  --color-sidebar-accent: var(--ddc-selected-bg);
+  --color-sidebar-accent-foreground: var(--ddc-selected-text);
   --color-sidebar-border: var(--border);
-  --color-sidebar-ring: var(--fg);
+  --color-sidebar-ring: var(--ddc-ring);
 }
 
 /* ---------- Base typography ---------- */
 body {
   font-family: var(--font-sans);
-  font-size: 0.78125rem; /* 12.5px — Linear-density base without browser zoom */
+  font-size: 0.875rem; /* 14px: text-sm, основной размер интерфейса DDC */
   line-height: var(--type-line);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Цвет рамки по умолчанию. В Tailwind v4 голая `border` красится в
+   currentColor (в v3 было gray-200), и разделители выходили цвета текста.
+   Портал DDC рисует их ink-100, поэтому базовый цвет это --border. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--border);
+  }
 }
 
 /* Lock the viewport — the AppShell sidebar + breadcrumb header are
@@ -147,28 +170,21 @@ body,
   overflow: hidden;
 }
 
-/* Fallback focus outline for native interactive elements that are not wrapped
-   by a component primitive. Shared controls use an even quieter 1px halo.
-   Wrapped in @layer base so Tailwind utility variants can override per-element.
-   Unlayered rules win over layered rules regardless of specificity, which
-   would otherwise make this impossible to suppress on a per-element basis. */
-@layer base {
-  *:focus-visible {
-    outline: 1px solid color-mix(in srgb, var(--fg) 45%, transparent);
-    outline-offset: 2px;
-  }
-}
+/* Кольцо фокуса. Одно на всё приложение: правило :focus-visible в
+   ddc-tokens.css (2px, отступ 2px, brand-500 в светлой теме и brand-400 в
+   тёмной). На кнопках и ссылках outline-none не ставим, поля ввода рисуют
+   своё кольцо ring-2 вместе с рамкой цвета бренда. */
 
 /* ---------- Managed session composer ----------
    Mirrors Backchat's compact composer geometry: one panel material, a 48px
-   writing tier, a 28px tool row, and a single context-sensitive action slot. */
+   writing tier, a 32px tool row, and a single context-sensitive action slot. */
 :root {
   --composer-card-border-width: 1px;
   --composer-card-padding-block: 10px;
   --composer-card-padding-inline: 10px;
   --composer-section-gap: 6px;
   --composer-body-min-height: 48px;
-  --composer-control-height: 28px;
+  --composer-control-height: 32px;
   --composer-radius: 16px;
   --composer-footer-gap: 5px;
   --composer-resting-height: calc(
@@ -199,14 +215,15 @@ body,
     border-radius: var(--composer-radius);
     background: var(--bg-surface);
     padding: var(--composer-card-padding-block) var(--composer-card-padding-inline);
-    box-shadow: var(--shadow-input-rest, 0 1px 2px rgb(0 0 0 / 0.06));
+    box-shadow: none;
     transition:
       border-color var(--dur-quick) var(--ease-soft),
       box-shadow var(--dur-quick) var(--ease-soft);
 }
 
 .session-composer:focus-within [data-slot="input-group"] {
-  border-color: var(--fg-muted);
+  border-color: var(--ddc-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ddc-ring) 30%, transparent);
 }
 
 .session-composer .session-composer-textarea {
@@ -291,21 +308,8 @@ body,
     color: var(--fg);
 }
 
-/* Scrollbar subtle styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-subtle);
-}
+/* Полоса прокрутки 6px, ползунок бренда при наведении: правила в
+   ddc-tokens.css (@layer base). */
 
 /* Dark mode code highlights — github.css ships light-mode token colors
    (greens, blues, purples) that look dim against --bg-surface in dark
@@ -370,90 +374,6 @@ body,
   display: inline-block;
   animation: brand-loader-dot 1200ms var(--ease-soft) infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .brand-loader-dot { animation: none; opacity: 0.6; }
-}
-
-/* Modal (Radix Dialog) overlay + content animations.
-   Driven by data-state on Dialog.Overlay and Dialog.Content; Radix
-   waits for the closed-state animation to finish before unmounting
-   via its built-in Presence wrapper. Durations match the previous
-   hand-rolled Modal (overlay = --dur-base, content = --dur-slow). */
-@keyframes modal-overlay-in  { from { opacity: 0 } to { opacity: 1 } }
-@keyframes modal-overlay-out { from { opacity: 1 } to { opacity: 0 } }
-@keyframes modal-content-in {
-  from { opacity: 0; transform: translateX(-50%) scale(0.96); }
-  to   { opacity: 1; transform: translateX(-50%) scale(1);    }
-}
-@keyframes modal-content-out {
-  from { opacity: 1; transform: translateX(-50%) scale(1);    }
-  to   { opacity: 0; transform: translateX(-50%) scale(0.96); }
-}
-.modal-overlay[data-state="open"]    { animation: modal-overlay-in  var(--dur-base) var(--ease-soft); }
-.modal-overlay[data-state="closed"]  { animation: modal-overlay-out var(--dur-base) var(--ease-soft); }
-.modal-content[data-state="open"]    { animation: modal-content-in  var(--dur-slow) var(--ease-soft); }
-.modal-content[data-state="closed"]  { animation: modal-content-out var(--dur-slow) var(--ease-soft); }
-@media (prefers-reduced-motion: reduce) {
-  .modal-overlay[data-state="open"],
-  .modal-overlay[data-state="closed"],
-  .modal-content[data-state="open"],
-  .modal-content[data-state="closed"] {
-    animation-duration: 1ms;
-  }
-}
-
-/* Skeleton placeholder pulse — quieter than animate-pulse (Tailwind's
-   default goes opacity 0.5↔1, which reads as "flashing" in long lists).
-   This stays subtle: 0.4↔0.65 with the same soft easing as the rest. */
-@keyframes skeleton-pulse {
-  0%, 100% { opacity: 0.4;  }
-  50%      { opacity: 0.65; }
-}
-.skeleton-pulse { animation: skeleton-pulse 1500ms var(--ease-soft) infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-pulse { animation: none; opacity: 0.55; }
-}
-
-/* Radix Toast root animations. Driven by data-state (open/closed) and
-   data-swipe (start/move/cancel/end) that Radix sets on Toast.Root.
-
-   - Open: slide in from the right + fade. We use --dur-slow so the
-     reveal has the same weight as the modal reveal.
-   - Close (timeout or X / Escape): slide back out the right + fade.
-   - Swipe: during a drag, Radix exposes --radix-toast-swipe-move-x and
-     we follow the pointer. On cancel, snap back. On end (past the
-     swipeThreshold), fly off using --radix-toast-swipe-end-x as the
-     starting point so the motion is continuous with the gesture. */
-@keyframes toast-slide-in {
-  from { transform: translateX(calc(100% + 1rem)); opacity: 0; }
-  to   { transform: translateX(0);                 opacity: 1; }
-}
-@keyframes toast-slide-out {
-  from { transform: translateX(0);                 opacity: 1; }
-  to   { transform: translateX(calc(100% + 1rem)); opacity: 0; }
-}
-@keyframes toast-swipe-out {
-  from { transform: translateX(var(--radix-toast-swipe-end-x)); }
-  to   { transform: translateX(calc(100% + 1rem)); opacity: 0;  }
-}
-.toast-root[data-state="open"]    { animation: toast-slide-in  var(--dur-slow) var(--ease-soft); }
-.toast-root[data-state="closed"]  { animation: toast-slide-out var(--dur-base) var(--ease-soft); }
-.toast-root[data-swipe="move"]    { transform: translateX(var(--radix-toast-swipe-move-x)); }
-.toast-root[data-swipe="cancel"]  {
-  transform: translateX(0);
-  transition: transform var(--dur-base) var(--ease-soft);
-}
-.toast-root[data-swipe="end"]     { animation: toast-swipe-out var(--dur-base) var(--ease-soft); }
-@media (prefers-reduced-motion: reduce) {
-  .toast-root[data-state="open"],
-  .toast-root[data-state="closed"],
-  .toast-root[data-swipe="end"] {
-    animation-duration: 1ms;
-  }
-  .toast-root[data-swipe="cancel"] {
-    transition-duration: 1ms;
-  }
-}
 
 /* Radix Collapsible (Disclosure) panel slide. The library exposes
    --radix-collapsible-content-height on the Content element so we can
@@ -468,59 +388,14 @@ body,
 }
 .collapsible-content[data-state="open"]   { animation: collapsible-down var(--dur-base) var(--ease-soft); }
 .collapsible-content[data-state="closed"] { animation: collapsible-up   var(--dur-base) var(--ease-soft); }
-@media (prefers-reduced-motion: reduce) {
-  .collapsible-content[data-state="open"],
-  .collapsible-content[data-state="closed"] {
-    animation-duration: 1ms;
-  }
-}
 
-/* ---------- Reduced-motion fallback ----------
-   WCAG 2.3.3 (AAA) — honor the OS-level `prefers-reduced-motion: reduce`
-   signal across the whole console. Strategy:
-
-   1) Zero out the motion tokens. Every component that animates via
-      `duration-[var(--dur-quick|base|slow)]` (Tailwind arbitrary value)
-      or `transition: ... var(--dur-*) ...` inline picks this up for free.
-      This is the load-bearing line — adds reduced-motion coverage to
-      every existing + future user of the tokens with one rule.
-   2) Tailwind's `animate-*` utilities ship their own keyframes that
-      bypass our tokens, so override them explicitly. `animate-pulse` and
-      `animate-bounce` freeze (they're decorative). `animate-spin` slows
-      to 5s rather than stopping — a frozen spinner reads as "stuck",
-      and the spinner's semantic job (still working) needs *some* motion
-      to communicate. 5s is slow enough not to provoke motion sickness.
-   3) `.nav-progress-*` classes are added to NavigationProgress to give
-      its inline `transition` strings (which include hardcoded 200/400ms
-      values that don't go through the tokens) a hook to neutralize.
-
-   Tailwind utilities like `transition-transform` / `transition-colors`
-   used without a duration arbitrary value pick up Tailwind's default
-   150ms — short enough that we leave them as-is for reduced-motion
-   users (the task brief explicitly allows ≤300ms transitions to pass
-   through). The rules above target the long-duration / infinite
-   animations that actually trigger motion sickness. */
-@media (prefers-reduced-motion: reduce) {
-  :root,
-  .dark {
-    --dur-quick: 1ms;
-    --dur-base: 1ms;
-    --dur-slow: 1ms;
-  }
-
-  .animate-pulse,
-  .animate-bounce {
-    animation: none !important;
-  }
-  .animate-spin {
-    animation-duration: 5s !important;
-  }
-
-  .nav-progress-root,
-  .nav-progress-bar {
-    transition-duration: 1ms !important;
-  }
-}
+/* ---------- Движение ----------
+   Правило 6 и раздел 15 DDC: движение всегда включено. Сотрудники работают
+   через удалённый рабочий стол, где Windows выключает анимации сама и
+   выставляет prefers-reduced-motion: reduce. Если подчиняться этой
+   настройке, пропадают спиннеры и переходы, поэтому медиазапросов
+   prefers-reduced-motion в стилях консоли нет. Переходы короткие (150ms),
+   бесконечные анимации только у спиннера, скелетона и точки «идёт сейчас». */
 
 /* ---------- Print stylesheet ----------
    The console is web-app-first, but operators do print session timelines,
@@ -556,6 +431,16 @@ body,
     --border-strong: #999999;
     --shadow-md: none;
     --shadow-sm: none;
+    --ddc-bg: #ffffff;
+    --ddc-surface: #ffffff;
+    --ddc-surface-muted: #f5f5f5;
+    --ddc-surface-sunken: #f5f5f5;
+    --ddc-text: #1a1a1a;
+    --ddc-heading: #000000;
+    --ddc-text-muted: #555555;
+    --ddc-border: #cccccc;
+    --ddc-divider: #cccccc;
+    --ddc-border-strong: #999999;
     color-scheme: light;
   }
 
@@ -579,7 +464,7 @@ body,
   [role="alertdialog"],
   [data-radix-portal],
   [data-radix-popper-content-wrapper],
-  .toast-root,
+  [data-sonner-toaster],
   button[aria-label="Open menu"],
   button[aria-label="Close menu"],
   button[aria-label="Close panel"],
@@ -588,7 +473,16 @@ body,
   button[aria-label="Sign out"],
   button[aria-label="Switch workspace"],
   button[aria-label*="theme" i],
-  button[aria-label*="command" i] {
+  button[aria-label*="command" i],
+  button[aria-label="Открыть меню"],
+  button[aria-label="Закрыть меню"],
+  button[aria-label="Закрыть панель"],
+  button[aria-label="Закрыть"],
+  button[aria-label="Скрыть"],
+  button[aria-label="Выйти"],
+  button[aria-label="Сменить рабочее пространство"],
+  button[aria-label*="тем" i],
+  button[aria-label*="команд" i] {
     display: none !important;
   }
 
@@ -632,7 +526,7 @@ body,
   pre,
   blockquote,
   figure,
-  .skeleton-pulse {
+  [data-slot="skeleton"] {
     page-break-inside: avoid;
     break-inside: avoid;
   }
@@ -657,7 +551,7 @@ body,
   }
 
   /* Skeleton placeholders are loading states — never useful on paper. */
-  .skeleton-pulse {
+  [data-slot="skeleton"] {
     display: none !important;
   }
 }

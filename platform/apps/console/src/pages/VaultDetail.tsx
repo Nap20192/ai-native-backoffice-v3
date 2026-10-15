@@ -1,9 +1,22 @@
+import { useCrumbName } from "../lib/crumb-names";
+import { formatDateTime } from "../lib/date-format";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
+import {
+  ArchiveIcon,
+  CheckCircleIcon,
+  KeyRoundIcon,
+  Loader2Icon,
+  PencilIcon,
+  PlusIcon,
+  SearchXIcon,
+  ServerIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import type {
   BetaManagedAgentsCredential,
   CredentialCreateParams,
@@ -14,18 +27,25 @@ import type { BetaManagedAgentsVault } from "@anthropic-ai/sdk/resources/beta/va
 import { useApi } from "../lib/api";
 import { useApiQuery, useInfiniteApiQuery, useQueryClient } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton, SkeletonRows } from "../components/Skeleton";
 import { Page } from "../components/Page";
 import { PageHeader } from "../components/PageHeader";
 import { Disclosure } from "../components/Disclosure";
 import { LocalCombobox } from "../components/LocalCombobox";
+import { Field } from "../components/Field";
 import { SecretInput, TextInput } from "../components/Input";
 import { Select, SelectOption } from "../components/Select";
 import { FilterChip } from "../components/FilterChip";
 import { FacetedFilter } from "../components/FacetedFilter";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
 import { PopoverContent } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -41,28 +61,24 @@ type Credential = BetaManagedAgentsCredential;
 
 function credentialTypeView(credential: Credential): {
   label: string;
-  className: string;
   target: string;
 } {
+  const authType: string = credential.auth.type;
+  // Учётные данные CLI (cap_cli) создаются мимо SDK-типов, поэтому ветка
+  // стоит до switch: иначе такая строка списка осталась бы без вида.
+  if (authType === "cap_cli") {
+    const cliId = (credential.auth as unknown as { cli_id?: string }).cli_id;
+    return { label: "CLI", target: cliId ?? "" };
+  }
   switch (credential.auth.type) {
     case "mcp_oauth":
-      return {
-        label: "OAuth",
-        className: "bg-info-subtle text-info",
-        target: credential.auth.mcp_server_url,
-      };
+      return { label: "OAuth", target: credential.auth.mcp_server_url };
     case "static_bearer":
-      return {
-        label: "Bearer",
-        className: "bg-success-subtle text-success",
-        target: credential.auth.mcp_server_url,
-      };
+      return { label: "Bearer", target: credential.auth.mcp_server_url };
     case "environment_variable":
-      return {
-        label: "Environment variable",
-        className: "bg-brand-subtle text-brand",
-        target: credential.auth.secret_name,
-      };
+      return { label: "Переменная окружения", target: credential.auth.secret_name };
+    default:
+      return { label: authType, target: "" };
   }
 }
 
@@ -70,32 +86,45 @@ function credentialTypeView(credential: Credential): {
 // Lifted verbatim from VaultsList — kept here because the Add-credential
 // flow now lives on this page.
 const CAP_CLIS: Array<{ cli_id: string; label: string; helper: string; oauth?: boolean }> = [
-  { cli_id: "gh", label: "GitHub CLI (gh)", helper: "Personal access token (ghp_...)", oauth: true },
-  { cli_id: "glab", label: "GitLab CLI (glab)", helper: "Personal access token (glpat-...)", oauth: true },
-  { cli_id: "az", label: "Azure CLI (az)", helper: "ARM access token", oauth: true },
-  { cli_id: "gcloud", label: "Google Cloud SDK", helper: "OAuth access token", oauth: true },
-  { cli_id: "fly", label: "Fly.io (fly / flyctl)", helper: "Fly API token (fo1_...)" },
-  { cli_id: "vercel", label: "Vercel CLI", helper: "Account access token" },
-  { cli_id: "doctl", label: "DigitalOcean (doctl)", helper: "API token (dop_v1_...)" },
-  { cli_id: "heroku", label: "Heroku CLI", helper: "API token (heroku auth:token)" },
-  { cli_id: "cf", label: "Cloudflare (cf / wrangler)", helper: "API token (CLOUDFLARE_API_TOKEN)" },
-  { cli_id: "npm", label: "npm registry", helper: "Granular access token (npm_...)" },
-  { cli_id: "aws", label: "AWS CLI / SDKs", helper: "AWS secret access key" },
-  { cli_id: "kubectl", label: "kubectl", helper: "Bearer token for the API server" },
-  { cli_id: "docker", label: "Docker registry", helper: "Registry password / PAT" },
-  { cli_id: "git", label: "git (HTTPS remotes)", helper: "Personal access token" },
+  { cli_id: "gh", label: "GitHub CLI (gh)", helper: "Персональный токен доступа (ghp_...)", oauth: true },
+  { cli_id: "glab", label: "GitLab CLI (glab)", helper: "Персональный токен доступа (glpat-...)", oauth: true },
+  { cli_id: "az", label: "Azure CLI (az)", helper: "Токен доступа ARM", oauth: true },
+  { cli_id: "gcloud", label: "Google Cloud SDK", helper: "Токен доступа OAuth", oauth: true },
+  { cli_id: "fly", label: "Fly.io (fly / flyctl)", helper: "Токен Fly API (fo1_...)" },
+  { cli_id: "vercel", label: "Vercel CLI", helper: "Токен доступа аккаунта" },
+  { cli_id: "doctl", label: "DigitalOcean (doctl)", helper: "API-токен (dop_v1_...)" },
+  { cli_id: "heroku", label: "Heroku CLI", helper: "API-токен (heroku auth:token)" },
+  { cli_id: "cf", label: "Cloudflare (cf / wrangler)", helper: "API-токен (CLOUDFLARE_API_TOKEN)" },
+  { cli_id: "npm", label: "Реестр npm", helper: "Гранулярный токен доступа (npm_...)" },
+  { cli_id: "aws", label: "AWS CLI и SDK", helper: "Секретный ключ доступа AWS" },
+  { cli_id: "kubectl", label: "kubectl", helper: "Bearer-токен для API-сервера" },
+  { cli_id: "docker", label: "Реестр Docker", helper: "Пароль или персональный токен реестра" },
+  { cli_id: "git", label: "git (HTTPS-репозитории)", helper: "Персональный токен доступа" },
 ];
 
 type StatusValue = "any" | "active" | "archived";
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
+  { value: "any", label: "Все" },
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
 ];
 
-const inputCls =
-  "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
+// Подпись над полем и групповым контролом вне Field (раздел 3 DDC, `.label`).
+const LABEL_CLS = "mb-1.5 block text-xs leading-4 font-medium text-ddc-label";
+
+// Кнопки шапки на телефоне 390px сжимаются до иконок 40x40, подпись остаётся
+// для диктора (`sr-only`), иначе три подписи не помещаются в один ряд.
+const HEADER_ACTION_CLS = "max-sm:w-10 max-sm:px-0";
+
+// Пустое состояние внутри карточки списка: сама карточка уже есть, поэтому
+// рамка, тень и подложка EmptyState гасятся.
+const EMPTY_IN_CARD = "rounded-none border-0 bg-transparent shadow-none";
+
+type PendingAction =
+  | { kind: "archive-vault" }
+  | { kind: "delete-vault" }
+  | { kind: "delete-credential"; id: string; name: string };
 
 // =================================================================
 // Page
@@ -112,6 +141,7 @@ export function VaultDetail() {
   const { data: vault, error: vaultError } = useApiQuery<BetaManagedAgentsVault>(
     id ? `/v1/vaults/${id}` : null,
   );
+  useCrumbName(id, vault?.display_name);
   const {
     items: credentials,
     isLoading: credsLoading,
@@ -139,6 +169,13 @@ export function VaultDetail() {
   const [showRename, setShowRename] = useState(false);
   const [editingCred, setEditingCred] = useState<Credential | null>(null);
 
+  // Архивация и удаление подтверждаются окном ConfirmDialog (правило 11
+  // DDC). Выбранное действие не сбрасываем при закрытии: текст окна не
+  // должен пропасть, пока оно уходит с экрана.
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
   // Refetch credentials after a successful add/delete. Mirrors the old
   // `openVault(selectedVault)` reload from VaultsList, but goes through
   // TQ so any other tab/observer with the same key updates too.
@@ -156,46 +193,30 @@ export function VaultDetail() {
     void queryClient.invalidateQueries({ queryKey: ["/v1/vaults"] });
   }, [id, queryClient]);
 
-  const archive = async () => {
-    if (!id) return;
-    if (
-      !confirm(
-        "Archive this vault? All its credentials will also be archived. Archive is one-way.",
-      )
-    )
-      return;
-    try {
-      await managedApi.vaults.archive(id);
-      nav("/vaults");
-    } catch {
-      // useApi already toasts the underlying error.
-    }
+  const askConfirm = (action: PendingAction) => {
+    setPending(action);
+    setConfirmOpen(true);
   };
 
-  const del = async () => {
-    if (!id) return;
-    if (
-      !confirm(
-        "Delete this vault and ALL its credentials? This cannot be undone.",
-      )
-    )
-      return;
+  const runConfirmed = async () => {
+    if (!id || !pending) return;
+    setConfirmBusy(true);
     try {
-      await managedApi.vaults.delete(id);
-      nav("/vaults");
+      if (pending.kind === "archive-vault") {
+        await managedApi.vaults.archive(id);
+        nav("/vaults");
+      } else if (pending.kind === "delete-vault") {
+        await managedApi.vaults.delete(id);
+        nav("/vaults");
+      } else {
+        await managedApi.vaults.credentials.delete(pending.id, { vault_id: id });
+        reloadCredentials();
+      }
     } catch {
       // useApi already toasts the underlying error.
-    }
-  };
-
-  const deleteCred = async (credId: string) => {
-    if (!id) return;
-    if (!confirm("Delete this credential?")) return;
-    try {
-      await managedApi.vaults.credentials.delete(credId, { vault_id: id });
-      reloadCredentials();
-    } catch {
-      // useApi already toasts the underlying error.
+    } finally {
+      setConfirmBusy(false);
+      setConfirmOpen(false);
     }
   };
 
@@ -206,58 +227,142 @@ export function VaultDetail() {
         ? String(vaultError)
         : null;
 
-  if (!id) return <div className="flex-1 p-8">Missing vault id.</div>;
-  if (errorMsg)
-    return <div className="flex-1 p-8 text-danger">Error: {errorMsg}</div>;
-  if (!vault) return <div className="flex-1 p-8 text-fg-muted">Loading...</div>;
+  if (!id || errorMsg) {
+    return (
+      <div className="page">
+        <EmptyState
+          tone="warning"
+          icon={<TriangleAlertIcon />}
+          title={id ? "Не удалось загрузить хранилище" : "Хранилище не найдено"}
+          body={
+            id ? (
+              <span role="alert">{errorMsg}</span>
+            ) : (
+              "В адресе страницы не указан идентификатор хранилища."
+            )
+          }
+          action={
+            <Button variant="outline" onClick={() => nav("/vaults")}>
+              К списку хранилищ
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+  if (!vault) {
+    return (
+      <div className="page" aria-busy="true">
+        <span className="sr-only">{t.common.loading}</span>
+        <div className="console-detail-stack">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-64 max-w-full" />
+            <Skeleton className="h-4 w-96 max-w-full" />
+          </div>
+          <div className="card overflow-hidden">
+            <div className="border-b border-ddc-divider px-5 py-4">
+              <Skeleton className="h-5 w-40" />
+            </div>
+            <SkeletonRows count={3} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const archived = !!vault.archived_at;
   const updatedAt = vault.updated_at;
 
   // Active-filter chip display — null at the default so the chip reads
-  // "Status ▾" rather than "Status: All ▾". Matches the list-page pattern.
+  // "Статус ▾" rather than "Статус: Все ▾". Matches the list-page pattern.
   const statusDisplay =
     status === "any" ? undefined : STATUS_OPTIONS.find((o) => o.value === status)?.label;
+
+  const credsCount = filteredCreds.length > 99 ? "99+" : String(filteredCreds.length);
+
+  const confirmTitle =
+    pending?.kind === "archive-vault"
+      ? "Архивировать хранилище?"
+      : pending?.kind === "delete-vault"
+        ? "Удалить хранилище?"
+        : "Удалить учётные данные?";
+  const confirmMessage =
+    pending?.kind === "archive-vault"
+      ? "Все его учётные данные тоже попадут в архив. Действие нельзя отменить."
+      : pending?.kind === "delete-vault"
+        ? "Хранилище и все его учётные данные будут удалены. Действие нельзя отменить."
+        : pending?.kind === "delete-credential"
+          ? `Учётные данные «${pending.name}» будут удалены. Действие нельзя отменить.`
+          : "Действие нельзя отменить.";
 
   return (
     <Page
       layout="rail"
       header={
         <PageHeader
+          title={
+            <>
+              <span className="min-w-0">{vault.display_name}</span>
+              {archived && <Badge variant="neutral">{t.common.archived}</Badge>}
+            </>
+          }
+          description="Учётные данные и делегированный доступ для управляемых агентов."
           actions={
             <>
               {!archived && (
-                <Button variant="outline" size="sm" onClick={() => setShowRename(true)}>
-                  {t.common.rename}
+                <Button
+                  variant="outline"
+                  className={HEADER_ACTION_CLS}
+                  title={t.common.rename}
+                  onClick={() => setShowRename(true)}
+                >
+                  <PencilIcon />
+                  <span className="max-sm:sr-only">{t.common.rename}</span>
                 </Button>
               )}
               {!archived && (
-                <Button variant="outline" size="sm" onClick={archive}>
-                  {t.common.archive}
+                <Button
+                  variant="outline"
+                  className={HEADER_ACTION_CLS}
+                  title={t.common.archive}
+                  onClick={() => askConfirm({ kind: "archive-vault" })}
+                >
+                  <ArchiveIcon />
+                  <span className="max-sm:sr-only">{t.common.archive}</span>
                 </Button>
               )}
-              <Button variant="destructive" size="sm" onClick={del}>
-                {t.common.delete}
+              <Button
+                variant="danger-ghost"
+                className={HEADER_ACTION_CLS}
+                title={t.common.delete}
+                onClick={() => askConfirm({ kind: "delete-vault" })}
+              >
+                <Trash2Icon />
+                <span className="max-sm:sr-only">{t.common.delete}</span>
               </Button>
             </>
           }
         />
       }
       rail={
-        <section className="console-property-group" aria-label="Vault properties">
-          <h2 className="console-property-group-title">Properties</h2>
+        <section className="console-property-group" aria-label="Свойства хранилища">
+          <h2 className="console-property-group-title">Свойства</h2>
           <dl className="console-property-list">
-            <PropertyRow label="ID"><span className="font-mono">{vault.id}</span></PropertyRow>
-            <PropertyRow label="Status">
-              <span className={archived ? "text-fg-muted" : "text-success"}>
-                {archived ? "Archived" : "Active"}
+            <PropertyRow label={t.common.id}><span className="font-mono text-xs">{vault.id}</span></PropertyRow>
+            <PropertyRow label={t.common.status}>
+              <span className={`chip ${archived ? "tone-ghost" : "tone-success"}`}>
+                {archived ? t.common.archived : "Активно"}
               </span>
             </PropertyRow>
-            <PropertyRow label="Created">{new Date(vault.created_at).toLocaleString()}</PropertyRow>
-            <PropertyRow label="Updated">{new Date(updatedAt).toLocaleString()}</PropertyRow>
+            <PropertyRow label={t.common.created}>
+              <span className="tabular-nums">{formatDateTime(vault.created_at)}</span>
+            </PropertyRow>
+            <PropertyRow label="Обновлено">
+              <span className="tabular-nums">{formatDateTime(updatedAt)}</span>
+            </PropertyRow>
             {archived && (
-              <PropertyRow label="Archived">
-                {new Date(vault.archived_at!).toLocaleString()}
+              <PropertyRow label="В архиве с">
+                <span className="tabular-nums">{formatDateTime(vault.archived_at!)}</span>
               </PropertyRow>
             )}
           </dl>
@@ -265,17 +370,17 @@ export function VaultDetail() {
       }
     >
       <div className="console-detail-stack">
-        <header className="console-detail-title-block">
-          <h1>{vault.display_name}</h1>
-          <p>Credentials and delegated access available to managed agents.</p>
-        </header>
-        <section className="console-detail-section">
-          <header className="flex items-center gap-3 mb-3 flex-wrap">
-            <h2 className="font-display text-base font-semibold text-fg mr-auto">
-              Credentials
+        <section
+          className="console-detail-section card overflow-hidden"
+          aria-labelledby="vault-credentials-title"
+        >
+          <header className="flex flex-wrap items-center gap-3 border-b border-ddc-divider px-5 py-4">
+            <h2 id="vault-credentials-title" className="section-title mr-auto">
+              Учётные данные
+              {!credsLoading && <span className="count-pill">{credsCount}</span>}
             </h2>
             <FilterChip
-              label="Status"
+              label={t.common.status}
               active={status !== "any"}
               display={statusDisplay}
               onClear={() => setStatus("any")}
@@ -290,93 +395,141 @@ export function VaultDetail() {
                   options={STATUS_OPTIONS}
                   value={status}
                   onValueChange={(v) => setStatus(v as StatusValue)}
-                  searchPlaceholder="Status..."
+                  searchPlaceholder="Статус…"
                 />
               </PopoverContent>
             </FilterChip>
             {!archived && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAddCred(true)}
-              >
-                + Add credential
+              <Button onClick={() => setShowAddCred(true)}>
+                <PlusIcon />
+                Добавить
               </Button>
             )}
           </header>
 
           <div className="console-detail-table-wrap" data-testid="credential-list-surface">
             {credsLoading ? (
-              <div className="text-fg-subtle text-sm py-4">Loading...</div>
+              <SkeletonRows count={3} />
             ) : filteredCreds.length === 0 ? (
-              <div className="rounded-[var(--console-radius-row)] bg-[var(--data-row-bg)] px-3 py-8 text-center text-fg-subtle text-sm">
-                {credentials.length === 0
-                  ? "No credentials yet. Connect an MCP server or add a CLI token."
-                  : "No credentials match the current filter."}
-              </div>
+              credentials.length === 0 ? (
+                <EmptyState
+                  size="sm"
+                  className={EMPTY_IN_CARD}
+                  icon={<KeyRoundIcon />}
+                  title="Учётных данных пока нет"
+                  body="Подключите MCP-сервер или добавьте токен CLI."
+                  action={
+                    !archived && (
+                      <Button onClick={() => setShowAddCred(true)}>
+                        <PlusIcon />
+                        Добавить
+                      </Button>
+                    )
+                  }
+                />
+              ) : (
+                <EmptyState
+                  size="sm"
+                  className={EMPTY_IN_CARD}
+                  icon={<SearchXIcon />}
+                  title="Ничего не найдено"
+                  body="Под выбранный статус ничего не подходит."
+                  action={
+                    <Button variant="outline" onClick={() => setStatus("any")}>
+                      Сбросить фильтр
+                    </Button>
+                  }
+                />
+              )
             ) : (
-              <Table className="console-detail-table">
+              <Table className="console-detail-table max-lg:min-w-0!">
                 <TableHeader variant="wireless">
                   <TableRow variant="wireless">
-                    <TableHead>Name</TableHead>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>MCP server URL</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Updated</TableHead>
-                    <TableHead className="text-right"></TableHead>
+                    <TableHead className="pl-5!">{t.common.name}</TableHead>
+                    <TableHead className="hidden 2xl:table-cell">{t.common.id}</TableHead>
+                    <TableHead className="hidden w-44 lg:table-cell">Тип</TableHead>
+                    <TableHead className="hidden 2xl:table-cell">Сервер или переменная</TableHead>
+                    <TableHead className="hidden w-28 sm:table-cell">{t.common.status}</TableHead>
+                    <TableHead className="hidden w-40 min-[1800px]:table-cell">Обновлено</TableHead>
+                    <TableHead className="w-24 pr-5!">
+                      <span className="sr-only">{t.common.actions}</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredCreds.map((c) => {
                     const typeView = credentialTypeView(c);
+                    const credName = c.display_name || "Без названия";
                     return (
                       <TableRow variant="wireless" key={c.id}>
-                        <TableCell className="font-medium text-fg">
-                          {c.display_name || "Untitled credential"}
+                        <TableCell className="pl-5!">
+                          <div className="truncate font-medium text-ddc-heading" title={credName}>
+                            {credName}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted lg:hidden">
+                            <span className="truncate" title={typeView.label}>{typeView.label}</span>
+                            {c.archived_at && (
+                              <span className="chip tone-ghost sm:hidden">{t.common.archived}</span>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-fg-muted">
-                          {c.id}
+                        <TableCell className="hidden 2xl:table-cell">
+                          <div className="truncate font-mono text-xs text-muted" title={c.id}>
+                            {c.id}
+                          </div>
                         </TableCell>
-                        <TableCell>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full ${typeView.className}`}
-                          >
-                            {typeView.label}
+                        <TableCell className="hidden lg:table-cell">
+                          <span className="chip tone-neutral max-w-full">
+                            <span className="truncate" title={typeView.label}>{typeView.label}</span>
                           </span>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-fg-muted truncate max-w-[260px]">
-                          {typeView.target || "—"}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full ${
-                              c.archived_at
-                                ? "bg-bg-surface text-fg-subtle"
-                                : "bg-success-subtle text-success"
-                            }`}
-                          >
-                            {c.archived_at ? "archived" : "active"}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-fg-muted">
-                          {new Date(c.updated_at).toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-right whitespace-nowrap">
-                          {!c.archived_at && (
-                            <Button variant="ghost"
-                              onClick={() => setEditingCred(c)}
-                              className="inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 px-2 text-xs text-fg-subtle hover:text-fg transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
+                        <TableCell className="hidden 2xl:table-cell">
+                          {typeView.target ? (
+                            <div
+                              className="truncate font-mono text-xs text-muted"
+                              title={typeView.target}
                             >
-                              {t.common.edit}
-                            </Button>
+                              {typeView.target}
+                            </div>
+                          ) : (
+                            <span className="text-ddc-placeholder">Нет</span>
                           )}
-                          <Button variant="ghost"
-                            onClick={() => deleteCred(c.id)}
-                            className="inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 px-2 text-xs text-fg-subtle hover:text-danger transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
-                          >
-                            {t.common.delete}
-                          </Button>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          <span className={`chip ${c.archived_at ? "tone-ghost" : "tone-success"}`}>
+                            {c.archived_at ? t.common.archived : "Активно"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden text-muted tabular-nums min-[1800px]:table-cell">
+                          {formatDateTime(c.updated_at)}
+                        </TableCell>
+                        <TableCell className="pr-5!">
+                          <div className="flex items-center justify-end gap-1">
+                            {!c.archived_at && (
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => setEditingCred(c)}
+                                className="text-ddc-icon-muted"
+                                aria-label={`${t.common.edit}: ${credName}`}
+                                title={t.common.edit}
+                              >
+                                <PencilIcon />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() =>
+                                askConfirm({ kind: "delete-credential", id: c.id, name: credName })
+                              }
+                              className="text-ddc-icon-muted hover:bg-ddc-tone-danger-bg hover:text-ddc-danger-text"
+                              aria-label={`${t.common.delete}: ${credName}`}
+                              title={t.common.delete}
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -421,6 +574,17 @@ export function VaultDetail() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        confirmLabel={pending?.kind === "archive-vault" ? t.common.archive : t.common.delete}
+        destructive={pending?.kind !== "archive-vault"}
+        busy={confirmBusy}
+        onConfirm={() => void runConfirmed()}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </Page>
   );
 }
@@ -465,7 +629,7 @@ function RenameVaultModal({
       await managedApi.vaults.update(vault.id, { display_name: trimmed });
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to rename vault");
+      setError(e instanceof Error ? e.message : "Не удалось переименовать хранилище");
     } finally {
       setSaving(false);
     }
@@ -476,35 +640,35 @@ function RenameVaultModal({
       open
       onClose={onClose}
       title={t.vaults.renameVault}
+      closeDisabled={saving}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t.common.cancel}
           </Button>
-          <Button onClick={save} disabled={saving || !name.trim()}>
-            {saving ? t.common.saving : t.common.save}
+          <Button onClick={save} disabled={!name.trim()} loading={saving}>
+            {t.common.save}
           </Button>
         </>
       }
     >
-      {error && (
-        <div className="mb-3 text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">
-          {error}
-        </div>
-      )}
-      <Label htmlFor="vault-rename" className="text-sm text-fg-muted block mb-1">
-        {t.common.name}
-      </Label>
-      <Input
-        id="vault-rename"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className={inputCls}
-        autoFocus
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void save();
-        }}
-      />
+      <div className="space-y-4">
+        {error && (
+          <div role="alert" className="callout-danger">
+            {error}
+          </div>
+        )}
+        <TextInput
+          id="vault-rename"
+          label={t.common.name}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+          }}
+        />
+      </div>
     </Modal>
   );
 }
@@ -532,6 +696,7 @@ function EditCredentialModal({
   const [error, setError] = useState("");
 
   const canRotateToken = credential.auth.type === "static_bearer";
+  const typeView = credentialTypeView(credential);
 
   const save = async () => {
     const trimmed = displayName.trim();
@@ -552,7 +717,7 @@ function EditCredentialModal({
       await managedApi.vaults.credentials.update(credential.id, body);
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update credential");
+      setError(e instanceof Error ? e.message : "Не удалось обновить учётные данные");
     } finally {
       setSaving(false);
     }
@@ -566,65 +731,48 @@ function EditCredentialModal({
       subtitle={
         credential.auth.type === "mcp_oauth" ? t.vaults.oauthEditHint : undefined
       }
+      closeDisabled={saving}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t.common.cancel}
           </Button>
-          <Button onClick={save} disabled={saving || !displayName.trim()}>
-            {saving ? t.common.saving : t.common.save}
+          <Button onClick={save} disabled={!displayName.trim()} loading={saving}>
+            {t.common.save}
           </Button>
         </>
       }
     >
-      {error && (
-        <div className="mb-3 text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">
-          {error}
-        </div>
-      )}
-      <div className="space-y-3">
-        <div>
-          <Label htmlFor="cred-edit-name" className="text-sm text-fg-muted block mb-1">
-            {t.vaults.displayName}
-          </Label>
-          <Input
-            id="cred-edit-name"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            className={inputCls}
-            autoFocus
-          />
-        </div>
-        <div className="text-xs text-fg-subtle">
-          Type: <span className="font-mono">{credential.auth.type}</span>
-          {credential.auth.type !== "environment_variable" && (
+      <div className="space-y-4">
+        {error && (
+          <div role="alert" className="callout-danger">
+            {error}
+          </div>
+        )}
+        <TextInput
+          id="cred-edit-name"
+          label={t.vaults.displayName}
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          autoFocus
+        />
+        <div className="rounded-xl bg-ddc-surface-muted p-3 text-xs leading-4 text-muted">
+          Тип: <span className="font-medium text-ddc-text">{typeView.label}</span>
+          {typeView.target && (
             <>
-              {" · "}
-              <span className="font-mono">
-                {credential.auth.mcp_server_url}
-              </span>
-            </>
-          )}
-          {credential.auth.type === "environment_variable" && (
-            <>
-              {" · "}
-              <span className="font-mono">{credential.auth.secret_name}</span>
+              <span aria-hidden="true"> · </span>
+              <span className="font-mono break-all">{typeView.target}</span>
             </>
           )}
         </div>
         {canRotateToken && (
-          <div>
-            <Label htmlFor="cred-edit-token" className="text-sm text-fg-muted block mb-1">
-              {t.vaults.newTokenOptional}
-            </Label>
-            <SecretInput
-              id="cred-edit-token"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className={inputCls}
-              placeholder={t.vaults.leaveBlankKeepToken}
-            />
-          </div>
+          <SecretInput
+            id="cred-edit-token"
+            label={t.vaults.newTokenOptional}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder={t.vaults.leaveBlankKeepToken}
+          />
         )}
       </div>
     </Modal>
@@ -646,6 +794,7 @@ function AddCredentialModal({
 }) {
   const { api } = useApi();
   const managedApi = useManagedApi();
+  const { t } = useI18n();
 
   // Top-level tab inside the modal: MCP server vs CLI. Folds the two
   // previously separate entry points into one modal; matches Anthropic.
@@ -660,7 +809,6 @@ function AddCredentialModal({
     type: "oauth" as "oauth" | "bearer",
     url: "",
     pickedName: "",
-    pickedIcon: "",
     token: "",
     refreshToken: "",
     tokenEndpoint: "",
@@ -721,14 +869,14 @@ function AddCredentialModal({
         // Surface the MCP probe result so the user knows whether the just-
         // stored credential will actually work. Same toasts as the legacy
         // VaultsList modal.
-        const svc = data.service ?? "MCP server";
+        const svc = data.service ?? "MCP-сервер";
         if (data.probe_ok === true) {
-          toast.success(`Connected to ${svc} — token verified.`);
+          toast.success(`Подключено: ${svc}, токен проверен.`);
         } else if (data.probe_ok === false) {
           toast.warning(
             data.probe_message
-              ? `Connected to ${svc}, but: ${data.probe_message}`
-              : `Connected to ${svc}, but the server rejected our token.`,
+              ? `Подключено: ${svc}, но сервер вернул ошибку: ${data.probe_message}`
+              : `Подключено: ${svc}, но сервер отклонил токен.`,
           );
         }
       }
@@ -809,7 +957,7 @@ function AddCredentialModal({
           };
       await managedApi.vaults.credentials.create(vault.id, {
         display_name:
-          customForm.name || customForm.pickedName || "Custom MCP",
+          customForm.name || customForm.pickedName || "MCP-сервер",
         auth,
       });
       onCreated();
@@ -822,9 +970,9 @@ function AddCredentialModal({
     // Submit rules for the unified Add-credential MCP form:
     //   - Bearer type or Access token filled → POST a credential
     //     immediately (mcp_oauth if refresh_token present, else
-    //     static_bearer). Button reads "Add credential".
+    //     static_bearer). Button reads "Добавить".
     //   - Otherwise → start /v1/oma/oauth/authorize popup. Button reads
-    //     "Connect". Picking a registry row only fills the MCP Server
+    //     "Подключить". Picking a registry row only fills the MCP Server
     //     field, never auto-connects.
     if (!customForm.url) return;
     if (customForm.type === "bearer" || customForm.token) {
@@ -857,6 +1005,9 @@ function AddCredentialModal({
     });
     onCreated();
   };
+
+  // Повторный клик по «Создать» не должен создать вторые учётные данные.
+  const createCli = useAsyncAction(createCapCliCred);
 
   // Drive cap's OAuth Device Authorization Grant for the selected CLI.
   // Sequence: POST /initiate → show user_code + URL → poll /poll until
@@ -955,35 +1106,42 @@ function AddCredentialModal({
     setDeviceFlow((prev) => (prev ? { ...prev, status: "expired" } : null));
   };
 
+  const selectedCli = CAP_CLIS.find((c) => c.cli_id === cliForm.cli_id);
+
   return (
     <Modal
       open
       onClose={onClose}
-      title="Add credential"
+      title="Добавить учётные данные"
       maxWidth="max-w-lg"
       footer={
         addTab === "cli" ? (
           deviceFlow?.status === "polling" ? (
             <Button variant="ghost" onClick={() => setDeviceFlow(null)}>
-              Cancel
+              {t.common.cancel}
             </Button>
           ) : (
             <>
-              <Button variant="ghost" onClick={onClose}>
-                Cancel
+              <Button variant="ghost" onClick={onClose} disabled={createCli.loading}>
+                {t.common.cancel}
               </Button>
-              <Button onClick={createCapCliCred} disabled={!cliForm.token}>
-                Create
+              <Button
+                onClick={createCli.run}
+                disabled={!cliForm.token}
+                loading={createCli.loading}
+              >
+                {t.common.create}
               </Button>
             </>
           )
         ) : (
           <>
             <Button variant="ghost" onClick={onClose}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               onClick={submitCustom}
+              loading={connecting === "custom"}
               disabled={
                 !customForm.url ||
                 !!connecting ||
@@ -991,8 +1149,8 @@ function AddCredentialModal({
               }
             >
               {customForm.token || customForm.type === "bearer"
-                ? "Add credential"
-                : "Connect"}
+                ? "Добавить"
+                : "Подключить"}
             </Button>
           </>
         )
@@ -1001,70 +1159,61 @@ function AddCredentialModal({
       <Tabs
         value={addTab}
         onValueChange={(v) => setAddTab(v as "mcp" | "cli")}
-        aria-label="Add credential"
+        aria-label="Добавить учётные данные"
       >
-        <TabsList className="mb-3">
-          <TabsTrigger value="mcp">MCP server</TabsTrigger>
+        <TabsList>
+          <TabsTrigger value="mcp">MCP-сервер</TabsTrigger>
           <TabsTrigger value="cli">CLI</TabsTrigger>
         </TabsList>
 
         <TabsContent value="mcp" className="space-y-4">
-          <div className="text-sm text-fg-muted">
-            Authorize an MCP server for delegated user authentication.
-          </div>
+          <p className="text-sm text-muted">
+            Подключите MCP-сервер с авторизацией от имени пользователя.
+          </p>
+
+          <TextInput
+            id="vault-mcp-name"
+            label="Название (необязательно)"
+            value={customForm.name}
+            onChange={(e) => setCustomForm({ ...customForm, name: e.target.value })}
+            placeholder="Например, Трекер задач"
+          />
 
           <div>
-            <Label
-              htmlFor="vault-mcp-name"
-              className="text-sm font-medium text-fg block mb-1"
-            >
-              Name{" "}
-              <span className="text-xs text-fg-muted ml-1 px-1.5 py-0.5 rounded bg-bg-surface">
-                Optional
-              </span>
-            </Label>
-            <Input
-              id="vault-mcp-name"
-              value={customForm.name}
-              onChange={(e) => setCustomForm({ ...customForm, name: e.target.value })}
-              placeholder="Example MCP"
-              className={inputCls}
-            />
-          </div>
-
-          <div>
-            <Label className="text-sm font-medium text-fg block mb-1">Type</Label>
-            <div className="inline-flex rounded-md border border-border p-0.5">
-              {(["oauth", "bearer"] as const).map((t) => (
-                <Button variant="ghost"
-                  key={t}
+            <span id="vault-mcp-type-label" className={LABEL_CLS}>
+              Тип
+            </span>
+            <div className="segmented" role="group" aria-labelledby="vault-mcp-type-label">
+              {(["oauth", "bearer"] as const).map((kind) => (
+                <PlainButton
+                  key={kind}
                   type="button"
-                  onClick={() => setCustomForm({ ...customForm, type: t })}
-                  className={`inline-flex items-center justify-center px-3 py-1 min-h-11 sm:min-h-0 text-sm rounded ${customForm.type === t ? "bg-bg-surface text-fg font-medium" : "text-fg-muted"}`}
+                  className="segmented-item"
+                  aria-pressed={customForm.type === kind}
+                  onClick={() => setCustomForm({ ...customForm, type: kind })}
                 >
-                  {t === "oauth" ? "OAuth" : "Bearer token"}
-                </Button>
+                  {kind === "oauth" ? "OAuth" : "Bearer-токен"}
+                </PlainButton>
               ))}
             </div>
           </div>
 
           <div>
-            <Label className="text-sm font-medium text-fg block mb-1">
-              MCP Server
+            <Label htmlFor="vault-mcp-server" className={LABEL_CLS}>
+              MCP-сервер
             </Label>
             {/* Combobox: input filters the registry as you type. Pick a
-                row to fill the URL + show the favicon as a left-side
-                prefix; type a custom URL to ignore the registry. The
+                row to fill the URL; type a custom URL to ignore the registry. The
                 dropdown renders into document.body via portal so it
                 escapes Modal's overflow-y-auto clipping. */}
             <LocalCombobox
+              id="vault-mcp-server"
               value={customForm.url}
               onChange={(text) =>
                 setCustomForm({
                   ...customForm,
                   url: text,
                   pickedName: "",
-                  pickedIcon: "",
                 })
               }
               onPick={(entry) =>
@@ -1072,7 +1221,6 @@ function AddCredentialModal({
                   ...customForm,
                   url: entry.url,
                   pickedName: entry.name,
-                  pickedIcon: entry.icon ?? "",
                 })
               }
               options={MCP_REGISTRY}
@@ -1083,136 +1231,84 @@ function AddCredentialModal({
               }
               getKey={(entry) => entry.id}
               renderItem={(entry) => (
-                <div className="flex items-center gap-3 px-3 py-2.5">
-                  {entry.icon ? (
-                    <img
-                      src={entry.icon}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      className="w-5 h-5 rounded shrink-0"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="w-5 h-5 rounded bg-bg-surface shrink-0" />
-                  )}
+                <div className="flex min-w-0 items-center gap-3">
+                  <ServerIcon aria-hidden="true" className="size-4 shrink-0 text-ddc-icon-muted" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-fg">
+                    <div className="truncate text-sm font-medium text-ddc-heading">
                       {entry.name}
                     </div>
-                    <div className="text-xs text-fg-muted font-mono truncate">
+                    <div className="truncate font-mono text-xs text-muted">
                       {entry.url}
                     </div>
                   </div>
                 </div>
               )}
-              prefix={
-                customForm.pickedIcon ? (
-                  <img
-                    src={customForm.pickedIcon}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="w-4 h-4 rounded shrink-0"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                ) : null
-              }
-              placeholder="Search Anthropic's MCP registry or enter a custom URL"
-              emptyHint="No matches — keep typing for a custom URL"
+              placeholder="Найдите сервер в реестре или введите свой URL"
+              emptyHint="Ничего не найдено. Введите свой URL."
             />
           </div>
 
           {/* Access token — collapsed Optional. Filling this switches the
               submit path to POST static_bearer + button label changes to
-              "Add credential". Visible regardless of Type so the user can
+              "Добавить". Visible regardless of Type so the user can
               supply a pre-issued OAuth access_token without a handshake. */}
           <Disclosure
-            title="Access token"
-            meta={
-              <span className="px-1.5 py-0.5 rounded bg-bg-surface">
-                Optional
-              </span>
-            }
+            title="Токен доступа"
+            meta="Необязательно"
             open={tokenSectionOpen}
             onOpenChange={setTokenSectionOpen}
           >
-            <Input
+            <SecretInput
               value={customForm.token}
               onChange={(e) =>
                 setCustomForm({ ...customForm, token: e.target.value })
               }
-              type="password"
               placeholder="••••••••"
-              aria-label="Access token"
-              className={inputCls}
+              aria-label="Токен доступа"
             />
-            <div className="text-xs text-fg-subtle mt-1">
-              If filled, the credential is stored as a static bearer token (no
-              OAuth handshake).
-            </div>
+            <p className="mt-1.5 text-xs leading-4 text-muted">
+              Если заполнить, учётные данные сохранятся как статический
+              Bearer-токен, без OAuth-авторизации.
+            </p>
           </Disclosure>
 
           {/* Refresh token block (Optional) — only meaningful when an
               Access token is also set (RFC 6749 §6 refresh_token grant). */}
           {customForm.token && (
             <Disclosure
-              title="Refresh token"
-              meta={
-                <span className="px-1.5 py-0.5 rounded bg-bg-surface">
-                  Optional
-                </span>
-              }
+              title="Токен обновления"
+              meta="Необязательно"
               open={refreshSectionOpen}
               onOpenChange={setRefreshSectionOpen}
-              className="space-y-3"
             >
-              <div className="space-y-3">
-                <div>
-                  <Input
-                    value={customForm.refreshToken}
-                    onChange={(e) =>
-                      setCustomForm({
-                        ...customForm,
-                        refreshToken: e.target.value,
-                      })
-                    }
-                    placeholder="OAuth refresh token"
-                    aria-label="Refresh token"
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="vault-token-endpoint"
-                    className="text-sm font-medium text-fg block mb-1"
-                  >
-                    Token endpoint
-                  </Label>
-                  <Input
-                    id="vault-token-endpoint"
-                    value={customForm.tokenEndpoint}
-                    onChange={(e) =>
-                      setCustomForm({
-                        ...customForm,
-                        tokenEndpoint: e.target.value,
-                      })
-                    }
-                    placeholder="https://auth.example.com/oauth/token"
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="vault-auth-method"
-                    className="text-sm font-medium text-fg block mb-1"
-                  >
-                    Auth method
-                  </Label>
+              <div className="space-y-4">
+                <SecretInput
+                  value={customForm.refreshToken}
+                  onChange={(e) =>
+                    setCustomForm({
+                      ...customForm,
+                      refreshToken: e.target.value,
+                    })
+                  }
+                  placeholder="Токен обновления OAuth"
+                  aria-label="Токен обновления"
+                />
+                <TextInput
+                  id="vault-token-endpoint"
+                  label="Адрес выдачи токенов (token endpoint)"
+                  value={customForm.tokenEndpoint}
+                  onChange={(e) =>
+                    setCustomForm({
+                      ...customForm,
+                      tokenEndpoint: e.target.value,
+                    })
+                  }
+                  placeholder="https://auth.example.com/oauth/token"
+                />
+                <Field
+                  label="Способ аутентификации клиента"
+                  hint="Значения из token_endpoint_auth_methods_supported (RFC 8414). Нужны, когда сервер обновляет токен после ответа 401."
+                >
                   <Select
                     id="vault-auth-method"
                     value={customForm.authMethod}
@@ -1222,17 +1318,12 @@ function AddCredentialModal({
                         authMethod: value as typeof customForm.authMethod,
                       })
                     }
-                    className={inputCls}
                   >
                     <SelectOption value="client_secret_post">client_secret_post</SelectOption>
                     <SelectOption value="client_secret_basic">client_secret_basic</SelectOption>
                     <SelectOption value="none">none</SelectOption>
                   </Select>
-                </div>
-                <div className="text-xs text-fg-subtle">
-                  RFC 8414 token_endpoint_auth_methods_supported. Used when the
-                  server refreshes on 401.
-                </div>
+                </Field>
               </div>
             </Disclosure>
           )}
@@ -1242,26 +1333,21 @@ function AddCredentialModal({
               any provider that doesn't support DCR). */}
           {customForm.type === "oauth" && !customForm.token && (
             <Disclosure
-              title="OAuth client credentials"
-              meta={
-                <span className="px-1.5 py-0.5 rounded bg-bg-surface">
-                  Optional
-                </span>
-              }
+              title="Учётные данные OAuth-клиента"
+              meta="Необязательно"
               open={clientCredsSectionOpen}
               onOpenChange={setClientCredsSectionOpen}
             >
-              <div className="space-y-2">
-                <Input
+              <div className="space-y-4">
+                <TextInput
                   value={customForm.clientId}
                   onChange={(e) =>
                     setCustomForm({ ...customForm, clientId: e.target.value })
                   }
-                  placeholder="Client ID"
-                  aria-label="OAuth client ID"
-                  className={inputCls}
+                  placeholder="ID клиента"
+                  aria-label="ID OAuth-клиента"
                 />
-                <Input
+                <SecretInput
                   value={customForm.clientSecret}
                   onChange={(e) =>
                     setCustomForm({
@@ -1269,29 +1355,21 @@ function AddCredentialModal({
                       clientSecret: e.target.value,
                     })
                   }
-                  type="password"
-                  placeholder="Client secret"
-                  aria-label="OAuth client secret"
-                  className={inputCls}
+                  placeholder="Секрет клиента"
+                  aria-label="Секрет OAuth-клиента"
                 />
-                <div className="text-xs text-fg-subtle">
-                  For OAuth providers that don't support Dynamic Client
-                  Registration (GitHub, Feishu) — supply a client_id/secret from
-                  a pre-registered app.
-                </div>
+                <p className="text-xs leading-4 text-muted">
+                  Для OAuth-провайдеров без динамической регистрации клиентов
+                  (GitHub, Feishu): укажите client_id и секрет из заранее
+                  созданного приложения.
+                </p>
               </div>
             </Disclosure>
           )}
         </TabsContent>
 
-        <TabsContent value="cli" className="space-y-3">
-          <div>
-            <Label
-              htmlFor="vault-cli-id"
-              className="text-sm text-fg-muted block mb-1"
-            >
-              CLI
-            </Label>
+        <TabsContent value="cli" className="space-y-4">
+          <Field label="CLI" hint={selectedCli?.helper}>
             <Select
               id="vault-cli-id"
               value={cliForm.cli_id}
@@ -1299,32 +1377,28 @@ function AddCredentialModal({
                 setCliForm({ ...cliForm, cli_id: value });
                 setDeviceFlow(null);
               }}
-              className={inputCls}
               disabled={deviceFlow?.status === "polling"}
             >
               {CAP_CLIS.map((c) => (
                 <SelectOption key={c.cli_id} value={c.cli_id}>
                   {c.label}
-                  {c.oauth ? " (OAuth supported)" : ""}
+                  {c.oauth ? " (есть вход через OAuth)" : ""}
                 </SelectOption>
               ))}
             </Select>
-            <div className="text-xs text-fg-subtle mt-1">
-              {CAP_CLIS.find((c) => c.cli_id === cliForm.cli_id)?.helper}
-            </div>
-          </div>
+          </Field>
 
-          {CAP_CLIS.find((c) => c.cli_id === cliForm.cli_id)?.oauth && (
-            <div className="border border-border rounded-md p-3 bg-bg-surface">
+          {selectedCli?.oauth && (
+            <div className="rounded-xl bg-ddc-surface-muted p-3">
               {!deviceFlow && (
-                <Button variant="outline" size="sm" onClick={startDeviceFlow}>
-                  Sign in via {cliForm.cli_id} OAuth
+                <Button variant="outline" onClick={startDeviceFlow}>
+                  Войти через {cliForm.cli_id} OAuth
                 </Button>
               )}
               {deviceFlow?.status === "polling" && (
-                <div className="space-y-2 text-sm">
-                  <div className="text-fg-muted">
-                    Open{" "}
+                <div className="space-y-3 text-sm">
+                  <p className="text-ddc-label">
+                    Откройте{" "}
                     <a
                       href={
                         deviceFlow.verification_uri_complete ??
@@ -1332,84 +1406,67 @@ function AddCredentialModal({
                       }
                       target="_blank"
                       rel="noreferrer"
-                      className="text-brand underline"
+                      className="link break-all"
                     >
                       {deviceFlow.verification_uri_complete ??
                         deviceFlow.verification_uri}
                     </a>{" "}
-                    and enter:
-                  </div>
-                  <div className="font-mono text-xl text-center tracking-widest text-fg py-2 select-all">
+                    и введите код:
+                  </p>
+                  <div className="py-2 text-center font-mono text-xl tracking-widest text-ddc-heading select-all">
                     {deviceFlow.user_code}
                   </div>
-                  <div className="text-xs text-fg-subtle text-center">
-                    Waiting for confirmation… (polls every{" "}
-                    {deviceFlow.interval_seconds}s)
-                  </div>
+                  <p className="flex items-center justify-center gap-2 text-xs text-muted">
+                    <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+                    Ждём подтверждения. Проверка каждые {deviceFlow.interval_seconds} с.
+                  </p>
                 </div>
               )}
               {deviceFlow?.status === "ready" && (
-                <div className="text-sm text-success">
-                  ✓ Token acquired and stored.
+                <div className="flex items-center gap-2 text-sm text-ddc-success-text">
+                  <CheckCircleIcon className="size-4 flex-none" aria-hidden="true" />
+                  Токен получен и сохранён.
                 </div>
               )}
               {(deviceFlow?.status === "expired" ||
                 deviceFlow?.status === "denied" ||
                 deviceFlow?.status === "error") && (
-                <div className="text-sm text-danger">
+                <div role="alert" className="text-sm text-ddc-danger-text">
                   {deviceFlow.status === "denied"
-                    ? "Access denied by user."
+                    ? "Пользователь отклонил доступ."
                     : deviceFlow.status === "expired"
-                      ? "Code expired — try again."
-                      : `OAuth error: ${deviceFlow.error ?? "unknown"}`}
+                      ? "Код истёк. Попробуйте ещё раз."
+                      : `Ошибка OAuth: ${deviceFlow.error ?? "неизвестная"}`}
                 </div>
               )}
             </div>
           )}
 
-          <div>
-            <Label
-              htmlFor="vault-cli-display-name"
-              className="text-sm text-fg-muted block mb-1"
-            >
-              Display Name{" "}
-              <span className="text-fg-subtle">(optional)</span>
-            </Label>
-            <TextInput
-              id="vault-cli-display-name"
-              value={cliForm.display_name}
-              onChange={(e) =>
-                setCliForm({ ...cliForm, display_name: e.target.value })
-              }
-              className={inputCls}
-              placeholder={
-                CAP_CLIS.find((c) => c.cli_id === cliForm.cli_id)?.label ??
-                cliForm.cli_id
-              }
-              disabled={deviceFlow?.status === "polling"}
-            />
-          </div>
-          <div>
-            <Label
-              htmlFor="vault-cli-token"
-              className="text-sm text-fg-muted block mb-1"
-            >
-              Token{" "}
-              <span className="text-fg-subtle">
-                (write-only — leave blank to use OAuth above)
-              </span>
-            </Label>
-            <SecretInput
-              id="vault-cli-token"
-              value={cliForm.token}
-              onChange={(e) =>
-                setCliForm({ ...cliForm, token: e.target.value })
-              }
-              className={inputCls}
-              placeholder="••••••••"
-              disabled={deviceFlow?.status === "polling"}
-            />
-          </div>
+          <TextInput
+            id="vault-cli-display-name"
+            label="Отображаемое имя (необязательно)"
+            value={cliForm.display_name}
+            onChange={(e) =>
+              setCliForm({ ...cliForm, display_name: e.target.value })
+            }
+            placeholder={selectedCli?.label ?? cliForm.cli_id}
+            disabled={deviceFlow?.status === "polling"}
+          />
+          <SecretInput
+            id="vault-cli-token"
+            label="Токен"
+            hint={
+              selectedCli?.oauth
+                ? "Только запись. Оставьте пустым, чтобы войти через OAuth выше."
+                : "Только запись."
+            }
+            value={cliForm.token}
+            onChange={(e) =>
+              setCliForm({ ...cliForm, token: e.target.value })
+            }
+            placeholder="••••••••"
+            disabled={deviceFlow?.status === "polling"}
+          />
         </TabsContent>
       </Tabs>
     </Modal>

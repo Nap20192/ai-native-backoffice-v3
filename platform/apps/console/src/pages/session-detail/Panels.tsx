@@ -1,21 +1,64 @@
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { ArrowRightIcon, XIcon } from "lucide-react";
 
 import { useApi } from "../../lib/api";
+import { Skeleton } from "../../components/Skeleton";
+import { EmptyState } from "../../components/EmptyState";
+import { formatBytesRu, formatDateTimeRu } from "../../components/session/format-ru";
 
 /**
- * Right-rail panels mounted from `SessionDetail`. Kept here so the main
- * session orchestrator stays focused on event stream + chat scaffolding —
- * the panels are stand-alone fetch-and-display widgets that only need a
- * session/resource id and a close handler.
+ * Правые панели, которые открывает `SessionDetail`. Вынесены сюда, чтобы
+ * основная страница занималась потоком событий и чатом: панели сами грузят
+ * данные и показывают их, им нужны только id и обработчик закрытия.
  *
- * Two flavors:
- *   - `ResourcePanel` — fetch + JSON-dump an agent / environment / vault.
- *     Used when the user clicks a badge in the session header.
- *   - `FilesPanel` — list files the agent wrote under
- *     `/mnt/session/outputs/`, with download links.
+ * Два вида:
+ *   - `ResourcePanel` загружает агента, окружение или хранилище и показывает
+ *     его JSON. Открывается по клику на чип в шапке сессии.
+ *   - `FilesPanel` перечисляет файлы, которые агент записал в
+ *     `/mnt/session/outputs/`, со ссылками на скачивание.
+ *
+ * На экране шире xl панель стоит справа шириной 420px. Уже xl она ложится
+ * поверх рабочей области сессии (родитель relative), иначе чат сжимался бы
+ * до нуля.
  */
+
+const PANEL_CLASS =
+  "absolute inset-0 z-10 flex min-h-0 w-full flex-col border-l border-ddc-divider bg-ddc-surface animate-fade-in xl:static xl:z-auto xl:w-[420px] xl:shrink-0 xl:animate-none";
+
+const KIND_LABEL: Record<"agent" | "environment" | "vault", string> = {
+  agent: "Агент",
+  environment: "Окружение",
+  vault: "Хранилище секретов",
+};
+
+const KIND_LINK_LABEL: Record<"agent" | "environment" | "vault", string> = {
+  agent: "Открыть агента",
+  environment: "Открыть окружение",
+  vault: "Открыть хранилище",
+};
+
+function PanelSkeleton() {
+  return (
+    <div className="space-y-2" aria-busy="true" role="status">
+      <span className="sr-only">Загрузка…</span>
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-5/6" />
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-4 w-3/4" />
+    </div>
+  );
+}
+
+function PanelError({ message }: { message: string }) {
+  return (
+    <div className="callout-danger flex-col items-stretch gap-0.5" role="alert">
+      <div className="font-medium">Не удалось загрузить</div>
+      <div className="break-words">{message}</div>
+    </div>
+  );
+}
 
 export function ResourcePanel({
   panel,
@@ -56,7 +99,6 @@ export function ResourcePanel({
       : panel.kind === "environment"
       ? `/environments/${panel.id}`
       : `/vaults/${panel.id}`;
-  const titleKind = panel.kind[0].toUpperCase() + panel.kind.slice(1);
 
   // For agent / env, prefer name + description in the visible header.
   const displayName =
@@ -66,42 +108,44 @@ export function ResourcePanel({
   const description = (data?.description as string | undefined) ?? null;
 
   return (
-    <aside className="w-[420px] shrink-0 bg-bg-surface/30 flex flex-col min-h-0">
-      <div className="px-4 py-3 flex items-start gap-3 shrink-0">
+    <aside className={PANEL_CLASS} aria-label={KIND_LABEL[panel.kind]}>
+      <div className="flex shrink-0 items-start gap-3 border-b border-ddc-divider px-5 py-4">
         <div className="min-w-0 flex-1">
-          <div className="text-xs uppercase tracking-wide text-fg-subtle font-mono">
-            {titleKind}
+          <div className="eyebrow">{KIND_LABEL[panel.kind]}</div>
+          <div className="mt-1 truncate text-base font-semibold text-ddc-heading" title={displayName}>
+            {displayName}
           </div>
-          <div className="text-base font-semibold text-fg truncate">{displayName}</div>
           {description && (
-            <div className="text-xs text-fg-muted mt-0.5 line-clamp-2">{description}</div>
+            <div className="mt-0.5 line-clamp-2 text-xs text-ddc-text-muted">{description}</div>
           )}
-          <div className="text-xs font-mono text-fg-subtle mt-1 truncate">{panel.id}</div>
+          <div className="mt-1 truncate font-mono text-xs text-ddc-text-muted" title={panel.id}>
+            {panel.id}
+          </div>
         </div>
-        <Button variant="ghost"
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={onClose}
-          className="text-fg-subtle hover:text-fg-muted text-lg leading-none inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-8 sm:min-h-8 rounded hover:bg-bg-surface transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
-          title="Close"
-          aria-label="Close panel"
+          title="Закрыть"
+          aria-label="Закрыть панель"
+          className="-my-0.5 -mr-1"
         >
-          ×
+          <XIcon />
         </Button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
-        {err && <div className="text-danger">Failed to load: {err}</div>}
-        {!data && !err && <div className="text-fg-subtle">Loading…</div>}
+      <div className="min-h-0 flex-1 overflow-y-auto p-5 text-xs">
+        {err && <PanelError message={err} />}
+        {!data && !err && <PanelSkeleton />}
         {data && (
-          <pre className="font-mono text-fg-muted bg-bg-surface/60 rounded px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all text-xs">
+          <pre className="overflow-x-auto rounded-xl bg-ddc-surface-muted p-3 font-mono text-xs break-all whitespace-pre-wrap text-ddc-label">
             {JSON.stringify(data, null, 2)}
           </pre>
         )}
       </div>
-      <div className="px-4 py-3 shrink-0">
-        <Link
-          to={linkPath}
-          className="inline-flex items-center gap-1.5 text-sm text-info hover:text-info/80 font-medium"
-        >
-          Go to {panel.kind} →
+      <div className="shrink-0 border-t border-ddc-divider bg-ddc-footer px-5 py-3">
+        <Link to={linkPath} className="link inline-flex items-center gap-1.5 text-sm">
+          {KIND_LINK_LABEL[panel.kind]}
+          <ArrowRightIcon className="size-4" aria-hidden="true" />
         </Link>
       </div>
     </aside>
@@ -113,13 +157,6 @@ interface SessionOutputFile {
   size_bytes: number;
   uploaded_at: string;
   media_type: string;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 export function FilesPanel({
@@ -146,52 +183,66 @@ export function FilesPanel({
   }, [sessionId]);
 
   return (
-    <aside className="w-[420px] shrink-0 bg-bg-surface/30 flex flex-col min-h-0">
-      <div className="px-4 py-3 flex items-start gap-3 shrink-0">
+    <aside className={PANEL_CLASS} aria-label="Файлы сессии">
+      <div className="flex shrink-0 items-start gap-3 border-b border-ddc-divider px-5 py-4">
         <div className="min-w-0 flex-1">
-          <div className="text-xs uppercase tracking-wide text-fg-subtle font-mono">
-            Files
-          </div>
-          <div className="text-base font-semibold text-fg">Session outputs</div>
-          <div className="text-xs text-fg-muted mt-0.5">
-            Files the agent wrote to <code className="font-mono">/mnt/session/outputs/</code>
+          <div className="eyebrow">Файлы</div>
+          <div className="mt-1 text-base font-semibold text-ddc-heading">Результаты сессии</div>
+          <div className="mt-0.5 text-xs text-ddc-text-muted">
+            Файлы, которые агент сохранил в <code className="font-mono">/mnt/session/outputs/</code>
           </div>
         </div>
-        <Button variant="ghost"
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={onClose}
-          className="text-fg-subtle hover:text-fg-muted text-lg leading-none inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-8 sm:min-h-8 rounded hover:bg-bg-surface transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
-          title="Close"
-          aria-label="Close panel"
+          title="Закрыть"
+          aria-label="Закрыть панель"
+          className="-my-0.5 -mr-1"
         >
-          ×
+          <XIcon />
         </Button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 text-xs">
-        {err && <div className="text-danger">Failed to load: {err}</div>}
-        {!files && !err && <div className="text-fg-subtle">Loading…</div>}
-        {files && files.length === 0 && (
-          <div className="text-fg-subtle">
-            No files yet. The agent must write under <code className="font-mono">/mnt/session/outputs/</code> for files to appear here.
+      <div className="min-h-0 flex-1 overflow-y-auto text-xs">
+        {err && (
+          <div className="p-5">
+            <PanelError message={err} />
           </div>
         )}
+        {!files && !err && (
+          <div className="p-5">
+            <PanelSkeleton />
+          </div>
+        )}
+        {files && files.length === 0 && (
+          <EmptyState
+            size="sm"
+            kind="file"
+            title="Файлов пока нет"
+            body={
+              <>
+                Чтобы файлы появились здесь, агент должен сохранять их в{" "}
+                <code className="font-mono">/mnt/session/outputs/</code>.
+              </>
+            }
+            className="m-5 border-0 shadow-none"
+          />
+        )}
         {files && files.length > 0 && (
-          <ul className="space-y-1.5">
+          <ul className="divide-y divide-ddc-divider">
             {files.map((f) => (
-              <li
-                key={f.filename}
-                className="flex items-center gap-3 py-2"
-              >
+              <li key={f.filename} className="flex items-center gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
                   <a
                     href={`/v1/sessions/${sessionId}/outputs/${encodeURIComponent(f.filename)}`}
                     download={f.filename}
-                    className="font-mono text-fg hover:text-info truncate block"
+                    className="link block truncate font-mono text-sm"
                     title={f.filename}
                   >
                     {f.filename}
                   </a>
-                  <div className="text-xs text-fg-subtle mt-0.5">
-                    {formatBytes(f.size_bytes)} · {f.media_type} · {new Date(f.uploaded_at).toLocaleString()}
+                  <div className="mt-0.5 text-2xs text-ddc-text-muted tabular-nums">
+                    {formatBytesRu(f.size_bytes)} · {f.media_type} · {formatDateTimeRu(f.uploaded_at)}
                   </div>
                 </div>
               </li>

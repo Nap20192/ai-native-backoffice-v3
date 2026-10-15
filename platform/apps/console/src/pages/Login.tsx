@@ -3,9 +3,11 @@ import { useNavigate } from "react-router";
 import { authClient } from "../lib/auth-client";
 import { useAuth } from "../lib/auth";
 import { toast } from "sonner";
+import { AlertCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { ModernLoginShell } from "@/components/ui/modern-login-signup";
 import { Field } from "../components/Field";
 import { GitHubIcon } from "../components/icons";
@@ -36,6 +38,7 @@ type Mode =
   | "forgot"
   | "reset-otp";
 
+/** Знак Google: четыре цвета заданы брендом Google и токенами не заменяются. */
 function GoogleIcon() {
   return (
     <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24">
@@ -163,13 +166,13 @@ export function Login() {
   // the token via a queue. The widget's onToken callback drains all
   // pending resolvers, then submit proceeds with the real request.
   const tokenRef = useRef("");
-  const pendingTokenResolvers = useRef<Array<(t: string) => void>>([]);
-  const handleTurnstileToken = (t: string) => {
-    tokenRef.current = t;
-    setTurnstileToken(t);
+  const pendingTokenResolvers = useRef<Array<(token: string) => void>>([]);
+  const handleTurnstileToken = (token: string) => {
+    tokenRef.current = token;
+    setTurnstileToken(token);
     const queued = pendingTokenResolvers.current;
     pendingTokenResolvers.current = [];
-    for (const resolve of queued) resolve(t);
+    for (const resolve of queued) resolve(token);
   };
   const waitForTurnstileToken = (): Promise<string> => {
     if (!turnstileSiteKey) return Promise.resolve(""); // soft-pass when unconfigured
@@ -178,11 +181,11 @@ export function Login() {
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         pendingTokenResolvers.current = pendingTokenResolvers.current.filter((r) => r !== wrapped);
-        reject(new Error("Bot challenge timed out — refresh the page and try again"));
+        reject(new Error(t.login.botChallengeTimeout));
       }, 30_000);
-      const wrapped = (t: string) => {
+      const wrapped = (token: string) => {
         clearTimeout(timer);
-        resolve(t);
+        resolve(token);
       };
       pendingTokenResolvers.current.push(wrapped);
     });
@@ -308,10 +311,10 @@ export function Login() {
           body: JSON.stringify({ email, otp, password }),
         });
         const data = await res.json() as any;
-        if (!res.ok) throw new Error(data?.message || "Failed to reset password");
+        if (!res.ok) throw new Error(data?.message || "Не удалось сбросить пароль");
         setError("");
         setMode("login");
-        toast.success("Password reset successfully. Please sign in.");
+        toast.success(t.login.passwordResetSuccess);
       }
     } catch (err: any) {
       // Surface real cause when present. Anthropic-style envelope nests as
@@ -322,7 +325,7 @@ export function Login() {
         err?.message ||
         err?.error?.message ||
         err?.body?.error?.message ||
-        "Authentication failed";
+        t.login.authFailed;
       setError(msg);
     } finally {
       // Always reset the Turnstile token after a submit attempt — tokens
@@ -350,7 +353,7 @@ export function Login() {
       if (error) throw new Error(error.message);
       clearOtp();
     } catch (err: any) {
-      setError(err.message || "Failed to resend code");
+      setError(err.message || "Не удалось отправить код ещё раз");
     } finally {
       resetTurnstile();
       setLoading(false);
@@ -370,13 +373,13 @@ export function Login() {
       providerId,
       callbackURL: nextUrl,
     });
-    if (error) setError(error.message ?? "Sign-in failed");
+    if (error) setError(error.message ?? t.login.authFailed);
   };
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg">
-        <div className="text-fg-subtle text-sm">Loading...</div>
+      <div className="flex min-h-screen items-center justify-center bg-ddc-surface text-sm text-muted">
+        <Spinner />
       </div>
     );
   }
@@ -384,90 +387,90 @@ export function Login() {
   const isOtpMode = mode === "verify-signup" || mode === "verify-login" || mode === "reset-otp";
 
   const titles: Record<Mode, string> = {
-    chooser: branding.loginTitle ?? `Log in to ${branding.productName}`,
-    login: "Log in with email",
-    signup: "Create your account",
-    "otp-login": "Sign in with email code",
-    "verify-signup": "Verify your email",
-    "verify-login": "Enter your code",
-    forgot: "Reset password",
-    "reset-otp": "Reset your password",
+    chooser: branding.loginTitle ?? `Вход в ${branding.productName}`,
+    login: "Вход по почте",
+    signup: "Создание учётной записи",
+    "otp-login": "Вход по коду из письма",
+    "verify-signup": "Подтверждение почты",
+    "verify-login": "Введите код",
+    forgot: "Сброс пароля",
+    "reset-otp": "Новый пароль",
   };
 
   const subtitles: Record<Mode, string> = {
     chooser: branding.loginSubtitle ?? "",
-    login: "Use your email and password",
-    signup: `Get started with ${branding.productName}`,
-    "otp-login": "We'll send a 6-digit code to your email",
-    "verify-signup": `We sent a code to ${email}`,
-    "verify-login": `We sent a code to ${email}`,
-    forgot: "We'll send a code to reset your password",
-    "reset-otp": `Enter the code sent to ${email}`,
+    login: "Введите почту и пароль",
+    signup: `Начните работу с ${branding.productName}`,
+    "otp-login": "Отправим 6-значный код на вашу почту",
+    "verify-signup": `Мы отправили код на ${email}`,
+    "verify-login": `Мы отправили код на ${email}`,
+    forgot: "Отправим код для сброса пароля",
+    "reset-otp": `Введите код из письма, отправленного на ${email}`,
   };
 
+  // Ссылка в строке текста: подпись без отступов, зона нажатия расширена
+  // невидимым слоем до 44px по высоте (правило 13: цель не меньше 32px).
   const compactLinkClass =
-    "relative h-auto min-h-0 px-0 py-0 text-brand after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']";
+    "relative h-auto px-0 py-0 after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']";
+  // Подпись поля DDC (`.label`): 12px, medium, ink-600.
+  const labelClass = "text-xs leading-4 font-medium text-ddc-label";
+  const errorBox = (id?: string) =>
+    error && (
+      <div id={id} role="alert" aria-live="polite" className="callout-danger">
+        <AlertCircleIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
+        <span className="min-w-0 break-words">{error}</span>
+      </div>
+    );
 
   return (
     <ModernLoginShell>
       <div className="flex flex-col gap-8">
-        <header className="flex flex-col items-center text-center">
-          <Logo size="lg" />
-          <div className="mt-5 space-y-1.5">
-            <h1 className="text-lg font-medium tracking-[-0.015em] text-fg">
-              {titles[mode]}
-            </h1>
-            {subtitles[mode] && (
-              <p className="text-sm text-fg-muted">{subtitles[mode]}</p>
-            )}
+        <header>
+          <div className="mb-8 flex lg:hidden">
+            <Logo size="lg" />
           </div>
+          <h1 className="text-2xl font-bold tracking-tight text-ddc-heading">
+            {titles[mode]}
+          </h1>
+          {subtitles[mode] && (
+            <p className="mt-1 text-sm text-muted">{subtitles[mode]}</p>
+          )}
         </header>
 
         {mode === "chooser" && (
-          <div role="group" aria-label="Sign in options" className="flex flex-col gap-3">
-            {error && (
-              <div
-                role="alert"
-                aria-live="polite"
-                className="rounded-lg border border-danger/20 bg-danger-subtle px-3 py-2.5 text-sm leading-5 text-danger"
-              >
-                {error}
-              </div>
-            )}
+          <div role="group" aria-label="Способы входа" className="flex flex-col gap-3">
+            {errorBox()}
             {oidcProviders.map((p, i) => (
               <Button
                 key={p.id}
                 type="button"
-                size="lg"
                 variant={i === 0 ? "default" : "outline"}
                 onClick={() => handleOidcSignIn(p.id)}
-                className="h-11 w-full rounded-full"
+                className="w-full"
               >
-                Continue with {p.name}
+                Продолжить через {p.name}
               </Button>
             ))}
             {googleEnabled && (
               <Button
                 type="button"
-                size="lg"
                 variant={oidcProviders.length > 0 ? "outline" : "default"}
                 onClick={() => handleSocialSignIn("google")}
-                className="h-11 w-full rounded-full"
+                className="w-full"
               >
                 <GoogleIcon />
-                Continue with Google
+                Продолжить через Google
               </Button>
             )}
             {githubEnabled && (
               <Button
                 type="button"
                 variant="outline"
-                size="lg"
                 onClick={() => handleSocialSignIn("github")}
-                className="h-11 w-full rounded-full"
+                className="w-full"
               >
                 <GitHubIcon className="size-4" />
-                Continue with GitHub
+                Продолжить через GitHub
               </Button>
             )}
             {emailEnabled && (
@@ -478,14 +481,13 @@ export function Login() {
                     ? "outline"
                     : "default"
                 }
-                size="lg"
                 onClick={() => {
                   setMode("login");
                   setError("");
                 }}
-                className="h-11 w-full rounded-full"
+                className="w-full"
               >
-                Continue with email
+                Продолжить с почтой
               </Button>
             )}
           </div>
@@ -493,40 +495,29 @@ export function Login() {
 
         {mode !== "chooser" && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {error && (
-            <div
-              id="auth-error"
-              role="alert"
-              aria-live="polite"
-              className="rounded-lg border border-danger/20 bg-danger-subtle px-3 py-2.5 text-sm leading-5 text-danger"
-            >
-              {error}
-            </div>
-          )}
+          {errorBox("auth-error")}
 
           {mode === "signup" && (
-            <Field label="Name">
+            <Field label="Имя">
               <Input
                 id="auth-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="h-10"
-                placeholder="Your name"
+                placeholder="Ваше имя"
                 autoComplete="name"
               />
             </Field>
           )}
 
           {!isOtpMode && (
-            <Field label="Email">
+            <Field label="Почта">
               <Input
                 id="auth-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-10"
-                placeholder="you@example.com"
+                placeholder="name@company.com"
                 required
                 autoFocus
                 name="email"
@@ -536,10 +527,10 @@ export function Login() {
           )}
 
           {(mode === "login" || mode === "signup") && (
-            <div data-login-field="password" className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="auth-password" className="text-sm text-fg">
-                  Password
+            <div data-login-field="password">
+              <div className="mb-1.5 flex items-center justify-between">
+                <Label htmlFor="auth-password" className={labelClass}>
+                  Пароль
                 </Label>
                 {mode === "login" && (
                   <Button
@@ -552,7 +543,7 @@ export function Login() {
                     }}
                     className={compactLinkClass}
                   >
-                    Forgot password?
+                    Забыли пароль?
                   </Button>
                 )}
               </div>
@@ -561,7 +552,6 @@ export function Login() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-10"
                 placeholder={t.login.minChars}
                 required
                 minLength={8}
@@ -572,7 +562,7 @@ export function Login() {
           )}
 
           {isOtpMode && (
-            <Field label="Verification code">
+            <Field label="Код подтверждения">
               <Input
                 id="auth-otp"
                 ref={otpRef}
@@ -584,7 +574,7 @@ export function Login() {
                 onChange={(e) =>
                   setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
                 }
-                className="h-10 text-center font-mono text-lg tracking-[0.5em]"
+                className="text-center font-mono text-lg tracking-[0.5em] tabular-nums"
                 placeholder="000000"
                 required
                 autoComplete="one-time-code"
@@ -593,14 +583,13 @@ export function Login() {
           )}
 
           {mode === "reset-otp" && (
-            <Field label="New password">
+            <Field label="Новый пароль">
               <Input
                 id="auth-new-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-10"
-                placeholder="Min 8 characters"
+                placeholder={t.login.minChars}
                 required
                 minLength={8}
                 name="new-password"
@@ -622,46 +611,44 @@ export function Login() {
 
           <div
             role="group"
-            aria-label={mode === "login" ? "Sign in actions" : "Form actions"}
+            aria-label={mode === "login" ? "Действия входа" : "Действия формы"}
             className="flex flex-col gap-2 pt-1"
           >
             <Button
               type="submit"
               size="lg"
               loading={loading}
-              loadingLabel="Loading..."
               disabled={
                 (!isOtpMode && !email) ||
                 (isOtpMode && otp.length < 6) ||
                 ((mode === "login" || mode === "signup") && !password) ||
                 (mode === "reset-otp" && !password)
               }
-              className="h-10 w-full"
+              className="w-full"
             >
               {mode === "login"
-                ? "Sign in"
+                ? "Войти"
                 : mode === "signup"
-                  ? "Create account"
+                  ? "Создать учётную запись"
                   : mode === "otp-login"
-                    ? "Send code"
+                    ? "Отправить код"
                     : mode === "forgot"
-                      ? "Send reset code"
+                      ? "Отправить код сброса"
                       : mode === "reset-otp"
-                        ? "Reset password"
-                        : "Verify"}
+                        ? "Сбросить пароль"
+                        : "Подтвердить"}
             </Button>
             {mode === "login" && (
               <Button
                 type="button"
                 variant="outline"
-                size="lg"
                 onClick={() => {
                   setMode("otp-login");
                   setError("");
                 }}
-                className="h-10 w-full"
+                className="w-full"
               >
-                Sign in with email code
+                Войти по коду из письма
               </Button>
             )}
           </div>
@@ -669,8 +656,8 @@ export function Login() {
         )}
 
         {mode !== "chooser" && isOtpMode && (
-          <div className="text-center text-sm text-fg-muted">
-            Didn't receive the code?{" "}
+          <div className="text-center text-sm text-muted">
+            Не получили код?{" "}
             <Button
               type="button"
               variant="link"
@@ -679,7 +666,7 @@ export function Login() {
               disabled={loading}
               className={compactLinkClass}
             >
-              Resend
+              Отправить ещё раз
             </Button>
           </div>
         )}
@@ -693,20 +680,20 @@ export function Login() {
               setMode("chooser");
               setError("");
             }}
-            className={`${compactLinkClass} self-center text-fg-muted`}
+            className={`${compactLinkClass} self-center text-ddc-label`}
           >
-            Back to sign in options
+            К способам входа
           </Button>
         )}
 
         <div
           role="group"
-          aria-label="Account options"
-          className="flex min-h-6 items-center justify-center gap-1 text-center text-sm text-fg-muted"
+          aria-label="Параметры учётной записи"
+          className="flex min-h-6 flex-wrap items-center justify-center gap-1 text-center text-sm text-muted"
         >
           {mode === "chooser" && emailEnabled && (
             <>
-              <span>Don't have an account?</span>
+              <span>Нет учётной записи?</span>
               <Button
                 type="button"
                 variant="link"
@@ -717,13 +704,13 @@ export function Login() {
                 }}
                 className={compactLinkClass}
               >
-                Sign up
+                Зарегистрироваться
               </Button>
             </>
           )}
           {mode === "login" && (
             <>
-              <span>New to {branding.productName}?</span>
+              <span>Впервые в {branding.productName}?</span>
               <Button
                 type="button"
                 variant="link"
@@ -734,13 +721,13 @@ export function Login() {
                 }}
                 className={compactLinkClass}
               >
-                Sign up
+                Зарегистрироваться
               </Button>
             </>
           )}
           {mode === "signup" && (
             <>
-              <span>Already have an account?</span>
+              <span>Уже есть учётная запись?</span>
               <Button
                 type="button"
                 variant="link"
@@ -751,13 +738,13 @@ export function Login() {
                 }}
                 className={compactLinkClass}
               >
-                Sign in
+                Войти
               </Button>
             </>
           )}
           {mode === "otp-login" && (
             <>
-              <span>Prefer a password?</span>
+              <span>Удобнее с паролем?</span>
               <Button
                 type="button"
                 variant="link"
@@ -768,7 +755,7 @@ export function Login() {
                 }}
                 className={compactLinkClass}
               >
-                Sign in
+                Войти
               </Button>
             </>
           )}
@@ -784,12 +771,12 @@ export function Login() {
               }}
               className={compactLinkClass}
             >
-              Go back
+              Назад
             </Button>
           )}
           {mode === "forgot" && (
             <>
-              <span>Remember your password?</span>
+              <span>Вспомнили пароль?</span>
               <Button
                 type="button"
                 variant="link"
@@ -800,7 +787,7 @@ export function Login() {
                 }}
                 className={compactLinkClass}
               >
-                Sign in
+                Войти
               </Button>
             </>
           )}
@@ -816,7 +803,7 @@ export function Login() {
               }}
               className={compactLinkClass}
             >
-              Go back
+              Назад
             </Button>
           )}
         </div>

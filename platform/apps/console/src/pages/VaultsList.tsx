@@ -1,12 +1,14 @@
+import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, TrashIcon } from "lucide-react";
+import { ArchiveIcon, TrashIcon, PlusIcon } from "lucide-react";
 import type { BetaManagedAgentsVault as Vault } from "@anthropic-ai/sdk/resources/beta/vaults/vaults";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
 import { DataTable, type ColumnDef } from "../components/DataTable";
@@ -17,10 +19,12 @@ import { useI18n } from "../i18n";
 type StatusValue = "any" | "active" | "archived";
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
-  { value: "any", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
+  { value: "any", label: "Все" },
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
 ];
+
+type PendingAction = { kind: "archive" | "delete"; vault: Vault };
 
 export function VaultsList() {
   const managedApi = useManagedApi();
@@ -28,11 +32,20 @@ export function VaultsList() {
   const { t } = useI18n();
   const [showCreateVault, setShowCreateVault] = useState(false);
   const [vaultName, setVaultName] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  // Подтверждение архивации и удаления (правило 11 DDC). Выбранное действие
+  // не сбрасываем при закрытии, чтобы текст окна не пропадал на время
+  // анимации ухода, а видимостью управляет отдельный флаг.
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   // Server-driven filter state. Any change to these flows into vaultParams
   // → useInfiniteApiQuery resets to page 1 on params change → the list
   // reflects exactly what the server returned (no client-side faking).
   const [status, setStatus] = useState<StatusValue>("active");
+  const [search, setSearch] = useState("");
   const [created, setCreated] = useState<{ after?: number; before?: number }>({});
 
   const vaultParams = useMemo(
@@ -50,25 +63,52 @@ export function VaultsList() {
     loadMore,
     refresh: load,
   } = useInfiniteApiQuery<Vault>("/v1/vaults", { limit: 20, params: vaultParams });
-  const visibleVaults = useMemo(
-    () =>
-      vaults.filter((vault) => {
-        if (status === "active" && vault.archived_at) return false;
-        if (status === "archived" && !vault.archived_at) return false;
-        const createdAt = Date.parse(vault.created_at);
-        if (created.after !== undefined && createdAt < created.after) return false;
-        if (created.before !== undefined && createdAt > created.before) return false;
-        return true;
-      }),
-    [created.after, created.before, status, vaults],
-  );
+  const visibleVaults = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    return vaults.filter((vault) => {
+      if (status === "active" && vault.archived_at) return false;
+      if (status === "archived" && !vault.archived_at) return false;
+      const createdAt = Date.parse(vault.created_at);
+      if (created.after !== undefined && createdAt < created.after) return false;
+      if (created.before !== undefined && createdAt > created.before) return false;
+      return !needle || `${vault.display_name}\n${vault.id}`.toLocaleLowerCase().includes(needle);
+    });
+  }, [created.after, created.before, search, status, vaults]);
 
   const createVault = async () => {
-    await managedApi.vaults.create({ display_name: vaultName });
-    setShowCreateVault(false); setVaultName(""); load();
+    setCreating(true);
+    try {
+      await managedApi.vaults.create({ display_name: vaultName });
+      setShowCreateVault(false);
+      setVaultName("");
+      load();
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const inputCls = "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
+  const askConfirm = (action: PendingAction) => {
+    setPending(action);
+    setConfirmOpen(true);
+  };
+
+  const runConfirmed = async () => {
+    if (!pending) return;
+    setConfirmBusy(true);
+    try {
+      if (pending.kind === "archive") {
+        await managedApi.vaults.archive(pending.vault.id);
+      } else {
+        await managedApi.vaults.delete(pending.vault.id);
+      }
+      load();
+    } catch {
+      // useApi уже показал ошибку тостом.
+    } finally {
+      setConfirmBusy(false);
+      setConfirmOpen(false);
+    }
+  };
 
   // TanStack column defs. Order, filtering, and search all flow through
   // server params now — no per-column sort/filter UI. Required columns
@@ -79,60 +119,62 @@ export function VaultsList() {
       {
         id: "name",
         accessorKey: "display_name",
-        header: "Name",
-        cell: ({ row }) => <span className="font-medium text-fg">{row.original.display_name}</span>,
-        enableHiding: false,
-      },
-      {
-        id: "id",
-        accessorKey: "id",
-        header: "ID",
+        header: t.common.name,
+        size: 240,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <span title={row.original.id} className="font-mono text-xs text-fg-muted">
-            {row.original.id}
+          <span
+            className="min-w-0 truncate font-medium text-ddc-heading"
+            title={row.original.display_name}
+          >
+            {row.original.display_name}
           </span>
         ),
         enableHiding: false,
       },
       {
+        id: "id",
+        accessorKey: "id",
+        header: t.common.id,
+        cell: ({ row }) => (
+          <span title={row.original.id} className="font-mono text-xs text-muted">
+            {row.original.id}
+          </span>
+        ),
+      },
+      {
         id: "status",
         accessorFn: (v) => (v.archived_at ? "archived" : "active"),
-        header: "Status",
+        header: t.common.status,
         cell: ({ row }) => (
-          <span
-            className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full ${
-              row.original.archived_at
-                ? "bg-bg-surface text-fg-subtle"
-                : "bg-success-subtle text-success"
-            }`}
-          >
-            {row.original.archived_at ? "archived" : "active"}
+          <span className={`chip ${row.original.archived_at ? "tone-ghost" : "tone-success"}`}>
+            {row.original.archived_at ? t.common.archived : "Активно"}
           </span>
         ),
       },
       {
         id: "created",
         accessorFn: (v) => v.created_at,
-        header: "Created",
+        header: t.common.created,
         cell: ({ row }) => (
-          <span className="text-fg-muted">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-muted tabular-nums">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
     ],
-    [load],
+    [load, t],
   );
 
   // Active-filter chip display — null at the default so the chip reads
-  // "Status ▾" rather than "Status: All ▾". Mirrors AgentsList.
+  // "Статус ▾" rather than "Статус: Все ▾". Mirrors AgentsList.
   const statusDisplay =
     status === "any" ? undefined : STATUS_OPTIONS.find((o) => o.value === status)?.label;
 
   const filters = (
     <>
       <FilterChip
-        label="Status"
+        label={t.common.status}
         active={status !== "any"}
         display={statusDisplay}
         onClear={() => setStatus("any")}
@@ -147,7 +189,7 @@ export function VaultsList() {
             options={STATUS_OPTIONS}
             value={status}
             onValueChange={(v) => setStatus(v as StatusValue)}
-            searchPlaceholder="Status..."
+            searchPlaceholder="Статус…"
           />
         </PopoverContent>
       </FilterChip>
@@ -156,10 +198,38 @@ export function VaultsList() {
     </>
   );
 
+  // Пустой список из-за фильтра («В архиве», период) не то же самое, что
+  // «хранилищ пока нет»: во втором случае уместна кнопка создания.
+  const filtered =
+    status === "archived" ||
+    search.trim() !== "" ||
+    created.after !== undefined ||
+    created.before !== undefined;
+
+  const closeCreate = () => {
+    setShowCreateVault(false);
+    setVaultName("");
+  };
+
+  const pendingName = pending?.vault.display_name ?? "";
+  const confirmTitle =
+    pending?.kind === "archive"
+      ? `Архивировать хранилище «${pendingName}»?`
+      : `Удалить хранилище «${pendingName}»?`;
+  const confirmMessage =
+    pending?.kind === "archive"
+      ? "Все его учётные данные тоже попадут в архив. Действие нельзя отменить."
+      : "Хранилище и все его учётные данные будут удалены. Действие нельзя отменить.";
+
   return (
     <DataTable<Vault>
+      title={t.nav.credentialVaults}
+      subtitle="Учётные данные и делегированный доступ, с которыми агенты ходят на MCP-серверы и в CLI."
       createLabel={t.vaults.newVault}
       onCreate={() => setShowCreateVault(true)}
+      searchPlaceholder={t.vaults.searchVaults}
+      searchValue={search}
+      onSearchChange={setSearch}
       filters={filters}
       data={visibleVaults}
       loading={loading}
@@ -167,65 +237,72 @@ export function VaultsList() {
       onRowClick={(v) => nav(`/vaults/${v.id}`)}
       rowActions={(vault) => [
         {
-          label: "Archive",
+          label: t.common.archive,
           icon: <ArchiveIcon className="size-4" />,
           disabled: Boolean(vault.archived_at),
-          onSelect: async () => {
-            if (!confirm(`Archive vault ${vault.display_name}? All its credentials will also be archived. Archive is one-way.`)) return;
-            try {
-              await managedApi.vaults.archive(vault.id);
-              load();
-            } catch {}
-          },
+          onSelect: () => askConfirm({ kind: "archive", vault }),
         },
         {
-          label: "Delete",
+          label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
           destructive: true,
-          onSelect: async () => {
-            if (!confirm(`Delete vault ${vault.display_name}? This can't be undone.`)) return;
-            try {
-              await managedApi.vaults.delete(vault.id);
-              load();
-            } catch {}
-          },
+          onSelect: () => askConfirm({ kind: "delete", vault }),
         },
       ]}
       hasMore={hasMore}
       loadingMore={isLoadingMore}
       onLoadMore={loadMore}
-      emptyTitle={t.vaults.noVaultsYet}
+      emptyTitle={filtered ? t.vaults.noMatchingVaults : t.vaults.noVaultsYet}
       emptyKind="vault"
+      emptySubtitle={
+        filtered
+          ? "Измените фильтры, чтобы увидеть другие хранилища."
+          : "В хранилище лежат учётные данные, с которыми агенты ходят на MCP-серверы и в CLI."
+      }
       emptyAction={
-        <Button onClick={() => setShowCreateVault(true)}>{t.vaults.newVault}</Button>
+        !filtered && <Button onClick={() => setShowCreateVault(true)}><PlusIcon />{t.vaults.newVault}</Button>
       }
       columns={columns}
     >
-      {/* Create Vault */}
+      {/* Новое хранилище */}
       <Modal
         open={showCreateVault}
-        onClose={() => setShowCreateVault(false)}
-        title="New Vault"
+        onClose={closeCreate}
+        title="Новое хранилище"
+        closeDisabled={creating}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setShowCreateVault(false)}>Cancel</Button>
-            <Button onClick={createVault} disabled={!vaultName}>Create</Button>
+            <Button variant="ghost" onClick={closeCreate} disabled={creating}>
+              {t.common.cancel}
+            </Button>
+            <Button onClick={createVault} disabled={!vaultName} loading={creating}>
+              {t.common.create}
+            </Button>
           </>
         }
       >
         <div className="space-y-4">
-          <div>
-            <Label htmlFor="vault-name" className="text-sm text-fg-muted block mb-1">Name</Label>
+          <Field label={t.common.name} hint="До 30 символов.">
             <Input
               id="vault-name"
               value={vaultName}
               onChange={(e) => setVaultName(e.target.value.slice(0, 30))}
-              className={inputCls}
-              placeholder="My Vault"
+              placeholder="Например, Рабочие ключи"
             />
-          </div>
+          </Field>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        confirmLabel={pending?.kind === "archive" ? t.common.archive : t.common.delete}
+        destructive={pending?.kind === "delete"}
+        busy={confirmBusy}
+        onConfirm={() => void runConfirmed()}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </DataTable>
   );
 }

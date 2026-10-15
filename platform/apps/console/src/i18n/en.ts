@@ -31,7 +31,7 @@ export const en: Messages = {
     terminated: "Terminated",
     rescheduling: "Rescheduling",
     copied: "Copied",
-    viewAll: "View all →",
+    viewAll: "View all",
     nothingHereYet: "Nothing here yet",
     loadingMore: "Loading more…",
     columns: "Columns",
@@ -57,6 +57,17 @@ export const en: Messages = {
     apiKeys: "API Keys",
     localRuntimes: "Local Runtimes",
     integrations: "Integrations",
+    members: "Members",
+  },
+
+  shell: {
+    workspaceNavigation: "Workspace navigation",
+    sections: "Console sections",
+    breadcrumb: "Breadcrumb",
+    showSidebar: "Show sidebar",
+    closeSidebar: "Close sidebar",
+    resizeSidebar: "Resize sidebar",
+    loadingSession: "Loading session",
   },
 
   login: {
@@ -125,6 +136,10 @@ export const en: Messages = {
     description: "Jump to any page in the console.",
     jumpTo: "Jump to…",
     noMatches: "No matches.",
+    recent: "Recent",
+    actions: "Actions",
+    navigate: "Navigate",
+    search: "Search",
   },
 
   profile: {
@@ -142,10 +157,15 @@ export const en: Messages = {
     workspaceName: "Name",
     workspacePlaceholder: "e.g. Acme Production",
     creating: "Creating…",
+    language: "Language",
+    account: "Account",
+    roleOwner: "Owner",
+    roleAdmin: "Admin",
+    roleMember: "Member",
   },
 
   agents: {
-    newAgent: "+ New agent",
+    newAgent: "New agent",
     editAgent: "Edit",
     newAgentTitle: "New Agent",
     editAgentTitle: "Edit Agent",
@@ -155,7 +175,7 @@ export const en: Messages = {
     noMatchingAgents: "No matching agents",
     noAgentsYet: "No agents yet",
     createFirstAgent: "Create your first agent to get started.",
-    getStartedGuide: "Get started with the quickstart guide →",
+    getStartedGuide: "Get started with the quickstart guide",
     tryDifferentSearch: "Try a different search term.",
     archiveAgent: "Archive",
     deleteAgent: "Delete",
@@ -163,7 +183,7 @@ export const en: Messages = {
   },
 
   sessions: {
-    newSession: "+ New session",
+    newSession: "New session",
     searchSessions: "Search sessions…",
     noMatchingSessions: "No matching sessions",
     noSessionsYet: "No sessions yet",
@@ -173,7 +193,7 @@ export const en: Messages = {
   },
 
   vaults: {
-    newVault: "+ New vault",
+    newVault: "New vault",
     searchVaults: "Search vaults…",
     noMatchingVaults: "No matching vaults",
     noVaultsYet: "No vaults yet",
@@ -188,7 +208,7 @@ export const en: Messages = {
   },
 
   environments: {
-    newEnvironment: "+ New environment",
+    newEnvironment: "New environment",
     searchEnvironments: "Search environments…",
     noMatchingEnvironments: "No matching environments",
     noEnvironmentsYet: "No environments yet",
@@ -202,21 +222,21 @@ export const en: Messages = {
   },
 
   skills: {
-    newSkill: "+ New skill",
+    newSkill: "New skill",
     searchSkills: "Search skills…",
     noMatchingSkills: "No matching skills",
     noSkillsYet: "No skills yet",
   },
 
   modelCards: {
-    newModelCard: "+ New model card",
+    newModelCard: "New model card",
     searchModelCards: "Search model cards…",
     noMatchingModelCards: "No matching model cards",
     noModelCardsYet: "No model cards yet",
   },
 
   apiKeys: {
-    newApiKey: "+ New API key",
+    newApiKey: "New API key",
     noApiKeysYet: "No API keys yet",
     revokeKey: "Revoke",
     confirmRevoke: "Revoke this API key? This cannot be undone.",
@@ -224,14 +244,14 @@ export const en: Messages = {
   },
 
   evals: {
-    newEvalRun: "+ New eval run",
+    newEvalRun: "New eval run",
     searchEvalRuns: "Search eval runs…",
     noMatchingEvalRuns: "No matching eval runs",
     noEvalRunsYet: "No eval runs yet",
   },
 
   memory: {
-    newMemoryStore: "+ New memory store",
+    newMemoryStore: "New memory store",
     searchMemoryStores: "Search memory stores…",
     noMatchingMemoryStores: "No matching memory stores",
     noMemoryStoresYet: "No memory stores yet",

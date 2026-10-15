@@ -54,7 +54,7 @@ function loadTurnstileScript(): Promise<void> {
     const existing = document.querySelector(`script[src="${SCRIPT_SRC}"]`);
     if (existing) {
       existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("Turnstile script failed to load")), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Не удалось загрузить проверку на бота")), { once: true });
       return;
     }
     const script = document.createElement("script");
@@ -62,7 +62,7 @@ function loadTurnstileScript(): Promise<void> {
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Turnstile script failed to load"));
+    script.onerror = () => reject(new Error("Не удалось загрузить проверку на бота"));
     document.head.appendChild(script);
   });
   return scriptLoaded;
@@ -83,7 +83,7 @@ export function Turnstile({ siteKey, onToken, onExpire, appearance = "interactio
           sitekey: siteKey,
           callback: onToken,
           "expired-callback": onExpire,
-          "error-callback": () => setError("Bot challenge failed to load. Please refresh."),
+          "error-callback": () => setError("Проверка на бота не загрузилась. Обновите страницу."),
           appearance,
           theme: "auto",
         });

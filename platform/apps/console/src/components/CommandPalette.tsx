@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import {
@@ -10,28 +10,13 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
-import {
-  AgentIcon,
-  ApiKeysIcon,
-  RuntimesIcon,
-  DashboardIcon,
-  EnvIcon,
-  FilesIcon,
-  GitHubIcon,
-  LinearIcon,
-  MemoryIcon,
-  ModelCardsIcon,
-  SessionsIcon,
-  SkillsIcon,
-  SlackIcon,
-  VaultIcon,
-} from "./icons";
+import { NAV_ICONS, type NavIcon } from "./nav-icons";
 import { useI18n } from "../i18n";
 
 interface NavCommand {
   label: string;
   to: string;
-  icon: ComponentType<{ className?: string }>;
+  icon: NavIcon;
   aliases?: string;
 }
 
@@ -42,24 +27,41 @@ export function openCommandPalette() {
   window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT));
 }
 
+/**
+ * Разделы для перехода. Интеграции (Linear, GitHub, Slack, Feishu) в палитру
+ * не входят, их маршруты остаются в main.tsx. Псевдонимы русские и английские:
+ * по ним ищут, но не показывают.
+ */
 function useCommands(): NavCommand[] {
   const { t } = useI18n();
   return [
-    { label: t.nav.dashboard, to: "/", icon: DashboardIcon },
-    { label: t.nav.agents, to: "/agents", icon: AgentIcon },
-    { label: t.nav.sessions, to: "/sessions", icon: SessionsIcon },
-    { label: t.nav.files, to: "/files", icon: FilesIcon },
-    { label: t.nav.evalRuns, to: "/evals", icon: SessionsIcon, aliases: "evaluations evals" },
-    { label: t.nav.environments, to: "/environments", icon: EnvIcon, aliases: "envs sandboxes" },
-    { label: t.nav.credentialVaults, to: "/vaults", icon: VaultIcon, aliases: "secrets credentials" },
-    { label: t.nav.skills, to: "/skills", icon: SkillsIcon },
-    { label: t.nav.memoryStores, to: "/memory", icon: MemoryIcon },
-    { label: t.nav.modelCards, to: "/model-cards", icon: ModelCardsIcon },
-    { label: t.nav.apiKeys, to: "/api-keys", icon: ApiKeysIcon, aliases: "tokens" },
-    { label: t.nav.localRuntimes, to: "/runtimes", icon: RuntimesIcon },
-    { label: "Linear", to: "/integrations/linear", icon: LinearIcon },
-    { label: "GitHub", to: "/integrations/github", icon: GitHubIcon },
-    { label: "Slack", to: "/integrations/slack", icon: SlackIcon },
+    { label: t.nav.dashboard, to: "/", icon: NAV_ICONS.dashboard, aliases: "dashboard главная" },
+    { label: t.nav.agents, to: "/agents", icon: NAV_ICONS.agents },
+    { label: t.nav.sessions, to: "/sessions", icon: NAV_ICONS.sessions },
+    { label: t.nav.files, to: "/files", icon: NAV_ICONS.files },
+    {
+      label: t.nav.evalRuns,
+      to: "/evals",
+      icon: NAV_ICONS.evals,
+      aliases: "evaluations evals оценка тесты",
+    },
+    {
+      label: t.nav.environments,
+      to: "/environments",
+      icon: NAV_ICONS.environments,
+      aliases: "envs sandboxes песочницы",
+    },
+    {
+      label: t.nav.credentialVaults,
+      to: "/vaults",
+      icon: NAV_ICONS.vaults,
+      aliases: "secrets credentials vaults секреты учётные данные",
+    },
+    { label: t.nav.skills, to: "/skills", icon: NAV_ICONS.skills },
+    { label: t.nav.memoryStores, to: "/memory", icon: NAV_ICONS.memory, aliases: "memory память" },
+    { label: t.nav.modelCards, to: "/model-cards", icon: NAV_ICONS.modelCards, aliases: "models модели" },
+    { label: t.nav.apiKeys, to: "/api-keys", icon: NAV_ICONS.apiKeys, aliases: "tokens токены ключи" },
+    { label: t.nav.localRuntimes, to: "/runtimes", icon: NAV_ICONS.runtimes, aliases: "runtimes среды" },
   ];
 }
 
@@ -72,8 +74,8 @@ function readRecentPaths(): string[] {
   }
 }
 
-/** One global command surface. Intent groups stay in a stable order while the
- * recent ring buffer reflects routes the user has actually visited. */
+/** Одна общая командная палитра. Группы идут в постоянном порядке, а список
+ * недавних показывает разделы, где человек действительно был. */
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -89,7 +91,7 @@ export function CommandPalette() {
       try {
         localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(next));
       } catch {
-        // The in-memory ring buffer remains useful when storage is unavailable.
+        // Без хранилища список недавних живёт только в памяти.
       }
       return next;
     });
@@ -100,7 +102,7 @@ export function CommandPalette() {
       item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(`${item.to}/`),
     );
     if (command) remember(command.to);
-    // Route changes are the event; translated labels do not change the stored path.
+    // Событие здесь только смена маршрута: перевод подписей путь не меняет.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
@@ -146,8 +148,10 @@ export function CommandPalette() {
         onSelect={() => go(command.to)}
         className="cursor-pointer"
       >
-        <Icon className="size-4 opacity-60" />
-        <span className="min-w-0 flex-1 truncate">{command.label}</span>
+        <Icon className="size-4 text-ddc-icon-muted" />
+        <span className="min-w-0 flex-1 truncate" title={command.label}>
+          {command.label}
+        </span>
       </CommandItem>
     );
   };
@@ -161,6 +165,7 @@ export function CommandPalette() {
       }}
       title={t.command.title}
       description={t.command.description}
+      className="rounded-2xl!"
     >
       <CommandInput
         value={query}
@@ -169,18 +174,18 @@ export function CommandPalette() {
       />
       <CommandList>
         <CommandEmpty>{t.command.noMatches}</CommandEmpty>
-        <CommandGroup heading="Recent">
+        <CommandGroup heading={t.command.recent}>
           {recentCommands.map((command) => renderCommand(command, "recent"))}
         </CommandGroup>
-        <CommandGroup heading="Actions">
+        <CommandGroup heading={t.command.actions}>
           {renderCommand(commands.find((command) => command.to === "/agents")!, "view")}
           {renderCommand(commands.find((command) => command.to === "/sessions")!, "review")}
         </CommandGroup>
-        <CommandGroup heading="Navigate">
+        <CommandGroup heading={t.command.navigate}>
           {commands.map((command) => renderCommand(command, "navigate"))}
         </CommandGroup>
         {searchResults.length > 0 && (
-          <CommandGroup heading="Search">
+          <CommandGroup heading={t.command.search}>
             {searchResults.map((command) => renderCommand(command, "search"))}
           </CommandGroup>
         )}

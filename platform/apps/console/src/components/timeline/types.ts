@@ -59,44 +59,49 @@ export type SpanFamily =
   | "thinking"     // agent.thinking marker
   | "marker";      // catch-all for unrecognized event types
 
+/**
+ * Цвета семейств берутся из токенов DDC: точки статусов `ddc-dot-*`
+ * (info, success, warning, danger, neutral) и шкала brand для того, что
+ * означает «своё» (пользователь, MCP, сжатие). Фиолетовой краски в DDC нет.
+ */
 export const FAMILY_DOT: Record<SpanFamily, string> = {
-  model: "bg-info",
-  tool: "bg-success",
-  mcp: "bg-accent-violet",
-  custom_tool: "bg-warning",
-  user: "bg-brand",
-  agent: "bg-fg-muted",
-  system: "bg-fg-subtle",
-  warn: "bg-warning",
-  error: "bg-danger",
-  schedule: "bg-info",
-  wakeup: "bg-info",
-  compaction: "bg-accent-violet/70",
-  outcome: "bg-success/70",
-  thread: "bg-fg-muted",
-  aux: "bg-fg-subtle",
-  thinking: "bg-fg-subtle",
-  marker: "bg-fg-subtle",
+  model: "bg-ddc-dot-info",
+  tool: "bg-ddc-dot-success",
+  mcp: "bg-brand-500",
+  custom_tool: "bg-ddc-dot-warning",
+  user: "bg-brand-600",
+  agent: "bg-ddc-text-muted",
+  system: "bg-ddc-dot-neutral",
+  warn: "bg-ddc-dot-warning",
+  error: "bg-ddc-dot-danger",
+  schedule: "bg-ddc-dot-info",
+  wakeup: "bg-ddc-dot-info",
+  compaction: "bg-brand-400",
+  outcome: "bg-ddc-dot-success",
+  thread: "bg-ddc-text-muted",
+  aux: "bg-ddc-dot-neutral",
+  thinking: "bg-ddc-dot-neutral",
+  marker: "bg-ddc-dot-neutral",
 };
 
 export const FAMILY_BAR: Record<SpanFamily, string> = {
-  model: "bg-info/70",
-  tool: "bg-success/70",
-  mcp: "bg-accent-violet/70",
-  custom_tool: "bg-warning/70",
-  user: "bg-brand/70",
-  agent: "bg-fg-muted/70",
-  system: "bg-fg-subtle/70",
-  warn: "bg-warning/70",
-  error: "bg-danger/70",
-  schedule: "bg-info/40",
-  wakeup: "bg-info/70",
-  compaction: "bg-accent-violet/50",
-  outcome: "bg-success/50",
-  thread: "bg-fg-muted/50",
-  aux: "bg-fg-subtle/70",
-  thinking: "bg-fg-subtle/40",
-  marker: "bg-fg-subtle/40",
+  model: "bg-ddc-dot-info/70",
+  tool: "bg-ddc-dot-success/70",
+  mcp: "bg-brand-500/70",
+  custom_tool: "bg-ddc-dot-warning/70",
+  user: "bg-brand-600/70",
+  agent: "bg-ddc-text-muted/70",
+  system: "bg-ddc-dot-neutral/70",
+  warn: "bg-ddc-dot-warning/70",
+  error: "bg-ddc-dot-danger/70",
+  schedule: "bg-ddc-dot-info/40",
+  wakeup: "bg-ddc-dot-info/70",
+  compaction: "bg-brand-400/60",
+  outcome: "bg-ddc-dot-success/50",
+  thread: "bg-ddc-text-muted/50",
+  aux: "bg-ddc-dot-neutral/70",
+  thinking: "bg-ddc-dot-neutral/50",
+  marker: "bg-ddc-dot-neutral/50",
 };
 
 /**
@@ -131,26 +136,34 @@ export interface Turn {
 }
 
 export const TRIGGER_LABEL: Record<TurnTriggerKind, string> = {
-  user_message: "user message",
-  wakeup: "scheduled wakeup",
-  tool_confirmation: "tool confirmation",
-  custom_tool_result: "custom tool result",
-  init: "session init",
+  user_message: "Сообщение пользователя",
+  wakeup: "Пробуждение по расписанию",
+  tool_confirmation: "Подтверждение инструмента",
+  custom_tool_result: "Результат пользовательского инструмента",
+  init: "Запуск сессии",
 };
 
 export const TRIGGER_DOT: Record<TurnTriggerKind, string> = {
-  user_message: "bg-brand",
-  wakeup: "bg-info",
-  tool_confirmation: "bg-warning",
-  custom_tool_result: "bg-warning",
-  init: "bg-fg-subtle",
+  user_message: "bg-brand-600",
+  wakeup: "bg-ddc-dot-info",
+  tool_confirmation: "bg-ddc-dot-warning",
+  custom_tool_result: "bg-ddc-dot-warning",
+  init: "bg-ddc-dot-neutral",
 };
 
 export const STATUS_TEXT: Record<TurnStatus, string> = {
-  completed: "text-fg-subtle",
-  running: "text-info",
-  errored: "text-danger",
-  terminated: "text-danger",
+  completed: "text-ddc-text-muted",
+  running: "text-ddc-tone-info-fg",
+  errored: "text-ddc-danger-text",
+  terminated: "text-ddc-danger-text",
+};
+
+/** Статус хода по-русски: сырые значения (`errored`) в интерфейс не выводятся. */
+export const STATUS_LABEL: Record<TurnStatus, string> = {
+  completed: "Завершён",
+  running: "Выполняется",
+  errored: "Ошибка",
+  terminated: "Остановлен",
 };
 
 /**

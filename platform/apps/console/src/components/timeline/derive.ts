@@ -1,7 +1,25 @@
-import { formatDuration } from "../../lib/format";
+import { formatDurationRu } from "../session/format-ru";
 import type { Event } from "../../lib/events";
 import { eventTsMs } from "./eventTime";
 import type { Span, Turn, TurnTriggerKind } from "./types";
+
+/** Подписи строк хронологии по типу события. Сырые имена (`agent.message`)
+ *  в интерфейс не выводятся; неизвестный тип остаётся как есть, чтобы новое
+ *  событие не пропало из виду. */
+const SYSTEM_LABEL: Record<string, string> = {
+  "session.status_running": "Сессия выполняется",
+  "session.status_idle": "Сессия ожидает",
+  "session.status_rescheduled": "Сессия перепланирована",
+  "session.status_terminated": "Сессия остановлена",
+};
+
+const THREAD_LABEL: Record<string, string> = {
+  "agent.thread_message_sent": "Сообщение потоку отправлено",
+  "agent.thread_message_received": "Сообщение потока получено",
+  "agent.thread_message": "Сообщение потока",
+  "session.thread_created": "Поток создан",
+  "session.thread_idle": "Поток ожидает",
+};
 
 /**
  * Derive a flat list of waterfall spans from a session's event stream.
@@ -119,8 +137,8 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       pushSpan({
         key: `tool-${e.id ?? i}`,
         family: e.type === "agent.tool_use" ? "tool" : "custom_tool",
-        label: String(e.name ?? "tool"),
-        detail: result ? "completed" : "no result",
+        label: String(e.name ?? "инструмент"),
+        detail: result ? "выполнено" : "без результата",
         startMs,
         durationMs: Math.max(0, endMs - startMs),
       });
@@ -132,7 +150,7 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
         key: `mcp-${e.id ?? i}`,
         family: "mcp",
         label: `${String(e.mcp_server_name ?? "mcp")}:${String(e.name ?? "?")}`,
-        detail: result ? "completed" : "no result",
+        detail: result ? "выполнено" : "без результата",
         startMs,
         durationMs: Math.max(0, endMs - startMs),
       });
@@ -154,14 +172,14 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       if (matched?.e) sourceEvents.push(matched.e);
       if (ftMatch?.e) sourceEvents.push(ftMatch.e);
       const tokSummary = usage
-        ? `${usage.input_tokens}↓ ${usage.output_tokens}↑${usage.cache_read_input_tokens ? ` ⚡${usage.cache_read_input_tokens}` : ""}`
+        ? `${usage.input_tokens}↓ ${usage.output_tokens}↑${usage.cache_read_input_tokens ? ` кэш ${usage.cache_read_input_tokens}` : ""}`
         : undefined;
       const ttftMs = ftMatch ? Math.max(0, ftMatch.t - t) : undefined;
-      const ttftSummary = typeof ttftMs === "number" ? `TTFT ${formatDuration(ttftMs)}` : undefined;
+      const ttftSummary = typeof ttftMs === "number" ? `первый токен ${formatDurationRu(ttftMs)}` : undefined;
       pushSpan({
         key: `model-${sid || i}`,
         family: "model",
-        label: "model call",
+        label: "Вызов модели",
         detail: [matched?.finishReason, ttftSummary, tokSummary].filter(Boolean).join(" · ") || undefined,
         startMs,
         durationMs: Math.max(0, end - t0 - startMs),
@@ -174,7 +192,7 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       pushSpan({
         key: `compact-${i}`,
         family: "compaction",
-        label: "compaction",
+        label: "Сжатие контекста",
         startMs,
         durationMs: Math.max(0, end - t0 - startMs),
       });
@@ -185,7 +203,7 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       pushSpan({
         key: `outcome-${i}`,
         family: "outcome",
-        label: "outcome eval",
+        label: "Оценка результата",
         startMs,
         durationMs: Math.max(0, end - t0 - startMs),
       });
@@ -211,8 +229,8 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       pushSpan({
         key: `sched-${sid || i}`,
         family: "schedule",
-        label: "schedule waiting",
-        detail: fired ? "fired" : "pending",
+        label: "Ожидание по расписанию",
+        detail: fired ? "сработало" : "ожидает",
         startMs,
         durationMs: Math.max(0, endMs - startMs),
       });
@@ -222,16 +240,16 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       pushSpan({
         key: `u-${i}`,
         family: isWakeup ? "wakeup" : "user",
-        label: isWakeup ? "user.message (wakeup)" : "user.message",
+        label: isWakeup ? "Пробуждение по расписанию" : "Сообщение пользователя",
         startMs,
         durationMs: 0,
       });
     } else if (e.type === "agent.message") {
-      pushSpan({ key: `a-${i}`, family: "agent", label: "agent.message", startMs, durationMs: 0 });
+      pushSpan({ key: `a-${i}`, family: "agent", label: "Ответ агента", startMs, durationMs: 0 });
     } else if (e.type === "agent.thinking") {
-      pushSpan({ key: `think-${i}`, family: "thinking", label: "agent.thinking", startMs, durationMs: 0 });
+      pushSpan({ key: `think-${i}`, family: "thinking", label: "Рассуждение агента", startMs, durationMs: 0 });
     } else if (e.type === "aux.model_call") {
-      pushSpan({ key: `aux-${i}`, family: "aux", label: "aux.model_call", startMs, durationMs: 0 });
+      pushSpan({ key: `aux-${i}`, family: "aux", label: "Вспомогательный вызов модели", startMs, durationMs: 0 });
     } else if (
       e.type === "agent.thread_message_sent" ||
       e.type === "agent.thread_message_received" ||
@@ -239,14 +257,14 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       e.type === "session.thread_created" ||
       e.type === "session.thread_idle"
     ) {
-      pushSpan({ key: `thread-${i}`, family: "thread", label: e.type.replace(/^.*\./, ""), startMs, durationMs: 0 });
+      pushSpan({ key: `thread-${i}`, family: "thread", label: THREAD_LABEL[e.type] ?? e.type.replace(/^.*\./, ""), startMs, durationMs: 0 });
     } else if (e.type === "agent.thread_context_compacted") {
-      pushSpan({ key: `compact-marker-${i}`, family: "compaction", label: "thread compacted", startMs, durationMs: 0 });
+      pushSpan({ key: `compact-marker-${i}`, family: "compaction", label: "Поток сжат", startMs, durationMs: 0 });
     } else if (e.type === "session.error") {
       pushSpan({
         key: `err-${i}`,
         family: "error",
-        label: "session.error",
+        label: "Ошибка сессии",
         detail: typeof e.error === "string" ? e.error : JSON.stringify(e.error),
         startMs,
         durationMs: 0,
@@ -255,13 +273,13 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
       pushSpan({
         key: `warn-${i}`,
         family: "warn",
-        label: `warning:${String(e.source ?? "")}`,
+        label: `Предупреждение: ${String(e.source ?? "")}`,
         detail: String(e.message ?? ""),
         startMs,
         durationMs: 0,
       });
     } else if (e.type.startsWith("session.")) {
-      pushSpan({ key: `s-${i}`, family: "system", label: e.type, startMs, durationMs: 0 });
+      pushSpan({ key: `s-${i}`, family: "system", label: SYSTEM_LABEL[e.type] ?? e.type, startMs, durationMs: 0 });
     } else {
       // Catch-all: surface unknown types as instant markers rather than
       // silently dropping. New event types added later show up immediately

@@ -25,6 +25,7 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 
+import { plural } from "../session/format-ru";
 import { Shimmer } from "./shimmer";
 
 interface ReasoningContextValue {
@@ -156,12 +157,16 @@ export type ReasoningTriggerProps = ComponentProps<
 
 const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
   if (isStreaming || duration === 0) {
-    return <Shimmer duration={1}>Thinking...</Shimmer>;
+    return <Shimmer duration={1}>Думает…</Shimmer>;
   }
   if (duration === undefined) {
-    return <p>Thought for a few seconds</p>;
+    return <p>Думал несколько секунд</p>;
   }
-  return <p>Thought for {duration} seconds</p>;
+  return (
+    <p>
+      Думал {duration} {plural(duration, "секунду", "секунды", "секунд")}
+    </p>
+  );
 };
 
 export const ReasoningTrigger = memo(
@@ -176,16 +181,17 @@ export const ReasoningTrigger = memo(
     return (
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+          "flex min-h-8 w-full items-center gap-2 text-sm text-ddc-text-muted transition-colors hover:text-ddc-text",
           className
         )}
         {...props}
       >
         {children ?? (
           <>
-            <BrainIcon className="size-4" />
+            <BrainIcon className="size-4" aria-hidden="true" />
             {getThinkingMessage(isStreaming, duration)}
             <ChevronDownIcon
+              aria-hidden="true"
               className={cn(
                 "size-4 transition-transform",
                 isOpen ? "rotate-180" : "rotate-0"
@@ -211,7 +217,7 @@ export const ReasoningContent = memo(
     <CollapsibleContent
       className={cn(
         "mt-4 text-sm",
-        "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+        "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-ddc-text-muted outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
         className
       )}
       {...props}

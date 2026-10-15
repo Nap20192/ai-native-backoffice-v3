@@ -1,15 +1,36 @@
+import { useCrumbName } from "../lib/crumb-names";
 import { Input } from "@/components/ui/input";
 import { startTransition, useEffect, useMemo, useState, useRef } from "react";
-import { useParams, Link } from "react-router";
+import { useParams } from "react-router";
+import {
+  ClockIcon as ScheduleIcon,
+  CornerDownRightIcon,
+  ExternalLinkIcon,
+  FileJsonIcon,
+  FolderOpenIcon,
+  LinkIcon,
+  Loader2Icon,
+  MessageSquareIcon,
+  PencilIcon,
+  SquareIcon,
+  XIcon,
+} from "lucide-react";
 import { ApiError } from "../lib/api";
 import { useManagedApi } from "../lib/useManagedApi";
 import { readManagedMetadataObject } from "../lib/managed-metadata";
 import { toast } from "sonner";
 import { Markdown } from "../components/Markdown";
-import { formatDuration, formatRelative, shortenId } from "../lib/format";
+import { shortenId } from "../lib/format";
+import {
+  formatDateTimeRu,
+  formatDurationRu,
+  formatRelativeRu,
+  plural,
+} from "../components/session/format-ru";
 import { Badge, StatusPill } from "../components/Badge";
-import { Modal } from "../components/Modal";
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
+import { Skeleton } from "../components/Skeleton";
 import { AgentIcon, ClockIcon, DurationIcon, EnvIcon, VaultIcon } from "../components/icons";
 import { FilesPanel, ResourcePanel } from "./session-detail/Panels";
 import {
@@ -124,6 +145,7 @@ export function SessionDetail() {
     agentSnapshot?: { id?: string; name?: string; model?: string | { id: string }; description?: string | null; version?: number };
     envSnapshot?: { id?: string; name?: string; description?: string | null };
   }>({});
+  useCrumbName(id, sessionMeta.title?.trim());
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
@@ -176,6 +198,10 @@ export function SessionDetail() {
    *  place in the events array via the regular SSE broadcast. */
   const [pendingByEventId, setPendingByEventId] = useState<Map<string, PendingEntry>>(new Map());
   const [showTrajectory, setShowTrajectory] = useState(false);
+  /** История событий загружена (первая выгрузка завершена). Пока нет, вместо
+   *  пустого состояния показываем скелетон: «Отправьте сообщение» до конца
+   *  загрузки вводило бы в заблуждение (правило 12 DDC). */
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const seenKeys = useRef(new Set<string>());
 
   // Dedup key for SSE re-delivery + initial-fetch overlap. `id` is stamped
@@ -526,6 +552,8 @@ export function SessionDetail() {
     setActiveThreadId("sthr_primary");
     setPendingByEventId(new Map());
     setLocalPending(null);
+    setHistoryLoaded(false);
+    const abort = new AbortController();
 
     // Load session info
     managedApi.sessions.retrieve(id)
@@ -609,12 +637,12 @@ export function SessionDetail() {
           break;
         }
       }
+      if (!abort.signal.aborted) setHistoryLoaded(true);
     })();
 
     // Connect the official Managed Agents async event stream. Reconnect only
     // transport/5xx failures; 4xx responses are terminal until navigation or
     // auth state changes, so retrying them would only hammer the API.
-    const abort = new AbortController();
     void (async () => {
       const backoffMs = [1_000, 2_000, 4_000, 8_000];
       let failures = 0;
@@ -671,7 +699,14 @@ export function SessionDetail() {
     const text = messageText.trim();
     if (!text && !files?.length) return;
     if (!id) return;
-    setLocalPending(text || (files?.length ? (files.length === 1 ? "🖼️ Image" : `🖼️ ${files.length} images`) : ""));
+    setLocalPending(
+      text ||
+        (files?.length
+          ? files.length === 1
+            ? "Изображение"
+            : `${files.length} ${plural(files.length, "изображение", "изображения", "изображений")}`
+          : ""),
+    );
     setSending(true);
     try {
       // Upload attachments first so the user.message can reference them
@@ -714,7 +749,7 @@ export function SessionDetail() {
       if (!text && uploaded.length) {
         content.unshift({
           type: "text",
-          text: uploaded.length === 1 ? "Attached image." : "Attached images.",
+          text: uploaded.length === 1 ? "Прикреплено изображение." : "Прикреплены изображения.",
         });
       }
 
@@ -814,154 +849,194 @@ export function SessionDetail() {
     />
   );
 
+  const trajectoryTitle =
+    trajectory === "loading"
+      ? "Загрузка траектории…"
+      : trajectory === "error"
+        ? "Траектория недоступна. Нажмите, чтобы посмотреть причину"
+        : "Показать исходную траекторию (Trajectory v1)";
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header — badges row + page-specific action buttons.
-          The redundant `← Sessions / sess-xxx` back-link + id heading
-          was removed; AppBreadcrumb above the page now carries the
-          trail and the entity id. Stop + Files actions live at the
-          right (`ml-auto`) of the badges row so the page-level chrome
-          stays one band tall. */}
-      <div className="pl-3 pr-4 py-3 flex flex-col gap-2 shrink-0">
-        {/* Editable session title — optional metadata; empty shows a
-            muted "Untitled" affordance so rename is discoverable. */}
-        <div className="flex items-center gap-2 min-h-8">
-          {editingTitle ? (
-            <>
-              <Input
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                className="flex-1 min-w-0 border border-border rounded-md px-2.5 py-1.5 text-sm bg-bg text-fg outline-none focus:border-brand"
-                placeholder={t.sessions.sessionTitle}
-                autoFocus
-                disabled={savingTitle}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void saveTitle();
-                  if (e.key === "Escape") {
+    <div className="page flex h-full min-h-0 flex-col gap-4">
+      {/* Шапка: название, чипы состава сессии и действия. Заголовок
+          страницы h1 24px bold, ряд чипов под ним, действия справа
+          (.head-row, правило 7 DDC). Хлебные крошки над страницей уже несут
+          путь и id сессии, поэтому ссылки «назад» здесь нет. */}
+      <div className="head-row mb-2 shrink-0">
+        <div className="head-main space-y-3">
+          {/* Название сессии редактируется на месте; пустое показывает
+              приглушённое «Сессия без названия», чтобы переименование было
+              заметно. */}
+          <div className="flex min-h-10 items-center gap-2">
+            {editingTitle ? (
+              <>
+                <Input
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  className="min-w-0 flex-1"
+                  placeholder={t.sessions.sessionTitle}
+                  aria-label={t.sessions.sessionTitle}
+                  autoFocus
+                  disabled={savingTitle}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveTitle();
+                    if (e.key === "Escape") {
+                      setEditingTitle(false);
+                      setTitleDraft(sessionMeta.title ?? "");
+                    }
+                  }}
+                />
+                <Button
+                  onClick={() => void saveTitle()}
+                  loading={savingTitle}
+                  loadingLabel={t.common.saving}
+                >
+                  {t.common.save}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
                     setEditingTitle(false);
                     setTitleDraft(sessionMeta.title ?? "");
-                  }
-                }}
-              />
-              <Button variant="ghost"
-                onClick={() => void saveTitle()}
-                disabled={savingTitle}
-                className="inline-flex items-center px-2.5 py-1 min-h-11 sm:min-h-0 rounded-md text-xs font-medium bg-brand text-brand-fg disabled:opacity-50"
-              >
-                {savingTitle ? t.common.saving : t.common.save}
-              </Button>
-              <Button variant="ghost"
-                onClick={() => {
-                  setEditingTitle(false);
-                  setTitleDraft(sessionMeta.title ?? "");
-                }}
-                disabled={savingTitle}
-                className="inline-flex items-center px-2.5 py-1 min-h-11 sm:min-h-0 rounded-md text-xs text-fg-muted hover:text-fg"
-              >
-                {t.common.cancel}
-              </Button>
-            </>
-          ) : (
-            <>
-              <h2 className="text-sm font-medium text-fg truncate min-w-0">
-                {sessionMeta.title?.trim() || (
-                  <span className="text-fg-subtle font-normal">{t.sessions.untitledSession}</span>
-                )}
-              </h2>
-              <Button variant="ghost"
-                onClick={() => {
-                  setTitleDraft(sessionMeta.title ?? "");
-                  setEditingTitle(true);
-                }}
-                className="inline-flex items-center px-2 py-0.5 min-h-11 sm:min-h-0 rounded text-xs text-fg-subtle hover:text-fg hover:bg-bg-surface shrink-0"
-              >
-                {t.sessions.editTitle}
-              </Button>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <StatusPill status={status as "idle" | "running" | "terminated" | "error" | string} />
-          {/* Trajectory outcome chip — only when the trajectory has actually
-              finished. While the session is still running we let StatusPill
-              carry the "Running…" signal alone (per Phase 3 spec) instead of
-              double-pilling. */}
-          <TrajectoryOutcomeChip trajectory={trajectory} />
-          {/* Reward chip — final_reward + verifier_id tooltip. Hidden when
-              the verifier hasn't run (no trajectory.reward) so we don't
-              imply "no reward = score 0". */}
-          <TrajectoryRewardChip trajectory={trajectory} />
-          {/* Always render env + agent + vault badges so an operator can
-              see what makes up this session at a glance. Name falls back
-              to a short ID slice if the snapshot didn't carry one — better
-              "agent_…XYZ" than nothing. */}
-          {(sessionMeta.agentSnapshot?.id || agentId) && (
-            <Badge
-              icon={<AgentIcon />}
-              label={sessionMeta.agentSnapshot?.name || shortenId(sessionMeta.agentSnapshot?.id || agentId)}
-              onClick={() =>
-                setResourcePanel({ kind: "agent", id: sessionMeta.agentSnapshot?.id || agentId })
-              }
-            />
-          )}
-          {sessionMeta.environmentId && (
-            <Badge
-              icon={<EnvIcon />}
-              label={sessionMeta.envSnapshot?.name || shortenId(sessionMeta.environmentId)}
-              onClick={() =>
-                setResourcePanel({ kind: "environment", id: sessionMeta.environmentId! })
-              }
-            />
-          )}
-          {(sessionMeta.vaults ?? sessionMeta.vaultIds?.map((id) => ({ id, name: undefined })) ?? []).map((v) => (
-            <Badge
-              key={v.id}
-              icon={<VaultIcon />}
-              label={v.name || shortenId(v.id)}
-              onClick={() => setResourcePanel({ kind: "vault", id: v.id })}
-            />
-          ))}
-          <SessionDurationBadge events={events} />
-          {sessionMeta.createdAt && <RelativeTimeBadge iso={sessionMeta.createdAt} />}
-          <div className="ml-auto flex items-center gap-2">
-            {/* Stop / Interrupt — only while the session is actively running.
-                Posts user.interrupt scoped to the active thread; server fires
-                thread AbortController + flushes pending events + emits
-                status_idle. Recovery path for stuck-Running sessions where a
-                DO eviction killed the stream and no clean status_idle ever
-                landed. */}
-            {status === "running" && view !== "chat" && (
-              <Button variant="ghost"
-                onClick={() => void interrupt()}
-                disabled={interrupting}
-                className="inline-flex items-center justify-center px-2.5 py-1 min-h-11 sm:min-h-0 rounded-md text-xs font-medium bg-bg-surface/60 text-fg-muted hover:bg-bg-surface hover:text-fg disabled:opacity-50 transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
-                title="Interrupt the active turn on this thread"
-              >
-                {interrupting ? "Stopping…" : "Stop"}
-              </Button>
+                  }}
+                  disabled={savingTitle}
+                >
+                  {t.common.cancel}
+                </Button>
+              </>
+            ) : (
+              <>
+                <h1
+                  className="min-w-0 truncate text-2xl leading-8 font-bold tracking-tight text-ddc-heading"
+                  title={sessionMeta.title?.trim() || undefined}
+                >
+                  {sessionMeta.title?.trim() || (
+                    <span className="font-normal text-ddc-text-muted">{t.sessions.untitledSession}</span>
+                  )}
+                </h1>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => {
+                    setTitleDraft(sessionMeta.title ?? "");
+                    setEditingTitle(true);
+                  }}
+                  aria-label={t.sessions.editTitle}
+                  title={t.sessions.editTitle}
+                  className="text-ddc-icon-muted hover:text-ddc-text"
+                >
+                  <PencilIcon />
+                </Button>
+              </>
             )}
-            <Button variant="ghost"
-              onClick={() => setShowFiles((v) => !v)}
-              className={`inline-flex items-center justify-center px-2.5 py-1 min-h-11 sm:min-h-0 rounded-md text-xs font-medium transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
-                showFiles
-                  ? "bg-bg-surface text-fg"
-                  : "bg-bg-surface/60 text-fg-muted hover:bg-bg-surface hover:text-fg"
-              }`}
-              title="Files the agent wrote to /mnt/session/outputs/"
-            >
-              Files
-            </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={status as "idle" | "running" | "terminated" | "error" | string} />
+            {/* Итог траектории показываем только после завершения: пока
+                сессия идёт, статус несёт StatusPill, двойной значок не нужен. */}
+            <TrajectoryOutcomeChip trajectory={trajectory} />
+            {/* Оценка проверяющего. Скрыта, пока проверка не прошла: нет
+                оценки не значит «ноль». */}
+            <TrajectoryRewardChip trajectory={trajectory} />
+            {/* Агент, окружение и хранилища показываем всегда, чтобы состав
+                сессии читался с первого взгляда. Если снимок не принёс имя,
+                подставляем короткий id. */}
+            {(sessionMeta.agentSnapshot?.id || agentId) && (
+              <Badge
+                icon={<AgentIcon />}
+                label={sessionMeta.agentSnapshot?.name || shortenId(sessionMeta.agentSnapshot?.id || agentId)}
+                title={`Агент: ${sessionMeta.agentSnapshot?.name || sessionMeta.agentSnapshot?.id || agentId}`}
+                onClick={() =>
+                  setResourcePanel({ kind: "agent", id: sessionMeta.agentSnapshot?.id || agentId })
+                }
+              />
+            )}
+            {sessionMeta.environmentId && (
+              <Badge
+                icon={<EnvIcon />}
+                label={sessionMeta.envSnapshot?.name || shortenId(sessionMeta.environmentId)}
+                title={`Окружение: ${sessionMeta.envSnapshot?.name || sessionMeta.environmentId}`}
+                onClick={() =>
+                  setResourcePanel({ kind: "environment", id: sessionMeta.environmentId! })
+                }
+              />
+            )}
+            {(sessionMeta.vaults ?? sessionMeta.vaultIds?.map((id) => ({ id, name: undefined })) ?? []).map((v) => (
+              <Badge
+                key={v.id}
+                icon={<VaultIcon />}
+                label={v.name || shortenId(v.id)}
+                title={`Хранилище секретов: ${v.name || v.id}`}
+                onClick={() => setResourcePanel({ kind: "vault", id: v.id })}
+              />
+            ))}
+            <SessionDurationBadge events={events} />
+            {sessionMeta.createdAt && <RelativeTimeBadge iso={sessionMeta.createdAt} />}
+          </div>
+        </div>
+        <div className="head-actions">
+          {/* Остановить показываем, пока сессия выполняется. Отправляет
+              user.interrupt для активного потока: сервер прерывает ход,
+              сбрасывает очередь и сообщает status_idle. Это выход из
+              «зависшего» состояния, когда поток оборвался без status_idle. */}
+          {status === "running" && view !== "chat" && (
+            <Button
+              variant="outline"
+              onClick={() => void interrupt()}
+              loading={interrupting}
+              loadingLabel="Остановка…"
+              title="Прервать текущий ход в этом потоке"
+            >
+              <SquareIcon />
+              Остановить
+            </Button>
+          )}
+          <Button
+            variant={showFiles ? "secondary" : "outline"}
+            onClick={() => setShowFiles((v) => !v)}
+            aria-pressed={showFiles}
+            aria-label="Файлы сессии"
+            title="Файлы, которые агент сохранил в /mnt/session/outputs/"
+          >
+            <FolderOpenIcon />
+            <span className="hidden sm:inline">Файлы</span>
+          </Button>
+          {/* Просмотр траектории доступен, когда ленивая загрузка завершилась.
+              При ошибке кнопка остаётся активной: причину покажет окно. */}
+          <Button
+            variant="outline"
+            onClick={() => setShowTrajectory(true)}
+            disabled={trajectory === undefined || trajectory === "loading"}
+            aria-label="Траектория"
+            title={trajectoryTitle}
+          >
+            <FileJsonIcon />
+            <span className="hidden sm:inline">Траектория</span>
+          </Button>
         </div>
       </div>
 
-      {/* Thread selector — only when sub-agent threads exist. Primary
-          is implicit at index 0 ("Main"); sub-agent tabs appear as new
-          threads spawn (live-updated by session.thread_created handler).
-          Selecting a thread filters both Conversation and Timeline views.
-          Renders as a depth-indented tree when sub-agents themselves
-          spawn sub-workers — flat horizontal row for the common case
-          (single layer of workers under primary). */}
+      {/* Режим просмотра. Одна панель вкладок tabs (правило 5 DDC),
+          справа число событий на хронологии. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+        <div role="tablist" aria-label="Режим просмотра" className="tabs">
+          <ViewTab label="Разговор" active={view === "chat"} onClick={() => setView("chat")} />
+          <ViewTab
+            label="Хронология"
+            active={view === "timeline"}
+            onClick={() => startTransition(() => setView("timeline"))}
+          />
+        </div>
+        {view === "timeline" && (
+          <span className="text-xs text-ddc-text-muted tabular-nums">
+            {events.length} {plural(events.length, "событие", "события", "событий")}
+          </span>
+        )}
+      </div>
+
+      {/* Потоки: только когда есть субагенты. Основной поток неявно стоит
+          первым, вкладки субагентов появляются по мере их запуска. Выбор
+          потока фильтрует и разговор, и хронологию. */}
       {threads.length > 0 && (
         <ThreadTree
           threads={threads}
@@ -970,45 +1045,14 @@ export function SessionDetail() {
         />
       )}
 
-      {/* View tabs */}
-      <div role="tablist" aria-label="Session view" className="pl-3 pr-4 flex items-center gap-1 shrink-0">
-        <ViewTab label="Conversation" active={view === "chat"} onClick={() => setView("chat")} />
-        <ViewTab
-          label="Timeline"
-          active={view === "timeline"}
-          onClick={() => startTransition(() => setView("timeline"))}
-        />
-        {view === "timeline" && (
-          <span className="ml-auto text-xs text-fg-subtle font-mono">{events.length} events</span>
-        )}
-        {/* Trajectory viewer trigger — pushed to the right edge of the tab
-            row. Disabled until the lazy fetch resolves so the click never
-            opens an empty modal. Errors keep the button enabled (the modal
-            shows the error). */}
-        <Button variant="ghost"
-          onClick={() => setShowTrajectory(true)}
-          disabled={trajectory === undefined || trajectory === "loading"}
-          className={`${view === "timeline" ? "ml-3" : "ml-auto"} inline-flex items-center min-h-11 sm:min-h-0 text-xs text-fg-muted hover:text-fg disabled:opacity-40 disabled:cursor-not-allowed bg-bg-surface/60 hover:bg-bg-surface rounded px-2 py-1 transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] my-1.5`}
-          title={
-            trajectory === "loading"
-              ? "Loading trajectory…"
-              : trajectory === "error"
-              ? "Trajectory unavailable — click to inspect error"
-              : "View raw Trajectory v1 envelope"
-          }
-        >
-          Trajectory
-        </Button>
-      </div>
-
-      {/* Linear context (when triggered by a Linear webhook) */}
+      {/* Контекст Linear (сессию запустил вебхук Linear) */}
       {linear && (
-        <div className="pl-3 pr-4 py-2 bg-info-subtle text-xs flex items-center gap-2 text-info">
-          <span>🔗</span>
+        <div className="callout shrink-0 flex-wrap items-center">
+          <LinkIcon className="size-4 flex-none" aria-hidden="true" />
           <span className="font-medium">Linear</span>
-          <span className="opacity-60">·</span>
+          <span className="text-ddc-text-muted">·</span>
           <span>
-            issue{" "}
+            задача{" "}
             <span className="font-mono">{linear.issueIdentifier ?? linear.issueId}</span>
           </span>
           {linear.workspaceId && (
@@ -1016,94 +1060,93 @@ export function SessionDetail() {
               href={`https://linear.app`}
               target="_blank"
               rel="noreferrer"
-              className="ml-auto hover:underline"
+              className="link ml-auto inline-flex items-center gap-1"
             >
-              Open in Linear ↗
+              Открыть в Linear
+              <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
             </a>
           )}
         </div>
       )}
 
-      {/* Slack context (when triggered by a Slack event) */}
+      {/* Контекст Slack (сессию запустило событие Slack) */}
       {slack && (
-        <div className="pl-3 pr-4 py-2 bg-accent-violet-subtle text-xs flex items-center gap-2 text-accent-violet flex-wrap">
-          <span>💬</span>
+        <div className="callout shrink-0 flex-wrap items-center">
+          <MessageSquareIcon className="size-4 flex-none" aria-hidden="true" />
           <span className="font-medium">Slack</span>
-          <span className="opacity-60">·</span>
+          <span className="text-ddc-text-muted">·</span>
           <span>
             {slack.channelId ? (
               slack.workspaceId ? (
                 <a
                   href={`slack://channel?team=${slack.workspaceId}&id=${slack.channelId}`}
-                  className="font-mono underline hover:no-underline"
-                  title="Open in Slack desktop"
+                  className="link font-mono"
+                  title="Открыть в приложении Slack"
                 >
-                  channel {slack.channelId} ↗
+                  канал {slack.channelId}
                 </a>
               ) : (
                 <>
-                  channel <span className="font-mono">{slack.channelId}</span>
+                  канал <span className="font-mono">{slack.channelId}</span>
                 </>
               )
             ) : (
-              "—"
+              "–"
             )}
             {slack.threadTs && (
               <>
-                {" "}thread{" "}
+                {" "}тред{" "}
                 <span className="font-mono">{slack.threadTs}</span>
               </>
             )}
           </span>
           {slack.eventKind && (
-            <span className="opacity-60 font-mono uppercase tracking-wider text-xs">
+            <span className="font-mono text-xs tracking-wider text-ddc-text-muted uppercase">
               {slack.eventKind}
             </span>
-          )}
-          {slack.publicationId && (
-            <>
-              <span className="opacity-60">·</span>
-              <Link
-                to={`/integrations/slack/publish?pub=${slack.publicationId}`}
-                className="underline hover:no-underline"
-                title="Open the Slack publication this session is bound to"
-              >
-                publication →
-              </Link>
-            </>
           )}
         </div>
       )}
 
-      {/* Filter by selected thread. Untagged events (legacy + spans
-          that haven't been thread-stamped yet) are treated as primary —
-          matches the bridge filter in handleSSEStream. */}
-      {(() => null)()}
-      <div className="flex-1 flex min-h-0">
-        <div className="flex-1 flex flex-col min-w-0">
-      {view === "chat" ? (
-        <ManagedSessionConversation
-          afterTurns={transientActivity}
-          composer={<SessionComposer
-            interrupting={interrupting}
-            onError={(error) => toast.error(error.message)}
-            onStop={() => void interrupt()}
-            onSubmit={async ({ text, files }) => {
-              const rawFiles = files
-                .map((file) => file.file)
-                .filter((file): file is File => file instanceof File);
-              await send(text, rawFiles);
-            }}
-            running={status === "running"}
-            sending={sending}
-          />}
-          empty={hasTransientActivity ? transientActivity : undefined}
-          sessionId={id}
-          turns={canonicalTurns}
-        />
-      ) : (
-        <TimelineView key={`${id ?? "session"}:${activeThreadId}`} events={timelineEvents} />
-      )}
+      {/* Рабочая область: разговор или хронология, справа выдвижная панель.
+          События фильтруются по выбранному потоку. События без метки потока
+          (старые и служебные) относятся к основному. Карточка относительная,
+          чтобы панели на узком экране ложились поверх неё. */}
+      <div className="card relative flex min-h-[24rem] min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {view === "chat" ? (
+            <ManagedSessionConversation
+              afterTurns={transientActivity}
+              composer={<SessionComposer
+                interrupting={interrupting}
+                onError={(error) => toast.error(error.message)}
+                onStop={() => void interrupt()}
+                onSubmit={async ({ text, files }) => {
+                  const rawFiles = files
+                    .map((file) => file.file)
+                    .filter((file): file is File => file instanceof File);
+                  await send(text, rawFiles);
+                }}
+                running={status === "running"}
+                sending={sending}
+              />}
+              empty={
+                hasTransientActivity
+                  ? transientActivity
+                  : historyLoaded
+                    ? undefined
+                    : <SessionHistorySkeleton />
+              }
+              sessionId={id}
+              turns={canonicalTurns}
+            />
+          ) : (
+            <TimelineView
+              key={`${id ?? "session"}:${activeThreadId}`}
+              events={timelineEvents}
+              loading={!historyLoaded}
+            />
+          )}
         </div>
         {resourcePanel && (
           <ResourcePanel
@@ -1125,39 +1168,48 @@ export function SessionDetail() {
   );
 }
 
-/** Outcome chip rendered in the session header strip. Hidden while
- *  the trajectory is loading / errored / still running so we never
- *  paint an inaccurate state. The "running" outcome is intentionally
- *  squelched here — StatusPill already renders the live status. */
+/** Скелетон разговора, пока грузится история: реплика пользователя справа и
+ *  ответ агента слева, как в разметке чата (правило 12 DDC). */
+function SessionHistorySkeleton() {
+  return (
+    <div
+      className="chat-turn-frame mx-auto w-full max-w-3xl min-w-0 space-y-4"
+      aria-busy="true"
+      role="status"
+    >
+      <span className="sr-only">Загрузка сессии…</span>
+      <div className="ml-auto w-2/3 space-y-2 rounded-xl bg-ddc-surface-muted p-4">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-2/3" />
+      </div>
+      <div className="w-full space-y-2">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-1/2" />
+      </div>
+    </div>
+  );
+}
 
 function ViewTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  // Wireless tab marker: picked the ghost-pill option (bg-bg-surface)
-  // over an underline or accent dot because the entire session-detail
-  // surface drops outer dividers in this refactor — leaving a per-tab
-  // underline behind would have re-introduced exactly the stacked-lines
-  // look the page is trying to escape. Bold + brand text + a subtle
-  // surface fill keeps the active state clearly distinguishable without
-  // any line at all.
+  // Вкладка DDC (.tab): выбранная читается через aria-selected и ложится на
+  // заливку brand-50, подчёркивания нет (правило 5).
   return (
-    <Button variant="ghost"
+    <PlainButton
+      type="button"
       onClick={onClick}
       role="tab"
       aria-selected={active}
       tabIndex={active ? 0 : -1}
-      className={`inline-flex items-center justify-center px-3 py-2 min-h-11 sm:min-h-0 text-sm rounded-md my-1.5 transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
-        active
-          ? "bg-bg-surface text-brand font-semibold"
-          : "text-fg-subtle hover:text-fg-muted hover:bg-bg-surface/60"
-      }`}
+      className="tab"
     >
       {label}
-    </Button>
+    </PlainButton>
   );
 }
 
-/** Tighter visual than ViewTab — sub-agent tabs typically need to fit
- *  more than the 2-3 view options. Smaller padding + horizontal scroll
- *  in the parent keeps long sub-agent rosters readable. */
+/** Вкладка потока. Отступ слева растёт с глубиной, чтобы дерево субагентов
+ *  читалось как стек вызовов: родитель выше своих потомков. */
 function ThreadTab({
   label,
   active,
@@ -1170,37 +1222,33 @@ function ThreadTab({
   depth?: number;
 }) {
   return (
-    <Button variant="ghost"
+    <PlainButton
+      type="button"
       onClick={onClick}
       role="tab"
       aria-selected={active}
       tabIndex={active ? 0 : -1}
-      className={`py-1 min-h-11 sm:min-h-0 text-xs whitespace-nowrap rounded-md my-1 transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] flex items-center gap-1 ${
-        active
-          ? "bg-bg-surface text-info font-semibold"
-          : "text-fg-subtle hover:text-fg-muted hover:bg-bg-surface/60"
-      }`}
-      style={{ paddingLeft: `${0.75 + depth * 0.75}rem`, paddingRight: "0.75rem" }}
+      className="tab"
+      style={{ paddingLeft: `${0.75 + depth * 0.75}rem` }}
     >
-      {/* Tree branch glyph for depth>0 — visual cue that this thread
-          was spawned by another (rather than being a sibling of Main).
-          Plain text (not a unicode-only flair) so it survives in both
-          dark and light themes without needing a separate icon. */}
-      {depth > 0 && <span className="text-fg-subtle">└</span>}
+      {/* Знак ветки для depth>0: поток порождён другим потоком, а не стоит
+          рядом с основным. */}
+      {depth > 0 && (
+        <CornerDownRightIcon className="size-3.5 text-ddc-icon-muted" aria-hidden="true" />
+      )}
       <span>{label}</span>
-    </Button>
+    </PlainButton>
   );
 }
 
 /**
- * Depth-indented thread tree. Root = sthr_primary (rendered as "Main");
- * children indented by parent_thread_id. DFS pre-order so the tree
- * reads top-to-bottom like a stack trace: parents above their children.
+ * Дерево потоков с отступом по глубине. Корень sthr_primary называется
+ * «Основной», дети идут по parent_thread_id обходом в глубину: родители
+ * выше потомков.
  *
- * Orphans (parent_thread_id pointing at a thread we don't know about
- * — possible mid-spawn race or stale snapshot) get re-parented to
- * sthr_primary so they stay visible instead of being hidden in a
- * dangling subtree.
+ * Сирот (parent_thread_id указывает на неизвестный поток: гонка при запуске
+ * или устаревший снимок) переносим под sthr_primary, чтобы они остались
+ * видимыми.
  */
 function ThreadTree({
   threads,
@@ -1223,7 +1271,7 @@ function ThreadTree({
     childrenOf.set(parent, arr);
   }
   const flat: Array<{ id: string; label: string; depth: number }> = [
-    { id: "sthr_primary", label: "Main", depth: 0 },
+    { id: "sthr_primary", label: "Основной", depth: 0 },
   ];
   const walk = (parentId: string, depth: number) => {
     const kids = childrenOf.get(parentId) ?? [];
@@ -1234,16 +1282,20 @@ function ThreadTree({
   };
   walk("sthr_primary", 1);
   const maxDepth = flat.reduce((m, n) => Math.max(m, n.depth), 0);
-  // When the tree is shallow (one layer of workers under Main), keep
-  // the original horizontal row for zero visual change vs Phase 3.
-  // Deeper trees switch to a vertical stacked layout so the indentation
-  // is actually readable.
+  // Неглубокое дерево (один слой работников под основным) остаётся
+  // горизонтальной панелью с прокруткой; глубокое встаёт столбцом, иначе
+  // отступы не прочитать.
   const isFlat = maxDepth <= 1;
-  const containerClass = isFlat
-    ? "pl-3 pr-4 flex items-center gap-1 shrink-0 overflow-x-auto"
-    : "pl-3 pr-4 py-1 flex flex-col items-stretch gap-0 shrink-0 overflow-y-auto max-h-40";
   return (
-    <div role="tablist" aria-label="Threads" className={containerClass}>
+    <div
+      role="tablist"
+      aria-label="Потоки"
+      className={
+        isFlat
+          ? "tabs shrink-0"
+          : "tabs max-h-44 shrink-0 flex-col items-stretch gap-0 overflow-y-auto"
+      }
+    >
       {flat.map((n) => (
         <ThreadTab
           key={n.id}
@@ -1273,8 +1325,8 @@ function SessionDurationBadge({ events }: { events: Event[] }) {
   return (
     <Badge
       icon={<DurationIcon />}
-      label={formatDuration(last - first)}
-      title="Wall-clock from first to last event"
+      label={formatDurationRu(last - first)}
+      title="Время от первого до последнего события"
     />
   );
 }
@@ -1285,8 +1337,8 @@ function RelativeTimeBadge({ iso }: { iso: string }) {
   return (
     <Badge
       icon={<ClockIcon />}
-      label={formatRelative(Date.now() - t)}
-      title={new Date(iso).toLocaleString()}
+      label={formatRelativeRu(Date.now() - t)}
+      title={`Создана ${formatDateTimeRu(iso)}`}
     />
   );
 }
@@ -1331,18 +1383,14 @@ function SessionTransientActivity({
         <Tool defaultOpen key={`tool-input-${id}`}>
           <ToolHeader
             state="input-streaming"
-            toolName={name ?? "tool"}
+            toolName={name ?? "инструмент"}
             type="dynamic-tool"
           />
           <ToolContent>
             {partial ? (
               <div className="space-y-2 overflow-hidden">
-                <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Streaming input
-                </h4>
-                <div className="rounded-md bg-muted/50">
-                  <CodeBlock code={partial} language="json" />
-                </div>
+                <h4 className="eyebrow">Параметры вызова</h4>
+                <CodeBlock code={partial} language="json" />
               </div>
             ) : null}
           </ToolContent>
@@ -1352,7 +1400,7 @@ function SessionTransientActivity({
         <Message from="assistant" key={`stream-${id}`}>
           <MessageContent>
             <Markdown>{text}</Markdown>
-            <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-fg-subtle/50 align-middle" />
+            <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-ddc-text-muted/50 align-middle" />
           </MessageContent>
         </Message>
       ))}
@@ -1360,10 +1408,9 @@ function SessionTransientActivity({
         && streams.size === 0
         && thinkingStreams.size === 0
         && toolInputStreams.size === 0 ? (
-        <div aria-label="Agent is working" className="flex gap-1 py-2" role="status">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-fg-subtle" />
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-fg-subtle [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-fg-subtle [animation-delay:300ms]" />
+        <div className="flex items-center gap-2 py-2 text-sm text-ddc-text-muted" role="status">
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          Агент работает…
         </div>
       ) : null}
     </div>
@@ -1465,16 +1512,16 @@ function EventRender({
         const scheduledAt = metadata?.scheduled_at;
         return (
           <Message from="system">
-            <div className="flex items-center gap-1.5 text-xs text-fg-subtle mb-1">
+            <div className="mb-1 flex items-center gap-1.5 text-xs text-ddc-text-muted">
               <span
-                className="inline-flex items-center gap-1 rounded-full bg-info-subtle text-info px-2 py-0.5 font-medium text-xs"
-                title={scheduledAt ? `Scheduled at ${scheduledAt}` : undefined}
+                className="inline-flex h-5 items-center gap-1 rounded-md bg-ddc-tone-info-bg px-2 text-xs leading-4 font-medium text-ddc-tone-info-fg ring-1 ring-inset ring-ddc-tone-info-ring"
+                title={scheduledAt ? `Запланировано на ${formatDateTimeRu(scheduledAt)}` : undefined}
               >
-                <span aria-hidden>🕒</span>
-                Scheduled wakeup
+                <ScheduleIcon className="size-3.5" aria-hidden="true" />
+                Пробуждение по расписанию
               </span>
             </div>
-            <MessageContent className="rounded-2xl rounded-bl-sm px-4 py-3 bg-info-subtle text-info">
+            <MessageContent className="rounded-xl bg-ddc-tone-info-bg px-4 py-3 text-ddc-tone-info-fg">
               {text}
             </MessageContent>
           </Message>
@@ -1488,7 +1535,7 @@ function EventRender({
       // bg-secondary which we've aliased to OMA's bg-surface).
       // Wireless: dropped the border-border-strong outline on both
       // override states — line-through + opacity (cancelled) and the
-      // ⏳/Pending label above the bubble (pending) carry the signal
+      // метка «В очереди» над пузырём (pending) несут сигнал
       // without a per-bubble outline competing with the surrounding
       // air.
       const cancelledOverride = "line-through opacity-70";
@@ -1496,10 +1543,10 @@ function EventRender({
       return (
         <Message from="user">
           {(isPending || isCancelled) && (
-            <div className="text-xs text-fg-subtle text-right flex items-center justify-end gap-1">
-              {isPending && <span aria-hidden>⏳</span>}
-              {isCancelled && <span aria-hidden>✗</span>}
-              <span>{isCancelled ? "Retracted" : "Pending…"}</span>
+            <div className="flex items-center justify-end gap-1 text-right text-xs text-ddc-text-muted">
+              {isPending && <ScheduleIcon className="size-3.5" aria-hidden="true" />}
+              {isCancelled && <XIcon className="size-3.5" aria-hidden="true" />}
+              <span>{isCancelled ? "Отозвано" : "В очереди…"}</span>
             </div>
           )}
           <MessageContent
@@ -1549,8 +1596,8 @@ function EventRender({
         event.type === "agent.mcp_tool_use"
           ? (event as { mcp_server_name?: string }).mcp_server_name
           : undefined;
-      const baseName = event.name ?? "tool";
-      const title = mcpServerName ? `${baseName} (mcp · ${mcpServerName})` : baseName;
+      const baseName = event.name ?? "инструмент";
+      const title = mcpServerName ? `${baseName} (MCP · ${mcpServerName})` : baseName;
       // Result text — Tool's <ToolOutput> takes the raw value and will
       // either CodeBlock-stringify an object or render a string in a
       // CodeBlock. We pre-stringify content arrays since they're an
@@ -1612,7 +1659,7 @@ function EventRender({
         <Tool>
           <ToolHeader
             type="dynamic-tool"
-            toolName="tool result (unpaired)"
+            toolName="Результат инструмента (без вызова)"
             state="output-available"
           />
           <ToolContent>
@@ -1624,13 +1671,13 @@ function EventRender({
 
     case "session.error":
       return (
-        <div className="max-w-2xl bg-danger-subtle rounded-lg px-4 py-2.5 text-sm text-danger">
-          <div>Error: {event.error}</div>
+        <div className="callout-danger max-w-2xl flex-col items-stretch gap-1.5" role="alert">
+          <div>Ошибка: {event.error}</div>
           {modelErrorCause && (
-            <div className="mt-1.5 pt-1.5 text-sm opacity-90">
-              <span className="font-medium">Cause</span>
+            <div>
+              <span className="font-medium">Причина</span>
               {modelErrorCause.model && (
-                <span className="ml-1 font-mono opacity-75">({modelErrorCause.model})</span>
+                <span className="ml-1 font-mono">({modelErrorCause.model})</span>
               )}
               : {modelErrorCause.error}
             </div>
@@ -1640,8 +1687,8 @@ function EventRender({
 
     case "session.warning":
       return (
-        <div className="max-w-2xl bg-warning-subtle rounded-lg px-4 py-2.5 text-sm text-warning">
-          <div className="font-medium mb-0.5">Warning ({String(event.source ?? "")})</div>
+        <div className="callout-warning max-w-2xl flex-col items-stretch gap-0.5" role="status">
+          <div className="font-medium">Предупреждение ({String(event.source ?? "")})</div>
           <div>{String(event.message ?? "")}</div>
         </div>
       );

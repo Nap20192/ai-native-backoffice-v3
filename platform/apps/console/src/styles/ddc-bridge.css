@@ -1,0 +1,158 @@
+/*
+  Мост DDC -> токены консоли.
+
+  Консоль (форк OpenMA) красится семантическими токенами: --bg, --fg,
+  --brand, --border, --success и так далее. Их значения приходят из
+  @openma/common/brand/tokens.css (кораллово-серая палитра) и из
+  console-tokens.css (геометрия плотного интерфейса). Этот файл подключается
+  после обоих и целиком переопределяет их значениями дизайн-системы DDC из
+  ddc-tokens.css: фон, поверхности, текст, границы, акцент и primary на
+  зелёной шкале brand (#00805E), статусные тона, кольцо фокуса, радиусы,
+  высоты контролов и системный шрифт.
+
+  Значения не дублируются: каждый токен консоли ссылается на смысловую
+  переменную --ddc-*, а та сама меняется между светлой и тёмной темой
+  (.dark на <html>). Поэтому отдельного блока для тёмной темы нужно только
+  там, где у DDC нет парной переменной.
+
+  Что не менять: строки токенов в console-tokens.css проверяют тесты
+  (AppShell.linear, AppSidebar.linear, DataTable.linear). Значения DDC
+  лежат здесь, а console-tokens.css остаётся как был.
+*/
+
+:root,
+.dark {
+  /* ---------- Бренд ----------
+     --brand и --brand-hover служат и фоном (bg-brand), и акцентным
+     текстом (text-brand). В светлой теме это brand-600 и brand-700, в
+     тёмной brand-300 и brand-200 (акцентный текст DDC). Кнопка primary от
+     --brand не зависит: см. --color-primary в index.css. */
+  --brand: var(--ddc-link);
+  --brand-hover: var(--ddc-link-hover);
+  --brand-subtle: var(--ddc-selected-bg);
+  --ring: var(--ddc-ring);
+
+  /* ---------- Поверхности ----------
+     --bg: карточка, поповер, окно, поле ввода (белая / ink-900).
+     --bg-sidebar: холст под карточками и боковое меню (ink-50 / ink-950).
+     --bg-surface: вложенная панель, наведение на строку (ink-50 / ink-800 60%).
+     --bg-bubble: дорожка сегментов, пузырь сообщения (ink-100 / ink-800). */
+  --bg: var(--ddc-surface);
+  --bg-sidebar: var(--ddc-bg);
+  --bg-surface: var(--ddc-surface-muted);
+  --bg-bubble: var(--ddc-surface-sunken);
+  --bg-overlay: var(--ddc-overlay);
+
+  /* ---------- Текст ----------
+     fg: основной текст; fg-muted: подпись поля и неактивный пункт (ink-600
+     / ink-300); fg-subtle: вторичный текст text-muted (ink-500 / ink-400). */
+  --fg: var(--ddc-text);
+  --fg-muted: var(--ddc-label);
+  --fg-subtle: var(--ddc-text-muted);
+
+  /* ---------- Границы ---------- */
+  --border: var(--ddc-divider);
+  --border-strong: var(--ddc-border-strong);
+  --border-chrome: var(--ddc-divider);
+
+  /* ---------- Статусы ----------
+     Токены статусов хранят цвет текста тона, а *-subtle подложку тона
+     (lib/tone.ts портала). Violet в DDC запрещён, его место занимает тон brand. */
+  --success: var(--ddc-success-text);
+  --success-subtle: var(--ddc-tone-success-bg);
+  --warning: var(--ddc-warning-text);
+  --warning-subtle: var(--ddc-tone-warning-bg);
+  --danger: var(--ddc-danger-text);
+  --danger-subtle: var(--ddc-tone-danger-bg);
+  --info: var(--ddc-tone-info-fg);
+  --info-subtle: var(--ddc-tone-info-bg);
+  --accent-violet: var(--ddc-tone-brand-fg);
+  --accent-violet-subtle: var(--ddc-tone-brand-bg);
+
+  /* ---------- Тени ----------
+     DDC знает одну тень, shadow-card. Цветных теней и свечения нет. */
+  --shadow-md: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-card-soft: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-card-press: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-input-rest: none;
+  --shadow-chip-press: none;
+  --shadow-pip: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-route: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-overlay: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-popover: 0 1px 2px rgba(15, 20, 26, 0.04), 0 8px 24px -8px rgba(15, 20, 26, 0.08);
+  --shadow-pill: none;
+  --shadow-pill-active: none;
+  --pill-shadow: none;
+  --pill-active-shadow: none;
+
+  /* ---------- Слои консоли на палитре DDC ---------- */
+  --surface-row-hover: var(--ddc-surface-muted);
+  --surface-row-selected: var(--ddc-selected-bg);
+  --data-row-bg: transparent;
+  --pill-bg: var(--ddc-surface);
+  --pill-border: var(--ddc-border-strong);
+  --pill-hover-bg: var(--ddc-surface-muted);
+  --pill-hover-border: var(--ddc-border-strong);
+  --pill-active-bg: var(--ddc-selected-bg);
+  --pill-active-border: var(--ddc-tone-brand-ring);
+  --sidebar-preview-dim: var(--ddc-overlay);
+
+  /* ---------- Тип ----------
+     Шкала DDC: label 12, body 14 (text-sm), ui 16 (section-title),
+     section 18 (заголовок окна), title 24 (заголовок страницы), kpi 24.
+     Строка 20px под text-sm. */
+  --console-type-label: 12px;
+  --console-type-body: 14px;
+  --console-type-ui: 16px;
+  --console-type-section: 18px;
+  --console-type-title: 24px;
+  --console-type-kpi: 24px;
+  --type-line: 20px;
+
+  /* ---------- Радиусы ----------
+     sm 6 (rounded-md: бейдж, kbd), md и row 8 (rounded-lg: пункт меню,
+     btn-xs, строка), card и popover 16 (rounded-2xl: карточка, окно, меню). */
+  --console-radius-sm: 6px;
+  --console-radius-md: 8px;
+  --console-radius-row: 8px;
+  --console-radius-card: 16px;
+  --console-radius-popover: 16px;
+  --console-radius-control: 12px;
+
+  /* ---------- Высоты контролов (правило 1) ----------
+     Ряд страницы 40px, панель инструментов 36px, плотно 32px, главное
+     действие героя 44px. --control-h и --chip-h это 40px (фильтр стоит в
+     одном ряду с кнопкой и поиском), пункт меню 36px, строка таблицы 40px. */
+  --control-h: 40px;
+  --chip-h: 40px;
+  --menu-action-row-h: 36px;
+  --menu-picker-row-h: 36px;
+  --table-head-h: 40px;
+  --data-row-h: 40px;
+  --data-row-gap: 0px;
+  --data-head-body-gap: 0px;
+  --list-toolbar-h: 64px;
+  --list-toolbar-pad-top: 12px;
+  --list-toolbar-pad-bottom: 12px;
+  --detail-action-strip-h: 56px;
+  --sidebar-row-h: 36px;
+
+  /* ---------- Поля и ширины ----------
+     Поле страницы DDC 32px с md (на телефоне 24px, см. console-pages.css).
+     Боковое меню 256px, шапка 64px. */
+  --list-frame-inset: 32px;
+  --detail-frame-inset: 32px;
+  --dashboard-frame-inset: 32px;
+  --settings-frame-inset: 32px;
+  --shell-top-h: 64px;
+  --shell-sidebar-w: 256px;
+}
+
+:root {
+  --brand-fg: #ffffff;
+}
+
+.dark {
+  --brand-fg: #0f141a;
+}

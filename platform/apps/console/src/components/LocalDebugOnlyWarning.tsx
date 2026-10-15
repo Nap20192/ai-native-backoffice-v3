@@ -16,21 +16,21 @@ export function LocalDebugOnlyWarning({
   return (
     <div
       role="note"
-      aria-label="Local debugging only"
-      className={`rounded-lg border border-warning/30 bg-warning-subtle px-3 py-2.5 text-xs text-warning ${className}`.trim()}
+      aria-label="Только для локальной отладки"
+      className={`callout-warning flex-col gap-1 text-xs ${className}`.trim()}
       {...props}
     >
-      <div className="font-medium">Local debugging only — high risk</div>
-      <p className="mt-1 leading-relaxed text-fg-muted">
-        Codex/ChatGPT subscription login stays on this trusted host. Never copy
-        <code className="mx-1 rounded bg-bg px-1 py-0.5 font-mono text-[11px]">~/.codex/auth.json</code>
-        or OAuth tokens into a sandbox. Remote or managed sandboxes must use an
-        approved API key or provider OAuth through the OMA model gateway.
+      <div className="font-semibold">Только для локальной отладки, высокий риск</div>
+      <p className="leading-relaxed">
+        Вход по подписке Codex/ChatGPT остаётся на этом доверенном хосте. Никогда не копируйте
+        <code className="mx-1 rounded bg-ddc-surface px-1 py-0.5 font-mono text-2xs">~/.codex/auth.json</code>
+        или токены OAuth в песочницу. Удалённые и управляемые песочницы должны использовать
+        утверждённый API-ключ или OAuth провайдера через шлюз моделей OMA.
       </p>
-      <p className="mt-1 leading-relaxed text-fg-muted">
-        Subscription credentials are not a production integration: provider terms,
-        rate limits, or security checks may restrict or suspend the account. Keep
-        this direct-host path for local debugging only.
+      <p className="leading-relaxed">
+        Учётные данные подписки не подходят для рабочей среды: условия провайдера, лимиты
+        или проверки безопасности могут ограничить или заблокировать аккаунт. Этот путь только
+        для локальной отладки.
       </p>
     </div>
   );

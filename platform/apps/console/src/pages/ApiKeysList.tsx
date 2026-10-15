@@ -1,10 +1,13 @@
+import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useEffect, useMemo, useState } from "react";
-import { XCircleIcon } from "lucide-react";
+import { CopyIcon, TriangleAlertIcon, XCircleIcon, PlusIcon } from "lucide-react";
+import { toast } from "sonner";
 import { useApi } from "../lib/api";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { useI18n } from "../i18n";
@@ -20,11 +23,19 @@ export function ApiKeysList() {
   const { api } = useApi();
   const { t } = useI18n();
   const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [createdKey, setCreatedKey] = useState("");
   const [error, setError] = useState("");
+
+  // Отзыв ключа подтверждается окном ConfirmDialog (правило 11 DDC). Ключ
+  // не сбрасываем при закрытии: текст окна не должен пропасть, пока оно
+  // уходит с экрана.
+  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
+  const [revokeOpen, setRevokeOpen] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -52,16 +63,24 @@ export function ApiKeysList() {
       setName("");
       load();
     } catch (e: any) {
-      setError(e?.message || "Failed to create key");
+      setError(e?.message || "Не удалось создать ключ");
     }
   });
 
-  const remove = async (id: string) => {
-    if (!confirm("Revoke this API key? This cannot be undone.")) return;
+  const askRevoke = (key: ApiKey) => {
+    setRevokeTarget(key);
+    setRevokeOpen(true);
+  };
+
+  const revoke = async () => {
+    if (!revokeTarget) return;
+    setRevoking(true);
     try {
-      await api(`/v1/oma/api_keys/${id}`, { method: "DELETE" });
+      await api(`/v1/oma/api_keys/${revokeTarget.id}`, { method: "DELETE" });
       load();
     } catch {}
+    setRevoking(false);
+    setRevokeOpen(false);
   };
 
   const closeDialog = () => {
@@ -71,8 +90,23 @@ export function ApiKeysList() {
     setError("");
   };
 
-  const inputCls =
-    "w-full border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] placeholder:text-fg-subtle";
+  const copyKey = async () => {
+    try {
+      await navigator.clipboard.writeText(createdKey);
+      toast.success(t.common.copied);
+    } catch {
+      // Буфер обмена недоступен (например, не защищённый контекст): ключ
+      // остаётся на экране, его можно выделить и скопировать вручную.
+    }
+  };
+
+  // Поиск по ключам на клиенте: список плоский и короткий.
+  const visibleKeys = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    return needle
+      ? keys.filter((key) => `${key.name}\n${key.prefix}\n${key.id}`.toLocaleLowerCase().includes(needle))
+      : keys;
+  }, [keys, search]);
 
   // TanStack column defs. API keys come back as a small flat list (no
   // pagination, no server filters) so there's no per-column sort or
@@ -84,115 +118,146 @@ export function ApiKeysList() {
       {
         id: "name",
         accessorKey: "name",
-        header: "Name",
+        header: t.common.name,
+        size: 240,
+        meta: { grow: true },
         cell: ({ row }) => (
-          <>
-            <div className="font-medium text-fg">{row.original.name}</div>
-            <div className="text-xs text-fg-subtle font-mono">{row.original.id}</div>
-          </>
+          <div className="min-w-0">
+            <div className="truncate font-medium text-ddc-heading" title={row.original.name}>
+              {row.original.name}
+            </div>
+            <div className="truncate font-mono text-xs text-muted" title={row.original.id}>
+              {row.original.id}
+            </div>
+          </div>
         ),
         enableHiding: false,
       },
       {
         id: "key",
         accessorKey: "prefix",
-        header: "Key",
+        header: "Ключ",
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-fg-muted">{row.original.prefix}...</span>
+          <span className="font-mono text-xs text-muted">{row.original.prefix}...</span>
         ),
       },
       {
         id: "created",
         accessorKey: "created_at",
-        header: "Created",
+        header: t.common.created,
         cell: ({ row }) => (
-          <span className="text-fg-muted text-xs">
-            {new Date(row.original.created_at).toLocaleDateString()}
+          <span className="text-xs text-muted tabular-nums">
+            {formatDate(row.original.created_at)}
           </span>
         ),
       },
     ],
-    [],
+    [t],
   );
 
   return (
     <DataTable<ApiKey>
+      title={t.nav.apiKeys}
+      subtitle="Ключи для работы с платформой из командной строки и SDK. Значение ключа показывается один раз при создании."
       createLabel={t.apiKeys.newApiKey}
       onCreate={() => setShowCreate(true)}
-      data={keys}
+      searchPlaceholder="Поиск ключей…"
+      searchValue={search}
+      onSearchChange={setSearch}
+      data={visibleKeys}
       loading={loading}
       getRowId={(k) => k.id}
       rowActions={(key) => [
         {
-          label: "Revoke",
+          label: t.apiKeys.revokeKey,
           icon: <XCircleIcon className="size-4" />,
           destructive: true,
-          onSelect: () => void remove(key.id),
+          onSelect: () => askRevoke(key),
         },
       ]}
-      emptyTitle={t.apiKeys.noApiKeysYet}
+      emptyTitle={search.trim() ? "Ключи не найдены" : t.apiKeys.noApiKeysYet}
       emptyKind="api_key"
-      emptySubtitle="Create an API key to access the platform from CLI or SDK."
+      emptySubtitle={
+        search.trim()
+          ? "Измените поисковый запрос."
+          : "Создайте API-ключ, чтобы работать с платформой из CLI или SDK."
+      }
+      emptyAction={
+        !search.trim() && (
+          <Button onClick={() => setShowCreate(true)}><PlusIcon />{t.apiKeys.newApiKey}</Button>
+        )
+      }
       columns={columns}
     >
       <Modal
         open={showCreate}
         onClose={closeDialog}
-        title={createdKey ? "API Key Created" : "New API Key"}
+        title={createdKey ? "API-ключ создан" : "Новый API-ключ"}
+        closeDisabled={create.loading}
         footer={
           createdKey ? (
-            <Button onClick={closeDialog}>Done</Button>
+            <Button onClick={closeDialog}>Готово</Button>
           ) : (
             <>
               <Button variant="ghost" onClick={closeDialog} disabled={create.loading}>
-                Cancel
+                {t.common.cancel}
               </Button>
-              <Button onClick={create.run} loading={create.loading} loadingLabel="Creating…">
-                Create
+              <Button onClick={create.run} loading={create.loading}>
+                {t.common.create}
               </Button>
             </>
           )
         }
       >
         {createdKey ? (
-          <div className="space-y-3">
-            <p className="text-sm text-fg-muted">
-              Copy this key now. You won't be able to see it again.
-            </p>
-            <div className="bg-bg-surface border border-border rounded-lg p-3">
-              <code className="text-sm font-mono text-fg break-all select-all">
+          <div className="space-y-4">
+            <div role="note" className="callout-warning">
+              <TriangleAlertIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
+              Скопируйте ключ сейчас. Позже он не будет показан.
+            </div>
+            <div className="rounded-xl bg-ddc-surface-muted p-3">
+              <code className="font-mono text-sm break-all text-ddc-text select-all">
                 {createdKey}
               </code>
             </div>
-            <Button variant="ghost"
-              onClick={() => navigator.clipboard.writeText(createdKey)}
-              className="inline-flex items-center min-h-11 sm:min-h-0 text-sm text-brand hover:underline"
-            >
-              Copy to clipboard
+            <Button variant="outline" onClick={() => void copyKey()}>
+              <CopyIcon />
+              Скопировать
             </Button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {error && (
-              <div className="text-sm text-danger bg-danger-subtle border border-danger/30 rounded-lg px-3 py-2">
+              <div role="alert" className="callout-danger">
                 {error}
               </div>
             )}
-            <div>
-              <Label htmlFor="api-key-name" className="text-sm text-fg-muted block mb-1">
-                Name (optional)
-              </Label>
+            <Field label="Название (необязательно)">
               <Input
                 id="api-key-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className={inputCls}
-                placeholder="e.g. CLI key, CI/CD"
+                placeholder="Например, CLI или CI/CD"
               />
-            </div>
+            </Field>
           </div>
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={revokeOpen}
+        title="Отозвать API-ключ?"
+        message={
+          revokeTarget
+            ? `Ключ «${revokeTarget.name}» перестанет работать. Действие нельзя отменить.`
+            : "Действие нельзя отменить."
+        }
+        confirmLabel={t.apiKeys.revokeKey}
+        destructive
+        busy={revoking}
+        onConfirm={() => void revoke()}
+        onCancel={() => setRevokeOpen(false)}
+      />
     </DataTable>
   );
 }

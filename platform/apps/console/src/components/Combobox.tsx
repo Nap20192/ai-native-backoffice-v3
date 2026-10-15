@@ -135,7 +135,7 @@ export function Combobox<T>({
   getValue,
   getLabel,
   getTextLabel,
-  placeholder = "Select...",
+  placeholder = "Выберите…",
   noSearch = false,
   excludeIds,
   disabled,
@@ -265,18 +265,18 @@ export function Combobox<T>({
           disabled={disabled}
           className={
             className ??
-            "w-full inline-flex items-center justify-between gap-2 border border-border rounded-md px-3 py-2 min-h-11 sm:min-h-0 text-sm bg-bg text-fg outline-none focus:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] disabled:opacity-50 disabled:cursor-not-allowed"
+            "w-full justify-between gap-2 border-input bg-ddc-surface px-3.5 font-normal text-ddc-text hover:bg-ddc-surface focus-visible:border-ddc-ring focus-visible:ring-2 focus-visible:ring-ddc-ring/30 focus-visible:outline-hidden"
           }
         >
           <span
             className={cn(
               "truncate text-left flex-1",
-              isPlaceholder && "text-fg-subtle",
+              isPlaceholder && "text-ddc-placeholder",
             )}
           >
             {labelText}
           </span>
-          <ChevronDownIcon className="size-3.5 text-fg-subtle shrink-0" />
+          <ChevronDownIcon className="size-4 shrink-0 text-ddc-placeholder" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -289,7 +289,7 @@ export function Combobox<T>({
             <CommandInput
               value={input}
               onValueChange={setInput}
-              placeholder="Search..."
+              placeholder="Поиск…"
               autoFocus
             />
           )}
@@ -297,8 +297,8 @@ export function Combobox<T>({
             {!isFetching && visible.length === 0 && (
               <CommandEmpty>
                 {debouncedInput
-                  ? `No results for "${debouncedInput}"`
-                  : "No results"}
+                  ? `Ничего не найдено по запросу «${debouncedInput}»`
+                  : "Ничего не найдено"}
               </CommandEmpty>
             )}
             {visible.map((it) => {
@@ -312,7 +312,7 @@ export function Combobox<T>({
                 >
                   <span className="truncate flex-1">{getLabel(it)}</span>
                   {value === v && (
-                    <CheckIcon className="size-3.5 text-brand" />
+                    <CheckIcon className="size-4 text-ddc-link" />
                   )}
                 </CommandItem>
               );
@@ -320,13 +320,13 @@ export function Combobox<T>({
             {/* Sentinel for IntersectionObserver — sits inside scroll
                 container so its own visibility tracks scroll position. */}
             {hasMore && (
-              <div ref={listEndRef} className="py-2 text-center text-sm text-fg-subtle">
-                {infiniteQuery.isFetchingNextPage ? "Loading..." : ""}
+              <div ref={listEndRef} className="py-2 text-center text-sm text-ddc-text-muted">
+                {infiniteQuery.isFetchingNextPage ? "Загрузка…" : ""}
               </div>
             )}
             {showInitialLoading && (
-              <div className="px-3 py-6 text-center text-sm text-fg-subtle">
-                Loading...
+              <div className="px-3 py-6 text-center text-sm text-ddc-text-muted">
+                Загрузка…
               </div>
             )}
           </CommandList>

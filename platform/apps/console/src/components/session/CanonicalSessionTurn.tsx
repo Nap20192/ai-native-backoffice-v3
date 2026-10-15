@@ -7,6 +7,7 @@ import {
 } from "@openma/common/chat-ui";
 import type { CanonicalChatTurn } from "@openma/common/session-events/managed";
 import { Markdown } from "../Markdown";
+import { plural } from "./format-ru";
 import {
   Tool,
   ToolContent,
@@ -34,7 +35,7 @@ export function projectCanonicalSessionTurn(turn: CanonicalChatTurn): AgentUITur
       assistantText: turn.render.assistantText,
       status: canonicalTurnStatus(turn.status),
       errorMessage: turn.status === "errored"
-        ? turn.render.notes.join("\n") || "The turn failed."
+        ? turn.render.notes.join("\n") || "Ход завершился ошибкой."
         : undefined,
     },
     { rendered: turn.render },
@@ -58,21 +59,22 @@ export function CanonicalSessionTurn({
 }
 
 const MANAGED_TURN_LABELS: AgentUITurnLabels = {
-  workingFor: (seconds) => `Working for ${formatElapsed(seconds)}`,
-  workedFor: (seconds) => `Worked for ${formatElapsed(seconds)}`,
-  thinking: "Thinking…",
-  thoughtFor: (seconds) => `Thought for ${formatElapsed(seconds)}`,
-  toolActivity: (tool) => tool.title || tool.name || "Using tool",
+  workingFor: (seconds) => `Работает ${formatElapsed(seconds)}`,
+  workedFor: (seconds) => `Работал ${formatElapsed(seconds)}`,
+  cancelled: "Остановлено",
+  thinking: "Думает…",
+  thoughtFor: (seconds) => `Думал ${formatElapsed(seconds)}`,
+  toolActivity: (tool) => tool.title || tool.name || "Использует инструмент",
   toolRunSummary: (tools) => tools.length === 1
-    ? tools[0]?.title || tools[0]?.name || "Used a tool"
-    : `Used ${tools.length} tools`,
+    ? tools[0]?.title || tools[0]?.name || "Использовал инструмент"
+    : `Использовано ${tools.length} ${plural(tools.length, "инструмент", "инструмента", "инструментов")}`,
 };
 
 function managedTurnSlots(source: CanonicalChatTurn): AgentUITurnSlots {
   return {
     hasSupplementalProcess: () => source.render.plan.length > 0,
     renderProcessBefore: () => source.render.plan.length > 0 ? (
-      <ol className="space-y-1 text-sm text-fg-muted" data-session-turn-plan>
+      <ol className="space-y-1 text-sm text-ddc-label" data-session-turn-plan>
         {source.render.plan.map((entry, index) => (
           <li key={`${source.id}:plan:${index}`}>{entry.content}</li>
         ))}
@@ -90,8 +92,8 @@ function managedTurnSlots(source: CanonicalChatTurn): AgentUITurnSlots {
       <Tool defaultOpen={tool.status === "in_progress"}>
         <ToolHeader
           state={toolState(tool.status)}
-          title={tool.title || tool.name || "Tool"}
-          toolName={tool.name || tool.title || "tool"}
+          title={tool.title || tool.name || "Инструмент"}
+          toolName={tool.name || tool.title || "инструмент"}
           type="dynamic-tool"
         />
         <ToolContent>
@@ -107,7 +109,7 @@ function managedTurnSlots(source: CanonicalChatTurn): AgentUITurnSlots {
     ),
     renderAfterAnswer: () => source.status !== "errored" ? source.render.notes.map((note, index) => (
       <p
-        className="rounded-md bg-warning-subtle px-3 py-2 text-sm text-warning"
+        className="callout-warning"
         key={`${source.id}:note:${index}`}
         role="status"
       >
@@ -145,7 +147,7 @@ function formatToolOutput(output: unknown): string {
 }
 
 function formatElapsed(seconds: number) {
-  if (seconds < 60) return `${Math.max(0, seconds)}s`;
+  if (seconds < 60) return `${Math.max(0, seconds)} с`;
   const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
+  return `${minutes} мин ${seconds % 60} с`;
 }

@@ -54,7 +54,7 @@ interface ListPageProps<T> {
   searchValue?: string;
   onSearchChange?: (v: string) => void;
 
-  /** Built-in "Show archived" checkbox. Render only when the change handler
+  /** Встроенный флажок «Показать архивные». Render only when the change handler
    *  is provided. Pages that drive this server-side just wire it through. */
   showArchived?: boolean;
   onShowArchivedChange?: (v: boolean) => void;
@@ -104,10 +104,9 @@ interface ListPageProps<T> {
  * Vercel, Plane) — single filter-header at the top, infinite scroll in
  * the body, no Prev/Next/numbered footer:
  *
- *   - Sticky `PageHeader` with title + primary CTA + a `toolbar` row
- *     hosting search, archived toggle, and per-page filter chips.
- *   - shadcn `Table` shell with a sticky `<TableHeader>` (top-0 of <main>,
- *     pinned directly under the PageHeader).
+ *   - `PageHeader` with title, description and the primary CTA, and a
+ *     toolbar row under it with search, archived toggle and filter chips.
+ *   - shadcn `Table` shell with a sticky `<TableHeader>` (top-0 of <main>).
  *   - IntersectionObserver-driven "load more" — sentinel `<TableRow>` below
  *     the last row asks `onLoadMore` to fetch the next cursor page as
  *     it scrolls into view. Loading spinner row keeps the layout
@@ -132,7 +131,7 @@ export function ListPage<T>({
   columns,
   data,
   loading,
-  emptyTitle = "Nothing here yet",
+  emptyTitle = "Пока ничего нет",
   emptySubtitle,
   emptyAction,
   emptyKind,
@@ -146,15 +145,10 @@ export function ListPage<T>({
 }: ListPageProps<T>) {
   const showCreate = !!onCreate && !!createLabel;
 
-  // Single-row toolbar: [+ New X] far left → filter chips + archive
-  // toggle → spacer → [search] far right. Matches the LangSmith /
-  // Linear / Vercel single-row pattern. No top-right "actions" zone
-  // any more; the create CTA lives inline with the rest of the
-  // toolbar so the eye lands in one place.
+  // Главное действие и вторичные стоят в шапке страницы, под ней панель с
+  // фильтрами и поиском.
   const toolbar = (
-    <>
-      {headerActions}
-      {showCreate && <Button onClick={onCreate}>{createLabel}</Button>}
+    <div className="mb-4 flex flex-wrap items-center gap-3">
       {filters}
       {onShowArchivedChange && (
         <Label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer select-none shrink-0">
@@ -162,7 +156,7 @@ export function ListPage<T>({
             checked={showArchived ?? false}
             onCheckedChange={(c) => onShowArchivedChange(c === true)}
           />
-          Show archived
+          Показать архивные
         </Label>
       )}
       <div className="flex-1" />
@@ -175,14 +169,22 @@ export function ListPage<T>({
             type="search"
             value={searchValue ?? ""}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={searchPlaceholder ?? "Search..."}
+            placeholder={searchPlaceholder ?? "Поиск…"}
             autoComplete="off"
             name="oma-list-search"
           />
         </InputGroup>
       )}
-    </>
+    </div>
   );
+
+  const pageActions =
+    showCreate || headerActions ? (
+      <>
+        {showCreate && <Button onClick={onCreate}>{createLabel}</Button>}
+        {headerActions}
+      </>
+    ) : undefined;
 
   // Sticky head pins to top of <main> (the scroll context). PageHeader
   // is rendered into a sibling slot ABOVE <main> via portal, so `top-0`
@@ -190,7 +192,12 @@ export function ListPage<T>({
   const tableHeadSticky = "sticky top-0 z-10";
 
   return (
-    <Page header={<PageHeader toolbar={toolbar} />}>
+    <Page
+      header={
+        title ? <PageHeader title={title} description={subtitle} actions={pageActions} /> : undefined
+      }
+    >
+      {toolbar}
       {loading ? (
         <TableShell columns={columns} headSticky={tableHeadSticky}>
           {/* Skeleton rows — clamped to 10 so empty workspaces don't
@@ -278,7 +285,7 @@ function TableShell<T>({ columns, headSticky, children }: TableShellProps<T>) {
       >
         <TableRow className="border-b border-border hover:bg-transparent">
           {columns.map((col) => (
-            <TableHead key={col.key} className={`h-9 text-xs font-medium ${col.className ?? ""}`}>
+            <TableHead key={col.key} className={`h-9 ${col.className ?? ""}`}>
               {col.label}
             </TableHead>
           ))}
@@ -329,7 +336,7 @@ function LoadMoreRow({
   return (
     <TableRow ref={ref} className="hover:bg-transparent">
       <TableCell colSpan={colSpan} className="text-center py-4 text-xs text-fg-subtle">
-        {loading ? "Loading more…" : " "}
+        {loading ? "Загрузка…" : " "}
       </TableCell>
     </TableRow>
   );

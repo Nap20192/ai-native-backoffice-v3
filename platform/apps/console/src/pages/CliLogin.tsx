@@ -1,9 +1,13 @@
-import { Input } from "@/components/ui/input";
 import { useEffect, useMemo, useState } from "react";
+import { AlertCircleIcon } from "lucide-react";
 import { useApi } from "../lib/api";
 import { useApiQuery } from "../lib/useApiQuery";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { Logo } from "../components/Logo";
+import { useBranding } from "../lib/branding";
 
 // Browser-side handler for `oma auth login`. The CLI opens this URL with
 // callback + state in the query string, the user authenticates (cookie
@@ -76,10 +80,11 @@ function encodeTokensParam(tokens: MintedToken[]): string {
 
 export function CliLogin() {
   const { api } = useApi();
+  const branding = useBranding();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const callback = params.get("callback") ?? "";
   const state = params.get("state") ?? "";
-  const hostname = params.get("hostname") ?? "this device";
+  const hostname = params.get("hostname") ?? "этом устройстве";
   const requestedTenant = params.get("tenant") ?? "";
   const callbackOk = isLoopback(callback);
 
@@ -105,7 +110,7 @@ export function CliLogin() {
   // same defaults if data changes shape.
   useEffect(() => {
     if (!callbackOk) {
-      setError("Invalid callback URL — only loopback addresses (127.0.0.1, localhost) are permitted.");
+      setError("Недопустимый адрес обратного вызова. Разрешены только локальные адреса (127.0.0.1, localhost).");
       return;
     }
     const res = meQuery.data;
@@ -171,7 +176,7 @@ export function CliLogin() {
               method: "POST",
               body: JSON.stringify({
                 tenant_id: t.id,
-                name: `CLI on ${hostname}`,
+                name: `CLI на ${hostname}`,
               }),
               // Force the mint call to operate against THIS tenant — the
               // sidebar's stored localStorage might point elsewhere, and
@@ -211,164 +216,163 @@ export function CliLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-bg flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-bg-surface border border-border rounded-xl p-8 shadow-sm">
-        <div className="flex items-center gap-3 mb-6">
+    <div className="flex min-h-screen items-center justify-center bg-ddc-bg px-4 py-8">
+      <div className="card w-full max-w-md p-6 sm:p-8">
+        <div className="mb-6 flex items-center gap-3">
           <Logo size="md" />
-          <div>
-            <h1 className="font-display text-lg font-semibold">Authorize CLI</h1>
-            <div className="text-xs text-fg-subtle">openma command-line client</div>
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-ddc-heading">Авторизация CLI</h1>
+            <div className="text-xs text-muted">Клиент командной строки {branding.productName}</div>
           </div>
         </div>
 
-        {loading && <div className="text-sm text-fg-subtle">Checking session…</div>}
+        {loading && (
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Spinner />
+            Проверяем сессию…
+          </div>
+        )}
 
         {!loading && error && (
-          <div className="bg-danger-subtle border border-danger/30 text-danger text-sm rounded-lg px-4 py-3 mb-4">
-            {error}
+          <div role="alert" className="callout-danger mb-4">
+            <AlertCircleIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
+            <span className="min-w-0 break-words">{error}</span>
           </div>
         )}
 
         {!loading && authNeeded && (
-          <>
-            <p className="text-sm text-fg-muted mb-4">
-              Sign in to continue authorizing the CLI on{" "}
-              <span className="font-mono text-fg">{hostname}</span>.
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              Войдите, чтобы продолжить авторизацию CLI на{" "}
+              <span className="font-mono text-ddc-text">{hostname}</span>.
             </p>
             <Button onClick={goLogin} className="w-full">
-              Sign in
+              Войти
             </Button>
-          </>
+          </div>
         )}
 
         {!loading && !authNeeded && me && callbackOk && (
-          <>
-            <p className="text-sm text-fg-muted mb-2">
-              The CLI on{" "}
-              <span className="font-mono text-fg">{hostname}</span> wants to
-              act on your behalf as{" "}
-              <span className="font-mono text-fg">{me.user?.email ?? me.user?.id ?? "this user"}</span>.
-            </p>
-            <p className="text-xs text-fg-subtle mb-5">
-              Approving mints one API key per selected workspace — visible
-              on the API Keys page, revocable at any time.
-            </p>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm text-muted">
+                CLI на{" "}
+                <span className="font-mono text-ddc-text">{hostname}</span> запрашивает
+                доступ от имени{" "}
+                <span className="font-mono text-ddc-text">{me.user?.email ?? me.user?.id ?? "этого пользователя"}</span>.
+              </p>
+              <p className="text-xs text-muted">
+                Для каждого выбранного рабочего пространства будет выпущен отдельный
+                API-ключ. Ключи видны на странице «API-ключи», их можно отозвать в любой момент.
+              </p>
+            </div>
 
             {me.tenants.length === 0 ? (
-              <div className="text-sm text-danger mb-4">
-                No workspaces found on this account.
+              <div role="alert" className="callout-danger">
+                <AlertCircleIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
+                В этой учётной записи нет рабочих пространств.
               </div>
             ) : me.tenants.length === 1 ? (
-              <div className="mb-5">
-                <div className="block text-xs uppercase tracking-wider text-fg-subtle mb-2">
-                  Workspace
-                </div>
-                <div className="bg-bg border border-border rounded-lg px-3 py-2.5 text-sm flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-brand/15 text-brand flex items-center justify-center text-xs font-mono font-bold shrink-0">
-                    {tenantDisplayName(me.tenants[0]).charAt(0).toUpperCase() || "·"}
-                  </div>
+              <div>
+                <div className="eyebrow mb-2">Рабочее пространство</div>
+                <div className="flex items-center gap-3 rounded-xl bg-ddc-surface-muted p-3">
+                  <WorkspaceAvatar name={tenantDisplayName(me.tenants[0])} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-fg">{tenantDisplayName(me.tenants[0])}</div>
-                    <div className="text-xs text-fg-subtle font-mono uppercase tracking-wider">
-                      {me.tenants[0].role}
+                    <div className="truncate text-sm font-medium text-ddc-text" title={tenantDisplayName(me.tenants[0])}>
+                      {tenantDisplayName(me.tenants[0])}
                     </div>
+                    <div className="text-xs text-muted">{roleLabel(me.tenants[0].role)}</div>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="mb-5">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs uppercase tracking-wider text-fg-subtle">
-                    Workspaces ({selected.size}/{me.tenants.length})
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="eyebrow">
+                    Рабочие пространства ({selected.size}/{me.tenants.length})
                   </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <Button variant="ghost"
-                      type="button"
-                      onClick={selectAll}
-                      className="inline-flex items-center min-h-11 sm:min-h-0 px-1 text-fg-muted hover:text-fg underline-offset-2 hover:underline"
-                    >
-                      All
+                  <div className="flex items-center gap-1">
+                    <Button type="button" variant="ghost" size="xs" onClick={selectAll}>
+                      Все
                     </Button>
-                    <span className="text-fg-subtle">·</span>
-                    <Button variant="ghost"
-                      type="button"
-                      onClick={selectNone}
-                      className="inline-flex items-center min-h-11 sm:min-h-0 px-1 text-fg-muted hover:text-fg underline-offset-2 hover:underline"
-                    >
-                      None
+                    <Button type="button" variant="ghost" size="xs" onClick={selectNone}>
+                      Ничего
                     </Button>
                   </div>
                 </div>
-                <div className="border border-border rounded-lg divide-y divide-border max-h-64 overflow-y-auto">
+                <div className="max-h-64 divide-y divide-ddc-divider overflow-y-auto rounded-xl border border-ddc-divider">
                   {me.tenants.map((t) => {
                     const isSelected = selected.has(t.id);
                     const display = tenantDisplayName(t);
                     return (
-                      <Button variant="ghost"
+                      <Label
                         key={t.id}
-                        type="button"
-                        onClick={() => toggle(t.id)}
-                        className={`w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-bg transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${isSelected ? "bg-bg/60" : ""}`}
+                        className={`w-full cursor-pointer gap-3 px-3 py-2.5 text-left font-normal leading-normal transition-colors hover:bg-ddc-surface-muted ${isSelected ? "bg-ddc-selected-bg" : ""}`}
                       >
-                        <Checkbox checked={isSelected} />
-                        <div className="w-7 h-7 rounded bg-brand/15 text-brand flex items-center justify-center text-xs font-mono font-bold shrink-0">
-                          {display.charAt(0).toUpperCase() || "·"}
-                        </div>
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => toggle(t.id)}
+                        />
+                        <WorkspaceAvatar name={display} />
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm truncate text-fg">{display}</div>
-                          <div className="text-xs text-fg-subtle font-mono">
-                            {t.id} · {t.role}
+                          <div className="truncate text-sm text-ddc-text" title={display}>{display}</div>
+                          <div className="truncate text-xs text-muted">
+                            <span className="font-mono">{t.id}</span> · {roleLabel(t.role)}
                           </div>
                         </div>
-                      </Button>
+                      </Label>
                     );
                   })}
                 </div>
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 pt-1">
               <Button
                 onClick={approve}
-                disabled={working || selected.size === 0 || me.tenants.length === 0}
+                loading={working}
+                disabled={selected.size === 0 || me.tenants.length === 0}
                 className="flex-1"
               >
                 {working
-                  ? "Authorizing…"
+                  ? "Авторизация…"
                   : me.tenants.length <= 1
-                    ? "Approve"
-                    : `Approve ${selected.size} workspace${selected.size === 1 ? "" : "s"}`}
+                    ? "Разрешить"
+                    : `Разрешить (${selected.size})`}
               </Button>
-              <Button variant="ghost"
-                onClick={cancel}
-                disabled={working}
-                className="inline-flex items-center justify-center px-4 py-2.5 min-h-11 sm:min-h-0 rounded-lg border border-border text-sm text-fg-muted hover:bg-bg disabled:opacity-40"
-              >
-                Cancel
+              <Button variant="ghost" onClick={cancel} disabled={working}>
+                Отмена
               </Button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-/** Custom checkbox styled to match the rest of the app's surfaces — using
- *  a real <Input type=checkbox> would inherit the OS-native chrome that
- *  looks out of place on the auth card. */
-function Checkbox({ checked }: { checked: boolean }) {
+/** Роль в рабочем пространстве по-русски. Неизвестная роль показывается как есть. */
+function roleLabel(role: string): string {
+  switch (role) {
+    case "owner":
+      return "Владелец";
+    case "admin":
+      return "Администратор";
+    case "member":
+      return "Участник";
+    default:
+      return role;
+  }
+}
+
+/** Плитка с первой буквой названия: аватар 32px в тоне brand. */
+function WorkspaceAvatar({ name }: { name: string }) {
   return (
     <div
-      className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
-        checked ? "bg-brand border-brand" : "bg-bg border-border-strong"
-      }`}
+      aria-hidden="true"
+      className="flex size-8 flex-none items-center justify-center rounded-lg bg-ddc-tone-brand-bg text-xs font-semibold text-ddc-tone-brand-fg"
     >
-      {checked && (
-        <svg className="w-3 h-3 text-brand-fg" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      )}
+      {name.charAt(0).toUpperCase() || "·"}
     </div>
   );
 }

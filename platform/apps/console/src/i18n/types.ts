@@ -1,9 +1,9 @@
 /**
- * Supported locales for the console UI.
- * Currently only English (default) and Simplified Chinese are implemented.
- * Add new locales here and create corresponding dictionary files.
+ * Языки интерфейса консоли: русский (по умолчанию), английский и
+ * китайский (упрощённый). Новый язык добавляется здесь и отдельным
+ * файлом словаря.
  */
-export type Locale = "en" | "zh-CN";
+export type Locale = "ru" | "en" | "zh-CN";
 
 /**
  * All translatable message keys used across the console.
@@ -68,6 +68,18 @@ export interface Messages {
     apiKeys: string;
     localRuntimes: string;
     integrations: string;
+    members: string;
+  };
+
+  // Shell chrome: aria-labels of the sidebar, top bar and loader
+  shell: {
+    workspaceNavigation: string;
+    sections: string;
+    breadcrumb: string;
+    showSidebar: string;
+    closeSidebar: string;
+    resizeSidebar: string;
+    loadingSession: string;
   };
 
   // Login page
@@ -135,6 +147,10 @@ export interface Messages {
     description: string;
     jumpTo: string;
     noMatches: string;
+    recent: string;
+    actions: string;
+    navigate: string;
+    search: string;
   };
 
   // User profile menu
@@ -152,6 +168,11 @@ export interface Messages {
     workspaceName: string;
     workspacePlaceholder: string;
     creating: string;
+    language: string;
+    account: string;
+    roleOwner: string;
+    roleAdmin: string;
+    roleMember: string;
   };
 
   // Agents list

@@ -1,8 +1,13 @@
 import { Button } from "@/components/ui/button";
+import { PlainButton } from "@/components/ui/plain-button";
+import { ChevronDownIcon, ChevronRightIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { formatDuration, pickTickStep } from "../../lib/format";
+import { pickTickStep } from "../../lib/format";
 import type { Event } from "../../lib/events";
+import { EmptyState } from "../EmptyState";
+import { Skeleton } from "../Skeleton";
+import { formatDurationRu, plural } from "../session/format-ru";
 import { bucketIntoTurns, deriveSpans } from "./derive";
 import { eventTsMs, resolveTurnExpanded } from "./eventTime";
 import {
@@ -12,7 +17,7 @@ import {
   LABEL_COL_W,
   MAX_CHART_PX,
   MAX_TICKS,
-  SIDE_PANEL_W,
+  STATUS_LABEL,
   STATUS_TEXT,
   TRIGGER_DOT,
   TRIGGER_LABEL,
@@ -35,7 +40,14 @@ import {
  * - Chart width + tick count are hard-capped (see MAX_CHART_PX / MAX_TICKS).
  * - Turn cards use `content-visibility: auto` so off-screen paint is skipped.
  */
-export function TimelineView({ events }: { events: Event[] }) {
+export function TimelineView({
+  events,
+  loading = false,
+}: {
+  events: Event[];
+  /** История ещё грузится: вместо пустого состояния показываем скелетон. */
+  loading?: boolean;
+}) {
   const turns = useMemo(() => bucketIntoTurns(events), [events]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [selection, setSelection] = useState<TimelineSelection | null>(null);
@@ -56,16 +68,32 @@ export function TimelineView({ events }: { events: Event[] }) {
   }, [turns.length]);
 
   if (turns.length === 0) {
+    if (loading) {
+      return (
+        <div className="flex-1 space-y-3 p-6" aria-busy="true" role="status">
+          <span className="sr-only">Загрузка хронологии…</span>
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-2/3" />
+        </div>
+      );
+    }
     return (
-      <div className="flex-1 flex items-center justify-center text-sm text-fg-subtle">
-        No timing data yet — send a message to populate the timeline.
+      <div className="flex flex-1 items-center justify-center p-6">
+        <EmptyState
+          size="sm"
+          kind="session"
+          title="Хронология пока пуста"
+          body="Отправьте сообщение, и здесь появятся данные о времени выполнения."
+          className="border-0 shadow-none"
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex min-h-0">
-      <div ref={containerRef} className="flex-1 min-w-0 overflow-y-auto px-4 sm:px-8 py-6 space-y-3">
+    <div className="relative flex min-h-0 flex-1">
+      <div ref={containerRef} className="min-w-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
         {turns.map((turn, i) => {
           const prev = i > 0 ? turns[i - 1] : null;
           const idleMs =
@@ -109,21 +137,21 @@ function stringifyEventCapped(ev: Event, maxChars = 50_000): string {
   try {
     const s = JSON.stringify(ev, null, 2);
     if (s.length <= maxChars) return s;
-    return `${s.slice(0, maxChars)}\n… truncated (${s.length - maxChars} more chars)`;
+    return `${s.slice(0, maxChars)}\n… обрезано (ещё ${s.length - maxChars} симв.)`;
   } catch {
-    return "[unserializable event]";
+    return "[событие не удалось сериализовать]";
   }
 }
 
 function IdleDivider({ ms, nextKind }: { ms: number; nextKind: TurnTriggerKind }) {
   return (
-    <div className="flex items-center gap-3 text-xs text-fg-subtle font-mono py-1">
-      <div className="flex-1 border-t border-dashed border-border" />
+    <div className="flex items-center gap-3 py-1 text-xs text-ddc-text-muted tabular-nums">
+      <div className="flex-1 border-t border-dashed border-ddc-divider" />
       <span>
-        ↓ {formatDuration(ms)} idle
-        {nextKind === "wakeup" && " · scheduled wakeup"}
+        Простой {formatDurationRu(ms)}
+        {nextKind === "wakeup" && " · пробуждение по расписанию"}
       </span>
-      <div className="flex-1 border-t border-dashed border-border" />
+      <div className="flex-1 border-t border-dashed border-ddc-divider" />
     </div>
   );
 }
@@ -136,39 +164,45 @@ function DetailPanel({
   onClose: () => void;
 }) {
   return (
+    // Шире xl панель стоит справа шириной 420px (=== SIDE_PANEL_W); уже xl она
+    // ложится поверх хронологии, иначе график сжимался бы до нуля.
     <aside
-      className="shrink-0 border-l border-border bg-bg flex flex-col min-h-0"
-      style={{ width: SIDE_PANEL_W }}
+      className="absolute inset-0 z-10 flex min-h-0 w-full flex-col border-l border-ddc-divider bg-ddc-surface animate-fade-in xl:static xl:z-auto xl:w-[420px] xl:shrink-0 xl:animate-none"
+      aria-label="Исходные события"
     >
-      <div className="px-4 py-3 border-b border-border flex items-center gap-3 shrink-0">
+      <div className="flex shrink-0 items-center gap-3 border-b border-ddc-divider px-5 py-4">
         <div className="min-w-0 flex-1">
-          <div className="text-xs uppercase tracking-wide text-fg-subtle font-mono">
+          <div className="eyebrow">
             {selection.events.length === 1
-              ? "source event"
-              : `source events (${selection.events.length})`}
+              ? "Исходное событие"
+              : `Исходные события (${selection.events.length})`}
           </div>
-          <div className="text-sm font-mono text-fg-muted truncate">{selection.spanLabel}</div>
+          <div className="mt-1 truncate text-sm font-medium text-ddc-heading" title={selection.spanLabel}>
+            {selection.spanLabel}
+          </div>
         </div>
-        <Button variant="ghost"
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={onClose}
-          className="text-fg-subtle hover:text-fg-muted text-lg leading-none px-2"
-          title="Close"
+          title="Закрыть"
+          aria-label="Закрыть панель"
         >
-          ×
+          <XIcon />
         </Button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
         {selection.events.map((ev, idx) => (
-          <div key={idx} className="border border-border/60 rounded">
-            <div className="px-3 py-1.5 border-b border-border/60 bg-bg-surface/40 flex items-center gap-2 text-xs font-mono">
-              <span className="text-fg-muted">{ev.type}</span>
+          <div key={idx} className="overflow-hidden rounded-xl border border-ddc-border">
+            <div className="flex items-center gap-2 border-b border-ddc-divider bg-ddc-surface-muted px-3 py-1.5 font-mono text-xs">
+              <span className="text-ddc-label">{ev.type}</span>
               {typeof ev.processed_at === "string" && (
-                <span className="text-fg-subtle ml-auto">
+                <span className="ml-auto text-ddc-text-muted tabular-nums">
                   {new Date(ev.processed_at).toISOString().slice(11, 23)}
                 </span>
               )}
             </div>
-            <pre className="text-xs font-mono text-fg-muted px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">
+            <pre className="overflow-x-auto px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap text-ddc-label">
               {stringifyEventCapped(ev)}
             </pre>
           </div>
@@ -204,16 +238,17 @@ function TimelineRow({
   rightLabel: ReactNode;
   children: ReactNode;
 }) {
-  const stickyBg = isSelected ? "bg-info-subtle/40" : "bg-bg-surface/30";
+  // Залипающие колонки закрашены непрозрачно: график прокручивается под ними.
+  const stickyBg = isSelected ? "bg-ddc-selected-bg" : "bg-ddc-surface";
   return (
     <div style={{ width: LABEL_COL_W + chartPx + DURATION_COL_W }}>
       <div
-        className={`flex items-center py-1 border-b border-border/30 hover:bg-bg/40 group cursor-pointer ${isSelected ? "bg-info-subtle/40" : ""}`}
+        className={`group flex cursor-pointer items-center border-b border-ddc-divider py-1 hover:bg-ddc-surface-muted ${isSelected ? "bg-ddc-selected-bg" : ""}`}
         title={title}
         onClick={onClick}
       >
         <div
-          className={`shrink-0 sticky left-0 z-20 flex items-center gap-2 text-xs px-4 group-hover:bg-bg/40 ${stickyBg}`}
+          className={`sticky left-0 z-20 flex shrink-0 items-center gap-2 px-4 text-xs group-hover:bg-ddc-surface-muted ${stickyBg}`}
           style={{ width: LABEL_COL_W }}
         >
           {leftLabel}
@@ -222,7 +257,7 @@ function TimelineRow({
           {children}
         </div>
         <div
-          className={`shrink-0 sticky right-0 z-20 text-right text-xs font-mono text-fg-subtle pr-3 group-hover:bg-bg/40 ${stickyBg}`}
+          className={`sticky right-0 z-20 shrink-0 pr-3 text-right text-xs text-ddc-text-muted tabular-nums group-hover:bg-ddc-surface-muted ${stickyBg}`}
           style={{ width: DURATION_COL_W }}
         >
           {rightLabel}
@@ -386,42 +421,51 @@ const TurnCard = memo(function TurnCard({
 
   const borderClass =
     turn.status === "errored" || turn.status === "terminated"
-      ? "border-danger/50"
-      : "border-border";
+      ? "border-ddc-tone-danger-ring"
+      : "border-ddc-border";
 
   return (
     <div
-      className={`border ${borderClass} rounded-lg bg-bg-surface/30`}
+      className={`rounded-xl border bg-ddc-surface ${borderClass}`}
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 48px" }}
     >
-      {/* Header */}
-      <div className="px-4 py-2.5 flex items-center gap-3 text-xs">
-        <Button variant="ghost"
+      {/* Шапка хода: вид запуска, текст запроса и сводка справа. На узком
+          экране сводка уходит под заголовок (flex-wrap). */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs">
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={onToggleExpanded}
-          className="text-fg-subtle hover:text-fg-muted font-mono w-4 text-center"
-          title={collapsed ? "Expand" : "Collapse"}
+          className="text-ddc-icon-muted hover:text-ddc-text"
+          title={collapsed ? "Развернуть" : "Свернуть"}
+          aria-label={collapsed ? "Развернуть ход" : "Свернуть ход"}
+          aria-expanded={!collapsed}
         >
-          {collapsed ? "▸" : "▾"}
+          {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
         </Button>
-        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TRIGGER_DOT[turn.triggerKind]}`} />
-        <span className="font-mono text-fg-muted">{TRIGGER_LABEL[turn.triggerKind]}</span>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${TRIGGER_DOT[turn.triggerKind]}`} aria-hidden="true" />
+        <span className="font-medium text-ddc-heading">{TRIGGER_LABEL[turn.triggerKind]}</span>
         {triggerTitleText && (
-          <span className="text-fg-subtle truncate max-w-md italic">"{triggerTitleText}"</span>
+          <span className="max-w-md min-w-0 truncate text-ddc-text-muted" title={triggerTitleText}>
+            «{triggerTitleText}»
+          </span>
         )}
-        <span className="ml-auto flex items-center gap-3 font-mono text-fg-subtle">
+        <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-ddc-text-muted tabular-nums">
           <span>
             {collapsed
-              ? `${turn.events.length} events`
-              : `${spans.length} spans`}
+              ? `${turn.events.length} ${plural(turn.events.length, "событие", "события", "событий")}`
+              : `${spans.length} ${plural(spans.length, "этап", "этапа", "этапов")}`}
           </span>
-          <span>{formatDuration(turnDurationMs)}</span>
+          <span>{formatDurationRu(turnDurationMs)}</span>
           {tokens.calls > 0 && (
-            <span title={`${tokens.calls} model call${tokens.calls === 1 ? "" : "s"}`}>
+            <span
+              title={`${tokens.calls} ${plural(tokens.calls, "вызов", "вызова", "вызовов")} модели`}
+            >
               {tokens.input}↓ {tokens.output}↑
-              {tokens.cacheRead > 0 && ` ⚡${tokens.cacheRead}`}
+              {tokens.cacheRead > 0 && ` кэш ${tokens.cacheRead}`}
             </span>
           )}
-          <span className={STATUS_TEXT[turn.status]}>{turn.status}</span>
+          <span className={`font-medium ${STATUS_TEXT[turn.status]}`}>{STATUS_LABEL[turn.status]}</span>
         </span>
       </div>
 
@@ -434,24 +478,24 @@ const TurnCard = memo(function TurnCard({
             onFit={fitToViewport}
             onAuto={resetAuto}
           />
-          <div ref={scrollRef} className="overflow-x-auto pb-3 border-t border-border/40">
-            {/* Time axis */}
-            <div className="pt-2 sticky top-0 bg-bg-surface/30 z-10" style={{ width: LABEL_COL_W + chartPx + DURATION_COL_W }}>
+          <div ref={scrollRef} className="overflow-x-auto border-t border-ddc-divider pb-3">
+            {/* Ось времени */}
+            <div className="sticky top-0 z-10 bg-ddc-surface pt-2" style={{ width: LABEL_COL_W + chartPx + DURATION_COL_W }}>
               <div className="flex items-center">
-                <div className="shrink-0 sticky left-0 bg-bg-surface/30 z-30" style={{ width: LABEL_COL_W }} />
-                <div className="relative h-5 border-b border-border" style={{ width: chartPx }}>
+                <div className="sticky left-0 z-30 shrink-0 bg-ddc-surface" style={{ width: LABEL_COL_W }} />
+                <div className="relative h-5 border-b border-ddc-divider" style={{ width: chartPx }}>
                   {ticks.map((t) => (
                     <div
                       key={t}
-                      className="absolute top-0 h-full flex flex-col items-start text-xs text-fg-subtle font-mono"
+                      className="absolute top-0 flex h-full flex-col items-start text-xs text-ddc-text-muted tabular-nums"
                       style={{ left: `${t * effectivePxPerMs}px` }}
                     >
-                      <span className="-translate-x-1/2 px-1">{formatDuration(t)}</span>
-                      <div className="w-px flex-1 bg-border" />
+                      <span className="-translate-x-1/2 px-1">{formatDurationRu(t)}</span>
+                      <div className="w-px flex-1 bg-ddc-divider" />
                     </div>
                   ))}
                 </div>
-                <div className="shrink-0 sticky right-0 bg-bg-surface/30 z-30" style={{ width: DURATION_COL_W }} />
+                <div className="sticky right-0 z-30 shrink-0 bg-ddc-surface" style={{ width: DURATION_COL_W }} />
               </div>
             </div>
 
@@ -461,8 +505,9 @@ const TurnCard = memo(function TurnCard({
               const width = s.durationMs > 0 ? Math.max(2, s.durationMs * effectivePxPerMs) : 0;
               const isSelected = selectedSpanKey === s.key;
               const title = s.detail
-                ? `${s.label} — ${formatDuration(s.durationMs)} — ${s.detail}`
-                : `${s.label} — ${formatDuration(s.durationMs)}`;
+                ? `${s.label} · ${formatDurationRu(s.durationMs)} · ${s.detail}`
+                : `${s.label} · ${formatDurationRu(s.durationMs)}`;
+              const monoLabel = s.family === "tool" || s.family === "mcp" || s.family === "custom_tool";
               return (
                 <TimelineRow
                   key={s.key}
@@ -472,28 +517,28 @@ const TurnCard = memo(function TurnCard({
                   chartPx={chartPx}
                   leftLabel={
                     <>
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FAMILY_DOT[s.family]}`} />
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${FAMILY_DOT[s.family]}`} aria-hidden="true" />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-fg-muted font-mono">{s.label}</div>
+                        <div className={`truncate text-ddc-label ${monoLabel ? "font-mono" : ""}`}>{s.label}</div>
                         {s.detail && (
-                          <div className="truncate text-fg-subtle font-mono text-xs">{s.detail}</div>
+                          <div className="truncate text-xs text-ddc-text-muted">{s.detail}</div>
                         )}
                       </div>
                     </>
                   }
-                  rightLabel={s.durationMs > 0 ? formatDuration(s.durationMs) : "·"}
+                  rightLabel={s.durationMs > 0 ? formatDurationRu(s.durationMs) : "·"}
                 >
                   {width > 0 ? (
                     <>
                       <div
-                        className={`absolute h-3 top-1 rounded-sm ${FAMILY_BAR[s.family]} group-hover:opacity-100 opacity-90`}
+                        className={`absolute top-1 h-3 rounded-sm ${FAMILY_BAR[s.family]} opacity-90 group-hover:opacity-100`}
                         style={{ left: `${left}px`, width: `${width}px` }}
                       />
                       {typeof s.ttftMs === "number" && s.durationMs > 0 && (
                         <div
-                          className="absolute h-3 top-1 w-px bg-bg-surface"
+                          className="absolute top-1 h-3 w-px bg-ddc-surface"
                           style={{ left: `${left + s.ttftMs * effectivePxPerMs}px` }}
-                          title={`TTFT ${formatDuration(s.ttftMs)}`}
+                          title={`Первый токен через ${formatDurationRu(s.ttftMs)}`}
                         />
                       )}
                     </>
@@ -528,31 +573,48 @@ function ZoomToolbar({
 }) {
   const fmtRate = (ppms: number) => {
     const pps = ppms * 1000;
-    if (pps >= 100) return `${Math.round(pps)} px/s`;
-    if (pps >= 1) return `${pps.toFixed(1)} px/s`;
-    return `${pps.toFixed(2)} px/s`;
+    if (pps >= 100) return `${Math.round(pps)} px/с`;
+    if (pps >= 1) return `${pps.toFixed(1).replace(".", ",")} px/с`;
+    return `${pps.toFixed(2).replace(".", ",")} px/с`;
   };
-  const btn = "px-2 py-0.5 rounded border hover:bg-bg-surface";
   return (
-    <div className="px-4 pb-2 flex items-center gap-1 text-xs">
-      <Button variant="ghost" onClick={() => onZoomBy(0.5)} aria-label="Zoom out" className={`${btn} border-border text-fg-muted`} title="Zoom out">
-        −
-      </Button>
-      <Button variant="ghost"
-        onClick={onAuto}
-        aria-label="Auto-pick scale by event density"
-        className={`${btn} ${mode === "auto" ? "border-info text-info" : "border-border text-fg-muted"}`}
-        title="Auto-pick scale by event density"
+    <div className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs">
+      <Button
+        variant="outline"
+        size="icon-xs"
+        onClick={() => onZoomBy(0.5)}
+        aria-label="Уменьшить масштаб"
+        title="Уменьшить масштаб"
       >
-        auto
+        <MinusIcon />
       </Button>
-      <Button variant="ghost" onClick={onFit} aria-label="Fit turn duration to viewport" className={`${btn} border-border text-fg-muted`} title="Fit turn duration to viewport">
-        fit
+      <PlainButton
+        type="button"
+        className="chip-toggle"
+        aria-pressed={mode === "auto"}
+        onClick={onAuto}
+        title="Подбирать масштаб по плотности событий"
+      >
+        Авто
+      </PlainButton>
+      <PlainButton
+        type="button"
+        className="chip-toggle"
+        onClick={onFit}
+        title="Уместить ход по ширине экрана"
+      >
+        По ширине
+      </PlainButton>
+      <Button
+        variant="outline"
+        size="icon-xs"
+        onClick={() => onZoomBy(2)}
+        aria-label="Увеличить масштаб"
+        title="Увеличить масштаб"
+      >
+        <PlusIcon />
       </Button>
-      <Button variant="ghost" onClick={() => onZoomBy(2)} aria-label="Zoom in" className={`${btn} border-border text-fg-muted`} title="Zoom in">
-        +
-      </Button>
-      <span className="ml-2 font-mono text-fg-subtle">{fmtRate(pxPerMs)}</span>
+      <span className="ml-2 text-ddc-text-muted tabular-nums">{fmtRate(pxPerMs)}</span>
     </div>
   );
 }

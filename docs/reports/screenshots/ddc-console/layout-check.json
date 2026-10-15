@@ -1,0 +1,1158 @@
+{
+  "checked": 72,
+  "problems": [],
+  "results": [
+    {
+      "screen": "home",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Начало работы с openma"
+      ],
+      "crumb": "Сводка",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agents",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Агенты"
+      ],
+      "crumb": "Агенты",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agent-detail",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Аналитик договоров"
+      ],
+      "crumb": "Аналитик договоров",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "sessions",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Сессии"
+      ],
+      "crumb": "Сессии",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "session-detail",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Сводка по проекту за неделю"
+      ],
+      "crumb": "Сводка по проекту за неделю",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "files",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Файлы"
+      ],
+      "crumb": "Файлы",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "evals",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Запуски оценки"
+      ],
+      "crumb": "Запуски оценки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environments",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Окружения"
+      ],
+      "crumb": "Окружения",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environment-detail",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Рабочая средаОблако"
+      ],
+      "crumb": "Рабочая среда",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "skills",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Навыки"
+      ],
+      "crumb": "Навыки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vaults",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Хранилища секретов"
+      ],
+      "crumb": "Хранилища секретов",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vault-detail",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Доступы документооборота"
+      ],
+      "crumb": "Доступы документооборота",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "memory",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Хранилища памяти"
+      ],
+      "crumb": "Хранилища памяти",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "memory-detail",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Регламенты компании"
+      ],
+      "crumb": "Регламенты компании",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "model-cards",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Карточки моделей"
+      ],
+      "crumb": "Карточки моделей",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "members",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Участники"
+      ],
+      "crumb": "Участники",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "api-keys",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "API-ключи"
+      ],
+      "crumb": "API-ключи",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "runtimes",
+      "width": 1280,
+      "theme": "light",
+      "headings": [
+        "Локальные среды"
+      ],
+      "crumb": "Локальные среды",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "home",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Начало работы с openma"
+      ],
+      "crumb": "Сводка",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agents",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Агенты"
+      ],
+      "crumb": "Агенты",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agent-detail",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Аналитик договоров"
+      ],
+      "crumb": "Аналитик договоров",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "sessions",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Сессии"
+      ],
+      "crumb": "Сессии",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "session-detail",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Сводка по проекту за неделю"
+      ],
+      "crumb": "Сводка по проекту за неделю",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "files",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Файлы"
+      ],
+      "crumb": "Файлы",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "evals",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Запуски оценки"
+      ],
+      "crumb": "Запуски оценки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environments",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Окружения"
+      ],
+      "crumb": "Окружения",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environment-detail",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Рабочая средаОблако"
+      ],
+      "crumb": "Рабочая среда",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "skills",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Навыки"
+      ],
+      "crumb": "Навыки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vaults",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Хранилища секретов"
+      ],
+      "crumb": "Хранилища секретов",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vault-detail",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Доступы документооборота"
+      ],
+      "crumb": "Доступы документооборота",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "memory",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Хранилища памяти"
+      ],
+      "crumb": "Хранилища памяти",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "memory-detail",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Регламенты компании"
+      ],
+      "crumb": "Регламенты компании",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "model-cards",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Карточки моделей"
+      ],
+      "crumb": "Карточки моделей",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "members",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Участники"
+      ],
+      "crumb": "Участники",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "api-keys",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "API-ключи"
+      ],
+      "crumb": "API-ключи",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "runtimes",
+      "width": 1280,
+      "theme": "dark",
+      "headings": [
+        "Локальные среды"
+      ],
+      "crumb": "Локальные среды",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "home",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Начало работы с openma"
+      ],
+      "crumb": "Сводка",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agents",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Агенты"
+      ],
+      "crumb": "Агенты",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agent-detail",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Аналитик договоров"
+      ],
+      "crumb": "Аналитик договоров",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "sessions",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Сессии"
+      ],
+      "crumb": "Сессии",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "session-detail",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Сводка по проекту за неделю"
+      ],
+      "crumb": "Сводка по проекту за неделю",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "files",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Файлы"
+      ],
+      "crumb": "Файлы",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "evals",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Запуски оценки"
+      ],
+      "crumb": "Запуски оценки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environments",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Окружения"
+      ],
+      "crumb": "Окружения",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environment-detail",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Рабочая средаОблако"
+      ],
+      "crumb": "Рабочая среда",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "skills",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Навыки"
+      ],
+      "crumb": "Навыки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vaults",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Хранилища секретов"
+      ],
+      "crumb": "Хранилища секретов",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vault-detail",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Доступы документооборота"
+      ],
+      "crumb": "Доступы документооборота",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "memory",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Хранилища памяти"
+      ],
+      "crumb": "Хранилища памяти",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "memory-detail",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Регламенты компании"
+      ],
+      "crumb": "Регламенты компании",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(105, 114, 127)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "model-cards",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Карточки моделей"
+      ],
+      "crumb": "Карточки моделей",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "members",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Участники"
+      ],
+      "crumb": "Участники",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "api-keys",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "API-ключи"
+      ],
+      "crumb": "API-ключи",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "runtimes",
+      "width": 390,
+      "theme": "light",
+      "headings": [
+        "Локальные среды"
+      ],
+      "crumb": "Локальные среды",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "home",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Начало работы с openma"
+      ],
+      "crumb": "Сводка",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agents",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Агенты"
+      ],
+      "crumb": "Агенты",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "agent-detail",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Аналитик договоров"
+      ],
+      "crumb": "Аналитик договоров",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "sessions",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Сессии"
+      ],
+      "crumb": "Сессии",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "session-detail",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Сводка по проекту за неделю"
+      ],
+      "crumb": "Сводка по проекту за неделю",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "files",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Файлы"
+      ],
+      "crumb": "Файлы",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "evals",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Запуски оценки"
+      ],
+      "crumb": "Запуски оценки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environments",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Окружения"
+      ],
+      "crumb": "Окружения",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "environment-detail",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Рабочая средаОблако"
+      ],
+      "crumb": "Рабочая среда",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "skills",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Навыки"
+      ],
+      "crumb": "Навыки",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vaults",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Хранилища секретов"
+      ],
+      "crumb": "Хранилища секретов",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "vault-detail",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Доступы документооборота"
+      ],
+      "crumb": "Доступы документооборота",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": true
+    },
+    {
+      "screen": "memory",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Хранилища памяти"
+      ],
+      "crumb": "Хранилища памяти",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "memory-detail",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Регламенты компании"
+      ],
+      "crumb": "Регламенты компании",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": "rgb(139, 149, 163)",
+      "headWeight": "600",
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "model-cards",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Карточки моделей"
+      ],
+      "crumb": "Карточки моделей",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "members",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Участники"
+      ],
+      "crumb": "Участники",
+      "mainOverflowX": 0,
+      "gridOverflowX": null,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "api-keys",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "API-ключи"
+      ],
+      "crumb": "API-ключи",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    },
+    {
+      "screen": "runtimes",
+      "width": 390,
+      "theme": "dark",
+      "headings": [
+        "Локальные среды"
+      ],
+      "crumb": "Локальные среды",
+      "mainOverflowX": 0,
+      "gridOverflowX": 0,
+      "headColor": null,
+      "headWeight": null,
+      "outside": [],
+      "integrationsText": false,
+      "rawIdText": false
+    }
+  ]
+}

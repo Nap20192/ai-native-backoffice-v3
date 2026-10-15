@@ -36,6 +36,8 @@ import { cn } from "@/lib/utils";
  * into `value` via the same handler — usually yes.
  */
 export interface LocalComboboxProps<T> {
+  /** Id поля ввода, чтобы подпись `<Label htmlFor>` указывала на него. */
+  id?: string;
   value: string;
   onChange: (text: string) => void;
   onPick?: (item: T) => void;
@@ -56,10 +58,13 @@ export interface LocalComboboxProps<T> {
   autoFocus?: boolean;
 }
 
+// Поле DDC (`.input`): 40px, rounded-xl, при фокусе рамка и кольцо бренда.
+// Рамкой и кольцом владеет оболочка, поэтому вложенный Input их не рисует.
 const DEFAULT_INPUT_CLS =
-  "w-full rounded-md border border-border bg-bg px-3 py-2 min-h-11 sm:min-h-0 text-sm text-fg outline-none focus-within:border-brand transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] flex items-center gap-2";
+  "flex h-10 w-full items-center gap-2 rounded-xl border border-input bg-ddc-surface px-3.5 text-sm leading-5 text-ddc-text transition-colors focus-within:border-ddc-ring focus-within:ring-2 focus-within:ring-ddc-ring/30";
 
 export function LocalCombobox<T>({
+  id,
   value,
   onChange,
   onPick,
@@ -106,6 +111,7 @@ export function LocalCombobox<T>({
           {prefix}
           <Input
             ref={inputRef}
+            id={id}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onFocus={() => setOpen(true)}
@@ -116,7 +122,7 @@ export function LocalCombobox<T>({
             aria-haspopup="listbox"
             aria-expanded={open}
             aria-autocomplete="list"
-            className="flex-1 bg-transparent outline-none focus-visible:outline-none text-sm min-w-0"
+            className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 py-0 shadow-none ring-0 focus-visible:ring-0"
           />
           {value && !disabled && (
             <Button
@@ -127,7 +133,8 @@ export function LocalCombobox<T>({
               // before our click handler runs.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => onChange("")}
-              aria-label="Clear"
+              aria-label="Очистить"
+              title="Очистить"
             >
               <XIcon />
             </Button>
@@ -140,7 +147,8 @@ export function LocalCombobox<T>({
             onClick={() => setOpen((v) => !v)}
             disabled={disabled}
             aria-expanded={open}
-            aria-label="Toggle options"
+            aria-label="Показать варианты"
+            title="Показать варианты"
             className={cn(
               "transition-transform",
               open && "rotate-180",
@@ -154,12 +162,12 @@ export function LocalCombobox<T>({
         align="start"
         sideOffset={4}
         onOpenAutoFocus={(e) => e.preventDefault()}
-        className="p-0 w-[var(--radix-popover-trigger-width)] overflow-y-auto"
+        className="w-[var(--radix-popover-trigger-width)] gap-0 overflow-y-auto p-1.5"
         style={{ maxHeight }}
       >
         {matches.length === 0 ? (
-          <div className="px-3 py-4 text-center text-fg-subtle text-xs">
-            {emptyHint ?? "No matches"}
+          <div className="px-3 py-4 text-center text-xs text-ddc-text-muted">
+            {emptyHint ?? "Ничего не найдено"}
           </div>
         ) : (
           matches.map((item) => (
@@ -172,7 +180,7 @@ export function LocalCombobox<T>({
                 onPick?.(item);
                 setOpen(false);
               }}
-              className="w-full text-left min-h-11 sm:min-h-0 hover:bg-bg-surface cursor-pointer"
+              className="h-auto min-h-9 w-full justify-start rounded-lg px-3 py-2 text-left font-normal text-ddc-text hover:bg-ddc-surface-muted"
             >
               {renderItem(item)}
             </Button>

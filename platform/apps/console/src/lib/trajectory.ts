@@ -64,13 +64,13 @@ export interface Trajectory {
   summary: TrajectorySummary;
 }
 
-/** Render the headline for a reward: "PASS" / "FAIL" / "0.42". */
+/** Заголовок награды: «пройдено» / «не пройдено» / «0,42». Нет числа: «–». */
 export function rewardHeadline(reward: RewardResult): string {
   const v = reward.final_reward;
-  if (!Number.isFinite(v)) return "—";
-  if (v >= 0.99) return "PASS";
-  if (v <= 0) return "FAIL";
-  return v.toFixed(2);
+  if (!Number.isFinite(v)) return "–";
+  if (v >= 0.99) return "пройдено";
+  if (v <= 0) return "не пройдено";
+  return v.toFixed(2).replace(".", ",");
 }
 
 /** Map TrajectoryOutcome → StatusPill `status` token (Badge.tsx) so the

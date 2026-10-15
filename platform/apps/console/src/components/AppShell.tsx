@@ -1,29 +1,25 @@
 import { Input } from "@/components/ui/input";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { useAuth } from "../lib/auth";
+import { useI18n } from "../i18n";
 import { useChordKeybinding, type ChordBinding } from "../lib/useChordKeybinding";
 import { ROUTE_CHORDS } from "../lib/route-chords";
 import { AppSidebar } from "./AppSidebar";
 import { AppBreadcrumb } from "./AppBreadcrumb";
-import { BrandLoader } from "./BrandLoader";
+import { Spinner } from "@/components/ui/spinner";
 import { CommandPalette } from "./CommandPalette";
 import { ConsoleShell } from "./ConsoleShell";
 import { NavigationProgress } from "./NavigationProgress";
 
-export interface AppOutletContext {
-  pageHeaderSlot: HTMLDivElement | null;
-}
-
 export function AppShell() {
   const { isAuthenticated, isLoading } = useAuth();
+  const { t } = useI18n();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [pageHeaderSlot, setPageHeaderSlot] = useState<HTMLDivElement | null>(null);
-  const [scrolled, setScrolled] = useState(false);
 
   const chordBindings = useMemo<ChordBinding[]>(
     () =>
@@ -37,15 +33,10 @@ export function AppShell() {
   );
   useChordKeybinding(chordBindings);
 
-  const outletContext: AppOutletContext = useMemo(
-    () => ({ pageHeaderSlot }),
-    [pageHeaderSlot],
-  );
-
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-bg">
-        <BrandLoader size="lg" label="Loading session" />
+      <div className="bg-ddc-bg flex h-screen items-center justify-center">
+        <Spinner className="size-8 text-ddc-primary" aria-label={t.shell.loadingSession} />
       </div>
     );
   }
@@ -67,18 +58,9 @@ export function AppShell() {
         />
       </div>
 
-      <ConsoleShell
-        sidebar={<AppSidebar />}
-        breadcrumb={<AppBreadcrumb />}
-        pageHeaderSlotRef={setPageHeaderSlot}
-        pageHeaderScrolled={scrolled}
-      >
-        <main
-          key={pathname}
-          className="console-route-main"
-          onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
-        >
-          <Outlet context={outletContext} />
+      <ConsoleShell sidebar={<AppSidebar />} breadcrumb={<AppBreadcrumb />}>
+        <main key={pathname} className="console-route-main">
+          <Outlet />
         </main>
       </ConsoleShell>
     </TooltipProvider>

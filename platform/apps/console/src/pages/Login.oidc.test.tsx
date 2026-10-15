@@ -54,10 +54,10 @@ describe("Login with deployment OIDC providers", () => {
     const user = userEvent.setup();
     renderLogin();
 
-    const options = screen.getByRole("group", { name: "Sign in options" });
-    const sso = within(options).getByRole("button", { name: "Continue with Corp SSO" });
-    expect(within(options).queryByRole("button", { name: "Continue with email" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Sign up" })).toBeNull();
+    const options = screen.getByRole("group", { name: "Способы входа" });
+    const sso = within(options).getByRole("button", { name: "Продолжить через Corp SSO" });
+    expect(within(options).queryByRole("button", { name: "Продолжить с почтой" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Зарегистрироваться" })).toBeNull();
 
     await user.click(sso);
     expect(oauth2SignIn).toHaveBeenLastCalledWith({ providerId: "corp", callbackURL: "/" });
@@ -66,16 +66,16 @@ describe("Login with deployment OIDC providers", () => {
   it("keeps email next to OIDC when the backend lists it", () => {
     authInfo.current = { providers: ["email"], oidc: [{ id: "corp", name: "Corp SSO" }], email_password: true };
     renderLogin();
-    const options = screen.getByRole("group", { name: "Sign in options" });
-    expect(within(options).getByRole("button", { name: "Continue with Corp SSO" })).toBeTruthy();
-    expect(within(options).getByRole("button", { name: "Continue with email" })).toBeTruthy();
+    const options = screen.getByRole("group", { name: "Способы входа" });
+    expect(within(options).getByRole("button", { name: "Продолжить через Corp SSO" })).toBeTruthy();
+    expect(within(options).getByRole("button", { name: "Продолжить с почтой" })).toBeTruthy();
   });
 
   it("returns to the requested page after SSO", async () => {
     authInfo.current = { providers: [], oidc: [{ id: "corp", name: "Corp SSO" }], email_password: false };
     const user = userEvent.setup();
     renderLogin("/login?next=/agents");
-    await user.click(screen.getByRole("button", { name: "Continue with Corp SSO" }));
+    await user.click(screen.getByRole("button", { name: "Продолжить через Corp SSO" }));
     expect(oauth2SignIn).toHaveBeenLastCalledWith({ providerId: "corp", callbackURL: "/agents" });
   });
 
@@ -84,7 +84,7 @@ describe("Login with deployment OIDC providers", () => {
     oauth2SignIn.mockResolvedValue({ data: null, error: { message: "Provider unavailable" } });
     const user = userEvent.setup();
     renderLogin();
-    await user.click(screen.getByRole("button", { name: "Continue with Corp SSO" }));
+    await user.click(screen.getByRole("button", { name: "Продолжить через Corp SSO" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Provider unavailable");
   });
 });

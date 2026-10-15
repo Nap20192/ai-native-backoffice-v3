@@ -11,39 +11,41 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
+import { useCrumbNamesVersion } from "../lib/crumb-names";
+import { useI18n } from "../i18n";
+
 /**
- * Route handle contract for breadcrumbs. Each route in main.tsx can
- * declare:
+ * Контракт `handle.crumb` в main.tsx. Каждый маршрут может задать:
  *
- *   handle: { crumb: "Sessions" }                          // fixed label
- *   handle: { crumb: (m) => ({ label: m.data.name }) }      // dynamic
- *   handle: { crumb: (m) => m.params.id ?? "Session" }     // route param
+ *   handle: { crumb: "Сессии" }                              // фиксированная подпись
+ *   handle: { crumb: (m) => ({ label: m.data.name }) }      // динамическая
+ *   handle: { crumb: (m) => crumbName(m.params.id, "Сессия") } // имя записи
  *
- * Detail routes use the callback form so the leaf crumb displays the
- * real entity id (e.g. `sess-7ywhtwnwvpdtoy31`) — the in-page
- * `← Sessions / sess-xxx` row has been removed, so the breadcrumb is
- * now the canonical place to read the id. Truncation in the leaf
- * `<BreadcrumbPage>` keeps long ids from pushing the toolbar wider.
+ * Страницы деталей используют функцию, чтобы последняя крошка показывала имя
+ * записи («Документовед», «Рабочая среда»). Имя страница сообщает через
+ * `useCrumbName` (lib/crumb-names.ts), пока его нет, крошка называет тип записи.
+ * Сырой id в крошку не попадает, он виден только в «Свойствах». Длинные имена
+ * обрезает `truncate` у `<BreadcrumbPage>`, шапка не растёт.
  *
- * Pages that don't publish a `crumb` are skipped — the URL segment
- * fallback that an earlier draft used was dropped because it added
- * noise for placeholder routes that aren't navigated to as themselves
- * (e.g. `/integrations` parent that just hosts children).
+ * Маршруты без `crumb` пропускаются. Сегменты URL подписью не служат: для
+ * родителей-пустышек (например, `/integrations`, который только держит
+ * вложенные маршруты) они были бы шумом.
  */
 type CrumbValue = string | { label: string; to?: string };
 type CrumbHandle = { crumb?: CrumbValue | ((m: UIMatch) => CrumbValue) };
 
 /**
- * AppShell breadcrumb. Walks the active route match chain via
- * `useMatches()` (data-router-only — main.tsx switched to
- * `createBrowserRouter` so this works) and renders the per-route
- * `handle.crumb` values, last as plain text and preceding as links.
+ * Хлебные крошки оболочки. Обходят цепочку совпавших маршрутов через
+ * `useMatches()` (только data router, main.tsx на `createBrowserRouter`) и
+ * выводят `handle.crumb`: последняя крошка текстом, предыдущие ссылками.
  *
- * Hidden when there are no crumbs (root index route or routes without
- * a `crumb` handle) so the top toolbar reads clean.
+ * Без крошек (корневой маршрут или маршруты без `crumb`) компонент ничего не
+ * рисует, и верхняя панель остаётся чистой.
  */
 export function AppBreadcrumb() {
   const matches = useMatches();
+  const { t } = useI18n();
+  useCrumbNamesVersion();
 
   const crumbs = matches
     .map((m) => {
@@ -59,7 +61,7 @@ export function AppBreadcrumb() {
   if (crumbs.length === 0) return null;
 
   return (
-    <ShadcnBreadcrumb>
+    <ShadcnBreadcrumb aria-label={t.shell.breadcrumb} className="console-breadcrumb min-w-0">
       <BreadcrumbList>
         {crumbs.map((c, i) => {
           const isLast = i === crumbs.length - 1;
@@ -79,13 +81,14 @@ export function AppBreadcrumb() {
                     {c.label}
                   </BreadcrumbPage>
                 ) : (
-                  // asChild + React Router <Link> gives an SPA-style
-                  // navigation. Without this, BreadcrumbLink renders a
-                  // bare <a href> and clicking the breadcrumb does a
-                  // full browser reload — losing all in-memory state
-                  // (TQ cache, route state, dialogs).
+                  // asChild + <Link> из React Router даёт переход без
+                  // перезагрузки. Иначе BreadcrumbLink рисует голый
+                  // <a href>, и клик по крошке перезагружает страницу и
+                  // теряет состояние (кэш запросов, окна).
                   <BreadcrumbLink asChild>
-                    <Link to={c.to}>{c.label}</Link>
+                    <Link to={c.to} className="truncate" title={c.label}>
+                      {c.label}
+                    </Link>
                   </BreadcrumbLink>
                 )}
               </BreadcrumbItem>

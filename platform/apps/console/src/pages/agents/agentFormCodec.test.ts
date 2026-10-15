@@ -66,9 +66,9 @@ function sampleAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 
 describe("agentFormCodec lossless update", () => {
   it("rejects malformed or non-object YAML/JSON before an editor mode switch", () => {
-    expect(() => parseAgentConfigText("name: [", "yaml")).toThrow(/invalid yaml/i);
-    expect(() => parseAgentConfigText("- name: coder", "yaml")).toThrow(/object/i);
-    expect(() => parseAgentConfigText('"coder"', "json")).toThrow(/object/i);
+    expect(() => parseAgentConfigText("name: [", "yaml")).toThrow(/некорректный yaml/i);
+    expect(() => parseAgentConfigText("- name: coder", "yaml")).toThrow(/объектом/i);
+    expect(() => parseAgentConfigText('"coder"', "json")).toThrow(/объектом/i);
     expect(parseAgentConfigText('{"name":"Coder"}', "json")).toEqual({ name: "Coder" });
   });
 
@@ -318,7 +318,7 @@ describe("agentFormCodec lossless update", () => {
 
     form.metadataJson = "{";
     expect(() => mergeFormIntoConfig(form, null, { forUpdate: false })).toThrow(
-      /metadata.*json/i,
+      /json метаданных/i,
     );
   });
 
@@ -459,7 +459,7 @@ describe("agent endpoint boundary", () => {
   it("requires a create name and only defaults omitted create tools", () => {
     expect(() =>
       prepareCodePayload({ model: "deepseek-chat" }, { forUpdate: false }),
-    ).toThrow(/name is required/i);
+    ).toThrow(/укажите название/i);
     expect(
       prepareCodePayload(
         { name: "Coder", model: "deepseek-chat" },

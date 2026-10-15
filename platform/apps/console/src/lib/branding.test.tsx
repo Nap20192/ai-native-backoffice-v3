@@ -105,7 +105,7 @@ describe("console branding", () => {
         </I18nProvider>
       </MemoryRouter>,
     );
-    expect(screen.getByRole("heading", { name: "Log in to Acme Agents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Вход в Acme Agents" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Acme Agents" }).tagName.toLowerCase()).toBe("svg");
   });
 });

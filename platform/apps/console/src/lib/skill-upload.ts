@@ -18,7 +18,7 @@ export async function extractManagedSkillFiles(zip: File): Promise<File[]> {
     .map(([path, bytes]) => new File([ownedArrayBuffer(bytes)], path));
 
   if (files.length === 0) {
-    throw new Error("The skill archive does not contain any files");
+    throw new Error("В архиве навыка нет файлов");
   }
   return files;
 }

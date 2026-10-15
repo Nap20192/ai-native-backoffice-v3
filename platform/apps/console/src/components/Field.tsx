@@ -34,8 +34,11 @@ interface FieldProps {
  * and silently shipped orphan labels (clicking the label didn't focus
  * the input; SR users couldn't pair them).
  *
+ * Подпись `.label` DDC: 12px, medium, ink-600, отступ 6px; подсказка и
+ * ошибка 12px с отступом 6px (`text-muted` / `text-error`).
+ *
  * Usage:
- *   <Field label="Workspace name" hint="Letters, numbers, dashes only.">
+ *   <Field label="Название" hint="Буквы, цифры и дефисы.">
  *     <Input value={name} onChange={...} className={inputCls} />
  *   </Field>
  *
@@ -73,18 +76,18 @@ export function Field({ label, hint, error, className, children }: FieldProps) {
       {label && (
         <Label
           htmlFor={inputId}
-          className="block text-sm font-medium text-fg mb-1.5"
+          className="mb-1.5 block text-xs leading-4 font-medium text-ddc-label"
         >
           {label}
         </Label>
       )}
       {childWithProps}
       {error ? (
-        <p id={hintId} className="mt-1 text-sm text-danger">
+        <p id={hintId} className="mt-1.5 text-xs leading-4 text-ddc-danger-text">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="mt-1 text-sm text-fg-muted">
+        <p id={hintId} className="mt-1.5 text-xs leading-4 text-ddc-text-muted">
           {hint}
         </p>
       ) : null}

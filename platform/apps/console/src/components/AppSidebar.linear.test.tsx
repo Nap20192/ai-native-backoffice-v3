@@ -52,9 +52,9 @@ function renderSidebar() {
 describe("AppSidebar tracks", () => {
   it("uses the tenant switcher as the first row without a brand row", async () => {
     const { container } = renderSidebar();
-    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /Switch workspace|切换工作区/ })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Сменить рабочее пространство|Switch workspace|切换工作区/ })).toBeEnabled());
     expect(sidebar.firstElementChild).toHaveClass("console-sidebar-tenant");
     expect(container.querySelector(".console-sidebar-brand")).toBeNull();
   });
@@ -63,21 +63,21 @@ describe("AppSidebar tracks", () => {
     const user = userEvent.setup();
     const { container } = renderSidebar();
 
-    const trigger = screen.getByRole("button", { name: /Command palette|命令面板/ });
+    const trigger = screen.getByRole("button", { name: /Командная палитра|Command palette|命令面板/ });
     expect(trigger.closest(".console-sidebar-tenant")).not.toBeNull();
     expect(trigger).toHaveAttribute("data-sidebar-search");
     expect(container.querySelector(".console-sidebar-command")).toBeNull();
     expect(trigger.querySelector("kbd")).toBeNull();
     await user.click(trigger);
 
-    expect(screen.getByRole("dialog", { name: /Command palette|命令面板/ })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Командная палитра|Command palette|命令面板/ })).toBeInTheDocument();
   });
 
   it("assigns every sidebar icon and label to the shared two-track grid", () => {
     renderSidebar();
-    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
     const trackedRows = [
-      screen.getByRole("button", { name: /Switch workspace|切换工作区/ }),
+      screen.getByRole("button", { name: /Сменить рабочее пространство|Switch workspace|切换工作区/ }),
       ...within(sidebar).getAllByRole("link"),
     ];
 
@@ -96,15 +96,32 @@ describe("AppSidebar tracks", () => {
     expect(tokens).toContain("--tenant-avatar-optical-x: 0px;");
   });
 
-  it("uses the Linear template's exact sidebar section rhythm", () => {
+  it("uses the DDC portal's sidebar rhythm: 64px header, 4px between rows", () => {
     const tokens = readFileSync(resolve(process.cwd(), "src/styles/console-tokens.css"), "utf8");
     const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
 
     expect(tokens).toContain("--sidebar-pill-gap: var(--density-unit);");
     expect(tokens).toContain("--sidebar-section-gap: var(--console-pad-md);");
-    expect(shell).toContain("padding: var(--console-pad-sm) var(--sidebar-frame-inset) var(--console-pad-md);");
-    expect(shell).toContain(".console-sidebar-group-label + .console-sidebar-row");
-    expect(shell).toContain("margin-top: var(--sidebar-pill-gap);");
+    expect(shell).toMatch(
+      /\.console-sidebar-nav\s*\{[^}]*padding: 12px 6px 12px 12px;[^}]*scrollbar-gutter: stable;/,
+    );
+    expect(shell).toMatch(
+      /\.console-sidebar-row \+ \.console-sidebar-row,\s*\.console-sidebar-group-label \+ \.console-sidebar-row\s*\{[^}]*margin-top: 4px;/,
+    );
+    expect(shell).toMatch(
+      /\.console-sidebar-group-label\s*\{[^}]*padding: 16px 12px 4px;[^}]*text-transform: uppercase;/,
+    );
+    expect(shell).toMatch(
+      /\.console-sidebar-row\s*\{[^}]*gap: 12px;[^}]*border-radius: 12px;[^}]*padding: 8px 12px;/,
+    );
+  });
+
+  it("marks the active row with the DDC selected fill and semibold weight", () => {
+    const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
+
+    expect(shell).toMatch(
+      /\.console-sidebar-row\[data-active="true"\],\s*\.console-sidebar-row\[data-active="true"\]:hover\s*\{[^}]*background: var\(--ddc-selected-bg\);[^}]*color: var\(--ddc-selected-text\);[^}]*font-weight: 600;/,
+    );
   });
 
   it("prevents accidental text selection on global app chrome", () => {
@@ -121,15 +138,62 @@ describe("AppSidebar tracks", () => {
 
   it("keeps the primary route flat and labels only the later navigation groups", () => {
     renderSidebar();
-    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
     const headings = containerHeadings(sidebar).map((heading) => heading.textContent);
 
-    expect(screen.getByRole("link", { name: /Dashboard|仪表盘/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Сводка|Dashboard|仪表盘/ })).toBeInTheDocument();
+    expect(headings).not.toContain("Обзор");
     expect(headings).not.toContain("Overview");
     expect(headings).not.toContain("概览");
     expect(headings).toEqual(
-      expect.arrayContaining([expect.stringMatching(/Managed Agents|托管智能体/)]),
+      expect.arrayContaining([expect.stringMatching(/Управляемые агенты|Managed Agents|托管智能体/)]),
     );
+  });
+
+  it("shows the section names in Russian by default", () => {
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
+    const headings = containerHeadings(sidebar).map((heading) => heading.textContent);
+    const links = within(sidebar).getAllByRole("link").map((link) => link.textContent);
+
+    expect(headings).toEqual(["Управляемые агенты", "Инфраструктура", "Конфигурация"]);
+    expect(links).toEqual([
+      "Сводка",
+      "Агенты",
+      "Сессии",
+      "Файлы",
+      "Запуски оценки",
+      "Окружения",
+      "Хранилища секретов",
+      "Навыки",
+      "Хранилища памяти",
+      "Карточки моделей",
+      "Участники",
+      "API-ключи",
+      "Локальные среды",
+    ]);
+  });
+
+  it("does not offer the integrations group in the sidebar or the command palette", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
+
+    expect(
+      within(sidebar)
+        .getAllByRole("link")
+        .some((link) => link.getAttribute("href")?.startsWith("/integrations")),
+    ).toBe(false);
+    expect(within(sidebar).queryByText(/Интеграции|Integrations|集成/)).toBeNull();
+    for (const brand of ["Linear", "GitHub", "Slack", "Feishu"]) {
+      expect(within(sidebar).queryByText(brand)).toBeNull();
+    }
+
+    await user.click(screen.getByRole("button", { name: /Командная палитра/ }));
+    const dialog = await screen.findByRole("dialog", { name: /Командная палитра/ });
+    for (const brand of ["Linear", "GitHub", "Slack", "Feishu"]) {
+      expect(within(dialog).queryByText(brand)).toBeNull();
+    }
   });
 
   it("keeps the workspace menu compact instead of rendering tenant IDs as a second line", async () => {
@@ -137,7 +201,7 @@ describe("AppSidebar tracks", () => {
     renderSidebar();
 
     await user.click(
-      screen.getByRole("button", { name: /Switch workspace|切换工作区/ }),
+      screen.getByRole("button", { name: /Сменить рабочее пространство|Switch workspace|切换工作区/ }),
     );
 
     const menu = await screen.findByRole("menu");

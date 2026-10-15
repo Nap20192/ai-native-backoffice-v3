@@ -26,7 +26,7 @@ beforeAll(() => {
 });
 
 describe("Linear global surfaces", () => {
-  it("anchors modals to a stable top edge with a transparent backdrop", () => {
+  it("centres modals as a DDC card under a dimmed, blurred backdrop", () => {
     render(
       <Modal open onClose={() => undefined} title="Create agent" footer={<button>Save</button>}>
         Form
@@ -38,14 +38,26 @@ describe("Linear global surfaces", () => {
     const header = dialog.querySelector('[data-slot="dialog-header"]');
     const footer = dialog.querySelector('[data-slot="dialog-footer"]');
 
-    expect(dialog).toHaveClass("top-[var(--overlay-top)]");
-    expect(dialog).not.toHaveClass("-translate-y-1/2");
-    expect(overlay).toHaveClass("bg-transparent");
-    expect(header?.className).not.toContain("border-b");
-    expect(footer?.className).not.toContain("border-t");
-    expect(header).toHaveClass("px-6", "py-4");
-    expect(dialog.querySelector('[data-console-modal-body]')).toHaveClass("px-6", "py-4");
+    expect(dialog).toHaveClass("top-1/2", "left-1/2", "-translate-x-1/2", "-translate-y-1/2");
+    expect(dialog).not.toHaveClass("top-[var(--overlay-top)]");
+    expect(dialog).toHaveClass("rounded-2xl", "border-ddc-border", "bg-ddc-surface", "shadow-card");
+    expect(overlay).toHaveClass("bg-ddc-overlay", "backdrop-blur-xs");
+    expect(overlay).not.toHaveClass("bg-transparent");
+    expect(header).toHaveClass("border-b", "border-ddc-divider");
+    expect(footer).toHaveClass("border-t", "border-ddc-divider", "bg-ddc-footer");
+    expect(header).toHaveClass("px-6", "pt-5", "pb-4");
+    expect(dialog.querySelector('[data-console-modal-body]')).toHaveClass("px-6", "py-5");
     expect(footer).toHaveClass("px-6", "py-4");
+  });
+
+  it("closes through a Russian-labelled button", () => {
+    render(
+      <Modal open onClose={() => undefined} title="Create agent">
+        Form
+      </Modal>,
+    );
+
+    expect(screen.getByRole("button", { name: "Закрыть" })).toBeInTheDocument();
   });
 
   it("keeps intent groups stable and does not print shortcut badges", async () => {
@@ -60,8 +72,10 @@ describe("Linear global surfaces", () => {
 
     await user.keyboard("{Control>}k{/Control}");
 
-    const headings = screen.getAllByText(/^(Recent|Actions|Navigate)$/).map((node) => node.textContent);
-    expect(headings).toEqual(["Recent", "Actions", "Navigate"]);
+    const headings = screen
+      .getAllByText(/^(Недавние|Действия|Переходы)$/)
+      .map((node) => node.textContent);
+    expect(headings).toEqual(["Недавние", "Действия", "Переходы"]);
     expect(document.querySelector('[data-slot="command-shortcut"]')).toBeNull();
   });
 

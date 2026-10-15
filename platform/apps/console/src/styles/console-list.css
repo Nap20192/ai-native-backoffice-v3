@@ -1,10 +1,36 @@
+/* Страница списка DDC: поле 24px, от md 32px, шапка страницы (PageHeader) на
+   фоне страницы и под ней карточка со списком. Карточка ростом по содержимому,
+   но не выше остатка страницы: длинный список прокручивается внутри неё, шапка
+   столбцов и панель остаются на месте. */
+.console-list-page {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  padding: var(--detail-frame-inset);
+}
+
+.console-list-page > header {
+  flex: 0 0 auto;
+}
+
+/* Список это карточка DDC: белая поверхность, рамка ink-100, rounded-2xl,
+   shadow-card. Холст под ней нейтральный ink-50, без тонировки и градиента.
+   Внутри карточки отступ столбцов 20px (card p-5), на телефоне 16px. */
 .console-list-root {
+  --list-frame-inset: 20px;
   display: flex;
   min-width: 0;
-  min-height: 100%;
-  height: 100%;
+  min-height: 0;
+  flex: 0 1 auto;
   flex-direction: column;
   overflow: hidden;
+  border: 1px solid var(--ddc-border);
+  border-radius: var(--console-radius-card);
+  background: var(--ddc-surface);
+  box-shadow: var(--shadow-card-soft);
 }
 
 .console-list-toolbar,
@@ -32,17 +58,28 @@
   min-height: var(--list-toolbar-h);
   flex: 0 0 var(--list-toolbar-h);
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   padding-block: var(--list-toolbar-pad-top) var(--list-toolbar-pad-bottom);
   padding-inline: var(--list-frame-inset);
   border: 0;
   background: var(--surface-route);
 }
 
-.console-list-toolbar button,
-.console-list-toolbar input {
+.console-list-toolbar:empty {
+  display: none;
+}
+
+/* Одна высота ряда (правило 1 DDC): кнопки панели равны полю поиска.
+   Поле внутри InputGroup тянется по высоте группы, а не по --control-h:
+   высоту и рамку задаёт сама группа. */
+.console-list-toolbar button {
   min-height: var(--control-h);
   height: var(--control-h);
+}
+
+.console-list-toolbar input {
+  min-height: 0;
+  height: 100%;
 }
 
 .console-filter-chip {
@@ -54,7 +91,7 @@
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--pill-border);
-  border-radius: var(--console-radius-pill);
+  border-radius: var(--console-radius-control, 12px);
   background: var(--pill-bg);
   background-clip: padding-box;
   box-shadow: var(--pill-shadow);
@@ -77,8 +114,8 @@
   border-color: var(--pill-active-border);
   background: var(--pill-active-bg);
   box-shadow: var(--pill-active-shadow);
-  color: var(--fg);
-  font-weight: 560;
+  color: var(--ddc-selected-text);
+  font-weight: 500;
 }
 
 .console-list-toolbar .console-filter-chip > button {
@@ -97,9 +134,20 @@
   color: inherit;
 }
 
+/* Фокус с клавиатуры. Рамка чипа обрезает детей (overflow: hidden), и
+   кольцо кнопки внутри было бы не видно, поэтому кольцо рисует сам чип. */
+.console-filter-chip > button:focus-visible {
+  outline: none;
+}
+
+.console-filter-chip:has(> button:focus-visible) {
+  outline: 2px solid var(--ddc-ring);
+  outline-offset: 2px;
+}
+
 .console-filter-chip-trigger {
   gap: var(--console-gap-sm);
-  padding-inline: var(--console-pad-md);
+  padding-inline: 14px;
   font-size: var(--console-type-body);
   font-weight: 500;
 }
@@ -109,15 +157,20 @@
 }
 
 .console-filter-chip-clear {
-  width: 20px;
-  flex: 0 0 20px;
+  width: 24px;
+  flex: 0 0 24px;
   padding: 0;
-  margin-right: var(--console-gap-3xs);
+  margin-right: var(--console-gap-sm);
+}
+
+.console-list-toolbar .console-filter-chip > .console-filter-chip-clear {
+  height: 24px;
+  align-self: center;
 }
 
 .console-filter-chip-clear:hover {
   background: color-mix(in srgb, var(--fg) 7%, transparent) !important;
-  border-radius: var(--console-radius-pill) !important;
+  border-radius: var(--console-radius-md) !important;
 }
 
 .console-list-toolbar-spacer {
@@ -126,9 +179,9 @@
 }
 
 .console-list-search {
-  width: min(256px, 38vw);
-  min-width: 136px;
-  flex: 0 1 256px;
+  width: min(320px, 38vw);
+  min-width: 14rem;
+  flex: 0 1 320px;
 }
 
 .console-data-head-viewport {
@@ -178,6 +231,7 @@
   border-spacing: 0 var(--data-row-gap);
   color: var(--fg);
   font-size: var(--console-type-body);
+  font-variant-numeric: tabular-nums;
   line-height: var(--type-line);
 }
 
@@ -189,14 +243,26 @@
   margin-top: calc(var(--data-head-body-gap) - var(--data-row-gap));
 }
 
+/* Шапка таблицы DDC (.th): регистр заглавных, разрядка 0.05em, 12px, semibold,
+   цвет text-muted, под ней разделитель. */
 .console-data-head {
   color: var(--fg-subtle);
   font-size: var(--console-type-label);
-  font-weight: 560;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Ячейка шапки красится явно: базовый TableHead задаёт свой цвет и вес, и без
+   этого правила заголовки столбцов выходили тёмными и средней жирности. */
+.console-data-head th {
+  color: var(--fg-subtle);
+  font-weight: 600;
 }
 
 .console-data-head th {
   background: var(--surface-route);
+  border-bottom: 1px solid var(--border-chrome);
 }
 
 .console-data-head th,
@@ -204,6 +270,7 @@
   height: var(--table-head-h);
   padding: 0;
   border: 0;
+  border-bottom: 1px solid var(--border-chrome);
   text-align: left;
   white-space: nowrap;
 }
@@ -213,20 +280,19 @@
   height: var(--data-row-h);
 }
 
+/* Строки DDC: плоские, 40px, разделитель divide-y между строками, без
+   скруглений и без отдельных плашек. */
 .console-data-row td {
   height: var(--data-row-h);
   padding: 0;
   border: 0;
+  border-bottom: 1px solid var(--border-chrome);
   background: var(--data-row-bg);
   vertical-align: middle;
 }
 
-.console-data-row td:first-child {
-  border-radius: var(--console-radius-row) 0 0 var(--console-radius-row);
-}
-
-.console-data-row td:last-child {
-  border-radius: 0 var(--console-radius-row) var(--console-radius-row) 0;
+.console-data-row:last-child td {
+  border-bottom-color: transparent;
 }
 
 .console-data-row.is-interactive {
@@ -244,7 +310,7 @@
   align-items: center;
   gap: var(--console-gap-lg);
   overflow: hidden;
-  padding-inline: var(--console-pad-xs);
+  padding-inline: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -270,29 +336,159 @@
 .console-list-empty > * {
   width: min(100%, 420px);
   margin: auto;
+  /* Пустое состояние лежит в карточке списка: своей рамки и тени у него нет,
+     иначе получается карточка в карточке. */
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Телефон (до 640px): список это стопка карточек, а не таблица. Горизонтальной
+   прокрутки нет: первый видимый столбец заголовок карточки, остальные пары
+   «подпись и значение» (правило 13 DDC). Панель переносится на несколько
+   рядов, поиск занимает всю ширину. */
+.console-data-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.console-stack-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px var(--list-frame-inset);
+  border-bottom: 1px solid var(--border-chrome);
+  background: var(--data-row-bg);
+}
+
+.console-stack-row:last-child {
+  border-bottom-color: transparent;
+}
+
+.console-stack-row.is-interactive {
+  cursor: pointer;
+}
+
+.console-stack-row.is-interactive:hover,
+.console-stack-row.is-interactive:active {
+  background: var(--pill-hover-bg);
+}
+
+.console-stack-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.console-stack-title {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--ddc-heading);
+  font-size: var(--console-type-body);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.console-stack-fields {
+  display: grid;
+  margin: 0;
+  gap: 4px;
+}
+
+.console-stack-field {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--console-type-label);
+  line-height: 1.5rem;
+}
+
+.console-stack-field dt {
+  max-width: 45%;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--ddc-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-stack-field dd {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  margin: 0;
+  overflow: hidden;
+  text-align: right;
+}
+
+.console-stack-more {
+  padding: 16px;
+  color: var(--fg-subtle);
+  font-size: var(--console-type-label);
+  text-align: center;
+}
+
+/* Планшет и узкое окно: панель переносится на второй ряд, а не сжимает поиск
+   до обрезанного плейсхолдера. */
+@media (max-width: 1023px) {
+  .console-list-toolbar {
+    height: auto;
+    min-height: var(--list-toolbar-h);
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
 }
 
 @media (max-width: 640px) {
+  /* На телефоне прокручивается вся страница, а не карточка внутри неё: шапка
+     и панель фильтров занимают пол-экрана, и списку внутри карточки не
+     хватало бы места. */
+  .console-list-page {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .console-list-root {
+    --list-frame-inset: 16px;
+    flex: 0 0 auto;
+  }
+
   .console-list-toolbar {
+    height: auto;
     min-height: var(--list-toolbar-h);
-    height: var(--list-toolbar-h);
-    flex-basis: var(--list-toolbar-h);
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .console-list-toolbar-spacer {
+    display: none;
   }
 
   .console-list-search {
-    width: 168px;
-    min-width: 136px;
-    flex: 0 1 168px;
+    order: 10;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 100%;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .console-list-fixed-header,
-  .console-list-toolbar,
-  .console-filter-chip {
-    transition-duration: 0.01ms;
-  }
-}
+/* Движение не отключается системной настройкой: правило 6 DDC. */

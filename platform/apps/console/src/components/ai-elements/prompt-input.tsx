@@ -125,7 +125,7 @@ const captureScreenshot = async (): Promise<File | null> => {
       // oxlint-disable-next-line eslint-plugin-unicorn(prefer-add-event-listener)
       video.onloadedmetadata = () => resolve();
       // oxlint-disable-next-line eslint-plugin-unicorn(prefer-add-event-listener)
-      video.onerror = () => reject(new Error("Failed to load screen stream"));
+      video.onerror = () => reject(new Error("Не удалось получить поток экрана"));
     });
 
     await video.play();
@@ -423,7 +423,7 @@ export type PromptInputActionAddAttachmentsProps = ComponentProps<
 };
 
 export const PromptInputActionAddAttachments = ({
-  label = "Add photos or files",
+  label = "Добавить фото или файлы",
   ...props
 }: PromptInputActionAddAttachmentsProps) => {
   const attachments = usePromptInputAttachments();
@@ -450,7 +450,7 @@ export type PromptInputActionAddScreenshotProps = ComponentProps<
 };
 
 export const PromptInputActionAddScreenshot = ({
-  label = "Take screenshot",
+  label = "Сделать снимок экрана",
   onSelect,
   ...props
 }: PromptInputActionAddScreenshotProps) => {
@@ -590,7 +590,7 @@ export const PromptInput = ({
       if (incoming.length && accepted.length === 0) {
         onError?.({
           code: "accept",
-          message: "No files match the accepted types.",
+          message: "Нет файлов допустимого типа.",
         });
         return;
       }
@@ -600,7 +600,7 @@ export const PromptInput = ({
       if (accepted.length > 0 && sized.length === 0) {
         onError?.({
           code: "max_file_size",
-          message: "All files exceed the maximum size.",
+          message: "Все файлы больше допустимого размера.",
         });
         return;
       }
@@ -615,7 +615,7 @@ export const PromptInput = ({
         if (typeof capacity === "number" && sized.length > capacity) {
           onError?.({
             code: "max_files",
-            message: "Too many files. Some were not added.",
+            message: "Слишком много файлов, часть не добавлена.",
           });
         }
         const next: PromptInputAttachment[] = [];
@@ -655,7 +655,7 @@ export const PromptInput = ({
       if (incoming.length && accepted.length === 0) {
         onError?.({
           code: "accept",
-          message: "No files match the accepted types.",
+          message: "Нет файлов допустимого типа.",
         });
         return;
       }
@@ -665,7 +665,7 @@ export const PromptInput = ({
       if (accepted.length > 0 && sized.length === 0) {
         onError?.({
           code: "max_file_size",
-          message: "All files exceed the maximum size.",
+          message: "Все файлы больше допустимого размера.",
         });
         return;
       }
@@ -680,7 +680,7 @@ export const PromptInput = ({
       if (typeof capacity === "number" && sized.length > capacity) {
         onError?.({
           code: "max_files",
-          message: "Too many files. Some were not added.",
+          message: "Слишком много файлов, часть не добавлена.",
         });
       }
 
@@ -917,12 +917,12 @@ export const PromptInput = ({
     <>
       <Input
         accept={accept}
-        aria-label="Upload files"
+        aria-label="Загрузить файлы"
         className="hidden"
         multiple={multiple}
         onChange={handleChange}
         ref={inputRef}
-        title="Upload files"
+        title="Загрузить файлы"
         type="file"
       />
       <form
@@ -967,7 +967,7 @@ export const PromptInputTextarea = ({
   onChange,
   onKeyDown,
   className,
-  placeholder = "What would you like to know?",
+  placeholder = "Напишите сообщение…",
   ...props
 }: PromptInputTextareaProps) => {
   const controller = useOptionalPromptInputController();
@@ -1169,7 +1169,7 @@ export const PromptInputButton = ({
       <TooltipContent side={side}>
         {tooltipContent}
         {shortcut && (
-          <span className="ml-2 text-muted-foreground">{shortcut}</span>
+          <span className="ml-2 text-ddc-text-muted">{shortcut}</span>
         )}
       </TooltipContent>
     </Tooltip>
@@ -1259,7 +1259,7 @@ export const PromptInputSubmit = ({
 
   return (
     <InputGroupButton
-      aria-label={isGenerating ? "Stop" : "Submit"}
+      aria-label={isGenerating ? "Остановить" : "Отправить"}
       className={cn(className)}
       onClick={handleClick}
       size={size}
@@ -1288,8 +1288,8 @@ export const PromptInputSelectTrigger = ({
 }: PromptInputSelectTriggerProps) => (
   <SelectTrigger
     className={cn(
-      "border-none bg-transparent font-medium text-muted-foreground shadow-none transition-colors",
-      "hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground",
+      "border-none bg-transparent font-medium text-ddc-text-muted shadow-none transition-colors",
+      "hover:bg-ddc-surface-muted hover:text-ddc-text aria-expanded:bg-ddc-surface-muted aria-expanded:text-ddc-text",
       className
     )}
     {...props}
@@ -1378,7 +1378,7 @@ export const PromptInputTabLabel = ({
   // oxlint-disable-next-line eslint-plugin-jsx-a11y(heading-has-content)
   <h3
     className={cn(
-      "mb-2 px-3 font-medium text-muted-foreground text-xs",
+      "mb-2 px-3 text-xs font-medium text-ddc-text-muted",
       className
     )}
     {...props}
@@ -1402,7 +1402,7 @@ export const PromptInputTabItem = ({
 }: PromptInputTabItemProps) => (
   <div
     className={cn(
-      "flex items-center gap-2 px-3 py-2 text-xs hover:bg-accent",
+      "flex items-center gap-2 px-3 py-2 text-xs hover:bg-ddc-surface-muted",
       className
     )}
     {...props}

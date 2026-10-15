@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { I18nProvider } from "../i18n";
 import { AppShell } from "./AppShell";
 
 vi.mock("../lib/auth", () => ({
@@ -53,39 +54,53 @@ beforeAll(() => {
 
 function renderShell() {
   return render(
-    <MemoryRouter initialEntries={["/agents"]}>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route path="agents" element={<div>Agent list</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <I18nProvider>
+      <MemoryRouter initialEntries={["/agents"]}>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="agents" element={<div>Agent list</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </I18nProvider>,
   );
 }
 
-describe("AppShell Linear composition", () => {
-  it("starts at Linear's 236px desktop navigation width", () => {
+describe("AppShell DDC composition", () => {
+  it("starts at the DDC portal's 256px desktop navigation width", () => {
     renderShell();
 
     expect(document.querySelector("[data-console-shell]")).toHaveStyle({
-      "--shell-sidebar-current-w": "236px",
+      "--shell-sidebar-current-w": "256px",
     });
   });
 
-  it("gives the tenant and breadcrumb track a shared 44px header rhythm", () => {
+  it("gives the tenant and breadcrumb track a shared 64px header rhythm", () => {
     const tokens = readFileSync(resolve(process.cwd(), "src/styles/console-tokens.css"), "utf8");
+    const bridge = readFileSync(resolve(process.cwd(), "src/styles/ddc-bridge.css"), "utf8");
     const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
 
     expect(tokens).toContain("--shell-top-h: calc(var(--density-unit) * 44);");
+    expect(bridge).toContain("--shell-top-h: 64px;");
     expect(shell).toContain("height: var(--shell-top-h);");
     expect(shell).toContain("flex: 0 0 var(--shell-top-h);");
+    expect(shell).toMatch(
+      /\.console-sidebar-tenant\s*\{[^}]*height: var\(--shell-top-h\);[^}]*flex: 0 0 var\(--shell-top-h\);/,
+    );
   });
 
-  it("gives breadcrumb text a distinct 14px medium header hierarchy", () => {
+  it("gives breadcrumb text a distinct 14px header hierarchy", () => {
     const breadcrumb = readFileSync(resolve(process.cwd(), "src/components/ui/breadcrumb.tsx"), "utf8");
+    const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
 
     expect(breadcrumb).toContain("gap-1.5 text-base");
     expect(breadcrumb).toContain('cn("font-medium text-foreground"');
+    expect(shell).toMatch(
+      /\.console-breadcrumb \[data-slot="breadcrumb-list"\]\s*\{[^}]*font-size: 0\.875rem;/,
+    );
+    expect(shell).toMatch(
+      /\.console-breadcrumb \[data-slot="breadcrumb-page"\]\s*\{[^}]*font-weight: 600;/,
+    );
   });
 
   it("places the breadcrumb on the shell header above the route surface", () => {
@@ -109,11 +124,11 @@ describe("AppShell Linear composition", () => {
     const user = userEvent.setup();
     renderShell();
 
-    expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Показать меню" })).not.toBeInTheDocument();
     await user.keyboard("{Control>}\\{/Control}");
 
-    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Show sidebar" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Показать меню" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Показать меню" })).toHaveLength(1);
   });
 
   it("keeps the hover preview open while a portaled sidebar menu is expanded", async () => {
@@ -179,20 +194,90 @@ describe("AppShell Linear composition", () => {
     expect(scrim).toHaveAttribute("data-open", "true");
   });
 
-  it("uses Linear's shortened hover-preview geometry instead of an even inset", () => {
-    const tokens = readFileSync(resolve(process.cwd(), "src/styles/console-tokens.css"), "utf8");
+  it("closes the phone drawer after navigating to another section", async () => {
+    const user = userEvent.setup();
+    const desktopWidth = window.innerWidth;
+    window.innerWidth = 390;
+    try {
+      render(
+        <I18nProvider>
+          <MemoryRouter initialEntries={["/agents"]}>
+            <Routes>
+              <Route element={<AppShell />}>
+                <Route path="agents" element={<Link to="/sessions">To sessions</Link>} />
+                <Route path="sessions" element={<div>Sessions page</div>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </I18nProvider>,
+      );
+
+      const shell = document.querySelector("[data-console-shell]");
+      expect(shell).toHaveAttribute("data-sidebar-state", "mobile-hidden");
+
+      await user.click(screen.getByRole("button", { name: "Показать меню" }));
+      expect(shell).toHaveAttribute("data-sidebar-state", "mobile-drawer");
+
+      await user.click(screen.getByRole("link", { name: "To sessions" }));
+      expect(screen.getByText("Sessions page")).toBeInTheDocument();
+      expect(shell).toHaveAttribute("data-sidebar-state", "mobile-hidden");
+    } finally {
+      window.innerWidth = desktopWidth;
+    }
+  });
+
+  it("dims the whole page behind the phone drawer and closes it on a tap", async () => {
+    const user = userEvent.setup();
+    const desktopWidth = window.innerWidth;
+    window.innerWidth = 390;
+    try {
+      renderShell();
+      const shell = document.querySelector("[data-console-shell]");
+      await user.click(screen.getByRole("button", { name: "Показать меню" }));
+      expect(shell).toHaveAttribute("data-sidebar-state", "mobile-drawer");
+
+      const scrim = document.querySelector(".console-sidebar-scrim") as HTMLElement;
+      expect(scrim).not.toBeNull();
+      // Затемнение не Button: у кнопки есть высота h-10, и оно закрывало бы
+      // только верхние 40px страницы.
+      expect(scrim.className).toBe("console-sidebar-scrim");
+      const css = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
+      expect(css).toMatch(
+        /\.console-sidebar-scrim\s*\{[^}]*position: fixed;[^}]*inset: 0;[^}]*width: 100%;[^}]*height: 100%;/,
+      );
+
+      await user.click(scrim);
+      expect(shell).toHaveAttribute("data-sidebar-state", "mobile-hidden");
+    } finally {
+      window.innerWidth = desktopWidth;
+    }
+  });
+
+  it("lays the sidebar out as a full-height DDC column with a right border", () => {
     const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
 
-    expect(tokens).toContain("--sidebar-preview-radius: var(--console-radius-sm)");
-    expect(tokens).toContain("--sidebar-preview-top: calc(");
-    expect(tokens).toContain("--sidebar-preview-left: calc(");
-    expect(shell).toContain(
-      "inset: var(--sidebar-preview-top) auto var(--sidebar-preview-bottom) var(--sidebar-preview-left)",
+    expect(shell).toMatch(
+      /\.console-sidebar-rail\s*\{[^}]*border-right: 1px solid var\(--ddc-divider\);[^}]*background: var\(--ddc-surface\);/,
     );
-    expect(shell).toContain('data-sidebar-state="desktop-full"] .console-sidebar');
-    expect(shell).toContain("padding-block: var(--shell-stage-gap)");
-    expect(shell).toContain("border-left: 1px solid var(--border-chrome)");
     expect(shell).toContain("grid-template-rows: minmax(0, 1fr)");
+    expect(shell).toContain("grid-template-columns: var(--shell-sidebar-current-w) minmax(0, 1fr)");
+    expect(shell).toMatch(
+      /\.console-topbar\s*\{[^}]*border-bottom: 1px solid var\(--ddc-divider\);[^}]*background: var\(--ddc-surface\);/,
+    );
+    expect(shell).not.toContain("border-left: 1px solid var(--border-chrome)");
+    expect(shell).not.toContain("padding-block: var(--shell-stage-gap)");
+  });
+
+  it("slides the hidden and mobile sidebar in full height with a 288px phone drawer", () => {
+    const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
+
+    expect(shell).toContain("inset: 0 auto 0 0;");
+    expect(shell).toContain("transform: translateX(-100%);");
+    expect(shell).toContain("visibility: hidden;");
+    expect(shell).toMatch(
+      /data-sidebar-state\^="mobile-"\] \.console-sidebar-rail\s*\{[^}]*width: 288px;/,
+    );
+    expect(shell).toMatch(/\.console-sidebar-scrim\s*\{[^}]*background: var\(--ddc-overlay\);/);
   });
 
   it("preserves horizontal browser history gestures across the route and data grid", () => {
@@ -205,15 +290,19 @@ describe("AppShell Linear composition", () => {
     expect(list).toContain("overscroll-behavior-y: contain;");
   });
 
-  it("does not reserve a hidden scrollbar gutter on the route canvas", () => {
+  it("keeps a thin visible scrollbar with a stable gutter on the route canvas", () => {
     const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
 
     expect(shell).toMatch(
-      /\.console-route-main\s*\{[^}]*overflow-y: auto;[^}]*scrollbar-width: none;/,
+      /\.console-route-main\s*\{[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;/,
     );
-    expect(shell).not.toContain("scrollbar-gutter: stable;");
-    expect(shell).toMatch(
-      /\.console-route-main::-webkit-scrollbar\s*\{[^}]*width: 0;[^}]*height: 0;/,
-    );
+    expect(shell).not.toMatch(/\.console-route-main\s*\{[^}]*scrollbar-width: none;/);
+    expect(shell).not.toContain(".console-route-main::-webkit-scrollbar");
+  });
+
+  it("does not follow the system reduced-motion setting, like the DDC portal", () => {
+    const shell = readFileSync(resolve(process.cwd(), "src/styles/console-shell.css"), "utf8");
+
+    expect(shell).not.toContain("prefers-reduced-motion");
   });
 });

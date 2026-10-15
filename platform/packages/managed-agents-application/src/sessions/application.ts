@@ -30,6 +30,10 @@ import type { SessionEnvironmentSourcePort } from "./environment-source";
 import type { SessionStore } from "@open-managed-agents/session-store";
 import type { SessionResourceResolverPort } from "./resource-resolver";
 import type { SessionLifecycleCommandPort } from "../session-execution/lifecycle";
+import {
+  sessionBootstrapExecutionEvents,
+  sessionExecutionEventBatches,
+} from "@open-managed-agents/session-runtime-contract/coordination";
 import type {
   DeploymentSessionLauncherPort,
   LaunchDeploymentSession,
@@ -308,6 +312,17 @@ export class SessionsApplicationService
             resources: command.resources,
           });
     if (resolvedResources.type !== "resolved") return resolvedResources;
+    // Status reflects admitted work, as the Cloudflare SessionDO derives it:
+    // a Session is running only when its bootstrap input admits a turn (the
+    // same rule the execution outbox uses). Otherwise it waits idle until the
+    // first message admits a turn and the runtime reports status_running.
+    const admitsBootstrapTurn = sessionExecutionEventBatches(
+      sessionBootstrapExecutionEvents({
+        sessionId,
+        createdAt: timestamp,
+        initialEvents: command.initialEvents,
+      }),
+    ).length > 0;
     const session: Session = {
       id: sessionId,
       agent: sessionAgent,
@@ -319,7 +334,7 @@ export class SessionsApplicationService
       outcomeEvaluations: [],
       resources: resolvedResources.resources,
       stats: {},
-      status: "running",
+      status: admitsBootstrapTurn ? "running" : "idle",
       title: command.title ?? null,
       updatedAt: timestamp,
       usage: {},

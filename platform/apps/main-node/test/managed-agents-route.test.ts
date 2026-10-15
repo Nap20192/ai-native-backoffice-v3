@@ -663,7 +663,7 @@ describe("main-node official Managed Agents route", () => {
       },
       environment_id: "env-local-runtime",
       title: "Node managed session",
-      status: "running",
+      status: "idle",
     });
     expect(retrievedSession).toEqual(createdSession);
 

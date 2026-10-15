@@ -5,7 +5,8 @@ import type {
 } from "@open-managed-agents/session-store";
 import type { Agent } from "../src/domain/agent";
 import type { Environment } from "../src/domain/environment";
-import type { SessionView } from "../src/ports/sessions";
+import type { SessionBootstrapEvent } from "../src/domain/session-bootstrap";
+import type { CreateSessionCommand, SessionView } from "../src/ports/sessions";
 import { SessionsApplicationService } from "../src/index";
 
 class MemorySessionStore implements SessionStore {
@@ -438,7 +439,7 @@ describe("SessionsApplicationService", () => {
           },
         ],
         stats: {},
-        status: "running",
+        status: "idle",
         title: "Ship the migration",
         updatedAt: "2026-08-26T02:00:00.000Z",
         usage: {},
@@ -458,6 +459,72 @@ describe("SessionsApplicationService", () => {
         initialEvents: [],
       },
     ]);
+  });
+
+  describe("initial status", () => {
+    // Like the Cloudflare SessionDO, whose status is derived from in-flight
+    // work: a Session is running only when its bootstrap input admits a turn.
+    // Deployment launches also pass bootstrap system messages, which the
+    // public create command does not accept, so the helper takes the wider
+    // bootstrap type.
+    async function createWith(initialEvents?: SessionBootstrapEvent[]) {
+      const store = new MemorySessionStore();
+      const service = new SessionsApplicationService({
+        workspaceId: "workspace_01",
+        store,
+        agents: {
+          findCurrent: async () => structuredClone(agent),
+          findVersion: async () => null,
+        },
+        environments: availableSessionEnvironment,
+        resources: emptySessionResources,
+        lifecycle: silentSessionLifecycle,
+        clock: { now: () => new Date("2026-08-26T02:00:00.000Z") },
+        ids: { nextSessionId: () => "session_initial_status" },
+      });
+      const created = await service.createSession({
+        agent: { type: "latest", agentId: agent.id },
+        environmentId: "env_01",
+        ...(initialEvents !== undefined && {
+          initialEvents: initialEvents as CreateSessionCommand["initialEvents"],
+        }),
+      });
+      const stored = await store.findCurrent({
+        workspaceId: "workspace_01",
+        sessionId: "session_initial_status",
+      });
+      return {
+        created: created.type === "created" ? created.session.status : created.type,
+        stored: stored?.session.status,
+      };
+    }
+
+    it("creates an idle Session when no bootstrap input is given", async () => {
+      await expect(createWith()).resolves.toEqual({ created: "idle", stored: "idle" });
+      await expect(createWith([])).resolves.toEqual({ created: "idle", stored: "idle" });
+    });
+
+    it("keeps a Session idle when bootstrap system messages alone admit no turn", async () => {
+      await expect(createWith([
+        { type: "system.message", content: [{ type: "text", text: "Context only" }] },
+      ])).resolves.toEqual({ created: "idle", stored: "idle" });
+    });
+
+    it("creates a running Session when a bootstrap user message admits a turn", async () => {
+      await expect(createWith([
+        { type: "user.message", content: [{ type: "text", text: "Start" }] },
+      ])).resolves.toEqual({ created: "running", stored: "running" });
+    });
+
+    it("creates a running Session when a bootstrap outcome admits a turn", async () => {
+      await expect(createWith([
+        {
+          type: "user.define_outcome",
+          description: "Ship it",
+          rubric: { type: "text", content: "Tests pass" },
+        },
+      ])).resolves.toEqual({ created: "running", stored: "running" });
+    });
   });
 
   it("selects an explicitly pinned current Agent without treating it as history", async () => {

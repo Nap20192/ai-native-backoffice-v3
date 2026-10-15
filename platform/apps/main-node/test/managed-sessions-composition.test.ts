@@ -132,6 +132,58 @@ describe("SqlManagedSessionsComposition", () => {
     await composition.stopAll();
   });
 
+  it("creates an empty cloud Session idle and still wakes it with the first message", async () => {
+    await ensureSessionExecutionCoordinatorSchema(client);
+    await client.exec(`CREATE TABLE managed_session_initial_events (session_id TEXT, workspace_id TEXT, sequence INTEGER, document TEXT);`);
+    await client.prepare("UPDATE managed_environments SET document = ?").bind(JSON.stringify({
+      ...environment,
+      config: { type: "cloud", networking: { type: "unrestricted" }, packages: { apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] } },
+    })).run();
+    const started: string[] = [];
+    const dispatched: string[] = [];
+    const sessionIds = ["session_empty", "session_bootstrapped"];
+    const composition = new SqlManagedSessionsComposition({
+      client, executionOutbox: true,
+      environments: new SqlSessionEnvironmentSource(client),
+      lifecycle: {
+        sessionStarted: async (input) => { started.push(input.sessionId); },
+        sessionStopped: async () => {},
+      },
+      runtime: {
+        sessionEventsAccepted: async (input) => {
+          dispatched.push(...input.events.map((event) => `${input.sessionId}:${event.type}`));
+        },
+        sessionThreadArchived: async () => {},
+        subscribe: () => (async function* () {})(),
+      },
+      sealer: { seal: async value => value },
+      clock: { now: () => new Date("2026-08-26T01:00:00.000Z") },
+      ids: { nextSessionId: () => sessionIds.shift()!, nextEventId: () => "event_first", nextOutcomeId: () => "outcome", nextResourceId: () => "resource" },
+    });
+    const ports = composition.portsFor("workspace_01");
+    const executions = (sessionId: string) => client
+      .prepare("SELECT state FROM managed_session_executions WHERE session_id = ?")
+      .bind(sessionId).all<{ state: string }>().then((rows) => (rows.results ?? []).map((row) => row.state));
+
+    await expect(ports.sessions.createSession({ agent: { type: "latest", agentId: agent.id }, environmentId: environment.id }))
+      .resolves.toMatchObject({ type: "created", session: { id: "session_empty", status: "idle" } });
+    await expect(ports.sessions.retrieveSession({ sessionId: "session_empty" }))
+      .resolves.toMatchObject({ type: "found", session: { status: "idle" } });
+    await expect(executions("session_empty")).resolves.toEqual([]);
+
+    await expect(ports.sessionEvents.sendSessionEvents({ sessionId: "session_empty", events: [{ type: "user.message", content: [{ type: "text", text: "First" }] }] }))
+      .resolves.toMatchObject({ type: "accepted" });
+    await expect(executions("session_empty")).resolves.toEqual(["queued"]);
+    expect(dispatched).toEqual(["session_empty:user.message"]);
+
+    await expect(ports.sessions.createSession({ agent: { type: "latest", agentId: agent.id }, environmentId: environment.id,
+      initialEvents: [{ type: "user.message", content: [{ type: "text", text: "Bootstrap" }] }],
+    })).resolves.toMatchObject({ type: "created", session: { id: "session_bootstrapped", status: "running" } });
+    await expect(executions("session_bootstrapped")).resolves.toEqual(["queued"]);
+    expect(started).toEqual(["session_empty", "session_bootstrapped"]);
+    await composition.stopAll();
+  });
+
   it("reuses one tenant-scoped application graph while isolating workspaces", () => {
     const composition = new SqlManagedSessionsComposition({
       client,

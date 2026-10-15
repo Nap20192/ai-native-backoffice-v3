@@ -1,10 +1,11 @@
 import {it,expect} from 'vitest';
 import {Hono} from 'hono';
 import {buildAnalyticsRoutes} from '../src/lib/analytics/analytics-routes.js';
+import {createModelCardLimitsStore} from '../src/lib/analytics/limits-store.js';
 import {fixture,NOW,fact,cards,card} from './_helpers/analytics-seed.js';
 it.each(['/usage','/cache','/limits','/limits/mc_1','/model_calls','/model_calls/sevt_1','/sessions/ses_1','/facets'])('serves JSON contract for GET %s',async path=>{const {get}=await fixture();const {res,body}=await get(path);expect(res.status).toBe(200);expect(body.type).not.toBe('error');});
 it.each(['/usage','/cache','/limits','/limits/mc_1','/model_calls','/sessions/absent','/facets'])('handles empty data for %s',async path=>{const {get}=await fixture(false);const {res,body}=await get(path);expect(res.status).toBe(200);if(body.totals)expect(body.totals.requests).toBe(0);if(body.latest_ended_at!==undefined)expect(body.latest_ended_at).toBeNull();});
-it('returns cache ratio from summed input, 336 hour history and latest name',async()=>{const {get}=await fixture();const {body}=await get('/cache');expect(body.totals).toMatchObject({requests:2,uncached_input_tokens:60,cache_read_tokens:120,cache_write_tokens:40,total_input_tokens:220,read_ratio:0.5455,write_amortization:3});expect(Date.parse(body.to_hour)-Date.parse(body.series_from_hour)).toBe(335*3600000);expect(body.rows[0].key).toBe('alpha');});
+it('returns cache ratio from summed input, 336 hour history and latest name',async()=>{const {get}=await fixture();const {body}=await get('/cache');expect(body.totals).toMatchObject({requests:4,uncached_input_tokens:100,cache_read_tokens:240,cache_write_tokens:80,total_input_tokens:420,read_ratio:0.5714,write_amortization:3});expect(Date.parse(body.to_hour)-Date.parse(body.series_from_hour)).toBe(335*3600000);expect(body.rows[0].key).toBe('alpha');});
 it('low cache diagnostic excludes small agents and includes input at threshold',async()=>{const {get,store}=await fixture(false);await store.insert(fact({input_tokens:10000,cache_read_tokens:0,cache_write_tokens:0}));const {body}=await get('/cache?group_by=agent');expect(body.low_cache_agents).toEqual([{agent_id:'ag_1',agent_name:'Первый',model:'alpha',total_input_tokens:10000,read_ratio:0}]);});
 it('updates and reads limits with actor, peak and minute breakdown',async()=>{const {app,get,sql}=await fixture();const response=await app.request('/v1/oma/analytics/limits/mc_1',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests_per_minute:4,input_tokens_per_minute:200,output_tokens_per_minute:null})});expect(response.status).toBe(200);expect(await response.json()).toMatchObject({card_id:'mc_1',requests_per_minute:4,updated_at:new Date(NOW).toISOString()});expect(await sql.prepare('SELECT updated_by FROM model_card_limits').first()).toEqual({updated_by:'u1'});const {body}=await get('/limits');expect(body.cards[0].quotas).toEqual([{metric:'itpm',unit:'tokens_per_minute',limit:200,peak:100,peak_at:'2026-10-16T08:41:00.000Z',utilization:0.5},{metric:'otpm',unit:'tokens_per_minute',limit:null,peak:20,peak_at:'2026-10-16T08:41:00.000Z',utilization:null},{metric:'rpm',unit:'requests_per_minute',limit:4,peak:2,peak_at:'2026-10-16T08:41:00.000Z',utilization:0.5}]);const detail=(await get('/limits/mc_1?metric=itpm&by=agent')).body;expect(detail.breakdown.total).toBe(100);expect(detail.breakdown.rows.map((r:any)=>r.value)).toEqual([60,40]);expect(detail.series).toHaveLength(168);expect(detail.series.find((r:any)=>r.hour_start==='2026-10-16T08:00:00.000Z').peak).toBe(100);expect((await get('/limits/mc_1?metric=rpm&by=session')).body.breakdown.rows).toHaveLength(2);});
 it('peak ties use latest minute and input excludes cache reads',async()=>{const {get,store}=await fixture(false);await store.insert(fact({id:'first',ended_at:NOW-120000,cache_read_tokens:999}));await store.insert(fact({id:'second',ended_at:NOW-60000}));const {body}=await get('/limits/mc_1');expect(body.peak_24h).toMatchObject({value:40,at:'2026-10-16T09:14:00.000Z'});});
@@ -113,15 +114,15 @@ it('hides archived cards and rejects reading or changing their limits', async ()
   }
 });
 
-it.each([null, [], {requests_per_minute: 1.5, input_tokens_per_minute: null, output_tokens_per_minute: null},
-  {requests_per_minute: '1', input_tokens_per_minute: null, output_tokens_per_minute: null},
-  {requests_per_minute: 1000000001, input_tokens_per_minute: null, output_tokens_per_minute: null}])(
-  'rejects invalid replacement limits %j without writing', async body => {
+it.each([{body: null}, {body: []}, {body: {requests_per_minute: 1.5, input_tokens_per_minute: null, output_tokens_per_minute: null}},
+  {body: {requests_per_minute: '1', input_tokens_per_minute: null, output_tokens_per_minute: null}},
+  {body: {requests_per_minute: 1000000001, input_tokens_per_minute: null, output_tokens_per_minute: null}}])(
+  'rejects invalid replacement limits $body without writing', async ({body}) => {
     const {app, sql} = await fixture(false);
     const response = await app.request('/v1/oma/analytics/limits/mc_1', {method: 'PUT', body: JSON.stringify(body)});
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({type: 'error', error: {type: 'invalid_request_error'}});
-    expect(await sql.prepare('SELECT * FROM model_card_limits').first()).toBeNull();
+    expect(await createModelCardLimitsStore(sql).get('ws', 'mc_1')).toBeNull();
   },
 );
 
@@ -148,3 +149,54 @@ it('exports journal CSV without a cursor and leaves unknown cost empty', async (
   expect(lines.find(line => line.startsWith('sevt_3,'))).toContain(',,,none,');
   expect(response.headers.has('X-Analytics-Truncated')).toBe(false);
 });
+
+it('usage groups and series carry exactly the contract fields', async () => {
+  const {get} = await fixture();
+  const {body} = await get('/usage?from=2026-10-15&to=2026-10-16');
+  const fields = ['requests', 'errors', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens',
+    'cost_usd_micros', 'cost_parts_usd_micros', 'unpriced_requests'];
+  expect(Object.keys(body).sort()).toEqual(['bucket', 'buckets', 'currency', 'filters', 'from', 'generated_at',
+    'group_by', 'groups', 'latest_ended_at', 'series', 'to', 'totals'].sort());
+  expect(Object.keys(body.totals).sort()).toEqual([...fields, 'usage_missing_requests'].sort());
+  for (const group of body.groups) expect(Object.keys(group).sort()).toEqual(['key', 'label', ...fields].sort());
+  for (const row of body.series) expect(Object.keys(row).sort()).toEqual(['bucket_start', 'key', ...fields].sort());
+});
+
+it('prices a call by hand from the catalog and stores it once', async () => {
+  // claude-sonnet-4-6 in the Pi catalog: $3 input, $15 output, $0.30 cache read, $3.75 cache write per 1M tokens.
+  // 1200*3 + 300*15 + 5400*0.3 + 800*3.75 = 3600 + 4500 + 1620 + 3000 = 12720 micros = $0.012720.
+  const {get, store} = await fixture(false);
+  const tokens = {input_tokens: 1200, output_tokens: 300, cache_read_tokens: 5400, cache_write_tokens: 800};
+  const {costParts, resolveCallPrice} = await import('../src/lib/analytics/price.js');
+  const parts = costParts(tokens, resolveCallPrice(null, 'anthropic', 'claude-sonnet-4-6'));
+  expect(parts).toEqual({cost_input_usd_micros: 3600, cost_output_usd_micros: 4500,
+    cost_cache_read_usd_micros: 1620, cost_cache_write_usd_micros: 3000, cost_usd_micros: 12720});
+  const row = fact({id: 'hand', card_id: null, model_source: 'builtin', price_source: 'catalog', ...tokens, ...parts});
+  await store.insert(row);
+  await store.insert(row);
+  const {body} = await get('/usage?group_by=none');
+  expect(body.totals).toMatchObject({requests: 1, cost_usd_micros: 12720,
+    cost_parts_usd_micros: {input: 3600, output: 4500, cache_read: 1620, cache_write: 3000}});
+  expect((await get('/model_calls/hand')).body).toMatchObject({cost_usd_micros: 12720, price_source: 'catalog'});
+});
+
+it.each([
+  "/usage?model=alpha') OR 1=1 --",
+  "/usage?agent_id=x' OR '1'='1",
+  "/model_calls?q=sevt' OR '1'='1",
+  "/model_calls?card_id=none) OR (1=1",
+])('treats filter text as data, not SQL: %s', async path => {
+  const {get} = await fixture();
+  const {res, body} = await get(path.replace(/ /g, '%20'));
+  expect(res.status).toBe(200);
+  if (body.totals) expect(body.totals.requests).toBe(0);
+  if (body.data) expect(body.data).toEqual([]);
+});
+
+it.each(['/usage?group_by=model;DROP%20TABLE%20model_calls', '/usage?bucket=day,hour', '/limits/mc_1?by=agent_id'])(
+  'rejects group and bucket names outside the whitelist: %s', async path => {
+    const {get} = await fixture();
+    expect((await get(path)).res.status).toBe(400);
+    expect((await get('/model_calls')).body.data).toHaveLength(4);
+  },
+);

@@ -36,7 +36,15 @@ function cacheSummary(row?: Partial<Aggregate>) {
   const total = value.input_tokens + value.cache_read_tokens + value.cache_write_tokens;
   return {requests:value.requests,uncached_input_tokens:value.input_tokens,cache_read_tokens:value.cache_read_tokens,cache_write_tokens:value.cache_write_tokens,total_input_tokens:total,read_ratio:ratio(value.cache_read_tokens,total),write_amortization:ratio(value.cache_read_tokens,value.cache_write_tokens)};
 }
-const groupExpressions: Record<GroupBy, string> = {model:'model',agent:'agent_id',harness:'harness',card:"COALESCE(card_id, 'none')",environment:"COALESCE(environment_id, 'none')",speed:'speed',none:"'all'"};
+interface GroupExpression {select: string; group: string}
+const column = (name: string): GroupExpression => ({select:name, group:name});
+// Postgres rejects a string constant in GROUP BY, so "none" groups by the single workspace the WHERE clause keeps.
+const groupExpressions: Record<GroupBy, GroupExpression> = {model:column('model'),agent:column('agent_id'),harness:column('harness'),card:column("COALESCE(card_id, 'none')"),environment:column("COALESCE(environment_id, 'none')"),speed:column('speed'),none:{select:"'all'",group:'workspace_id'}};
+// Groups and series carry no usage_missing_requests: the contract keeps it in totals only.
+function groupSummary(row?: Partial<Aggregate>) {
+  const {usage_missing_requests: _missing, ...rest} = summary(row);
+  return rest;
+}
 function where(workspace: string, q?: AnalyticsQuery, time?: {from: number; to: number}) {
   const clauses = ['workspace_id = ?'];
   const args: unknown[] = [workspace];
@@ -60,11 +68,11 @@ export function createModelCallStore(sql: SqlClient) {
     await ensureAnalyticsSchema(sql);
     return (await sql.prepare(query).bind(...args).all<T>()).results ?? [];
   }
-  async function aggregate(workspace: string, q?: AnalyticsQuery, group?: string, bucket?: string, time?: {from: number; to: number}, extra?: {clause: string; args: unknown[]}) {
+  async function aggregate(workspace: string, q?: AnalyticsQuery, group?: GroupExpression, bucket?: string, time?: {from: number; to: number}, extra?: {clause: string; args: unknown[]}) {
     const w = where(workspace,q,time);
     if (extra) {w.clause += ' AND '+extra.clause;w.args.push(...extra.args);}
-    const expressions = [group,bucket].filter((v): v is string => v !== undefined);
-    return all<Aggregate>(`SELECT ${group ? group+' AS key, ' : ''}${bucket ? bucket+' AS bucket, ' : ''}${aggregateSql} FROM model_calls WHERE ${w.clause}${expressions.length ? ' GROUP BY '+expressions.join(', ') : ''}`,w.args);
+    const expressions = [group?.group,bucket].filter((v): v is string => v !== undefined);
+    return all<Aggregate>(`SELECT ${group ? group.select+' AS key, ' : ''}${bucket ? bucket+' AS bucket, ' : ''}${aggregateSql} FROM model_calls WHERE ${w.clause}${expressions.length ? ' GROUP BY '+expressions.join(', ') : ''}`,w.args);
   }
   async function latest(workspace: string) {
     const rows = await all<{ended: number | null}>('SELECT MAX(ended_at) AS ended FROM model_calls WHERE workspace_id = ?',[workspace]);
@@ -72,9 +80,11 @@ export function createModelCallStore(sql: SqlClient) {
   }
   async function labels(workspace: string, q: AnalyticsQuery, time?: {from:number;to:number}) {
     const w = where(workspace,q,time);
-    const rows = await all<{agent_id:string;agent_name:string;model:string;card_id:string|null}>(`SELECT agent_id, agent_name, model, card_id, MAX(ended_at) AS last_at, MAX(id) AS last_id FROM model_calls WHERE ${w.clause} GROUP BY agent_id, agent_name, model, card_id ORDER BY MAX(ended_at) DESC, MAX(id) DESC`,w.args);
+    // The newest row by (ended_at, id), the journal order, names the agent and the card.
+    const latestBy = (key: string) => `ROW_NUMBER() OVER (PARTITION BY ${key} ORDER BY ended_at DESC, id DESC)`;
+    const rows = await all<{agent_id:string;agent_name:string;model:string;card_id:string|null;agent_rank:number;card_rank:number}>(`SELECT agent_id, agent_name, model, card_id, agent_rank, card_rank FROM (SELECT agent_id, agent_name, model, card_id, ${latestBy('agent_id')} AS agent_rank, ${latestBy('card_id')} AS card_rank FROM model_calls WHERE ${w.clause}) ranked WHERE agent_rank = 1 OR card_rank = 1`,w.args);
     const agents = new Map<string,string>(); const cards = new Map<string,string>();
-    for (const row of rows) {if (!agents.has(row.agent_id)) agents.set(row.agent_id,row.agent_name);if(row.card_id && !cards.has(row.card_id))cards.set(row.card_id,row.model);}
+    for (const row of rows) {if (Number(row.agent_rank) === 1) agents.set(row.agent_id,row.agent_name);if (row.card_id && Number(row.card_rank) === 1) cards.set(row.card_id,row.model);}
     return {agents,cards};
   }
   return {
@@ -96,8 +106,8 @@ export function createModelCallStore(sql: SqlClient) {
       for (let time = q.fromMs; time < q.toMs; time += q.bucket === 'day' ? 24 * HOUR : HOUR) buckets.push(iso(time));
       const tokenTotal = (row: Aggregate) => Number(row.input_tokens)+Number(row.output_tokens)+Number(row.cache_read_tokens)+Number(row.cache_write_tokens);
       return {from:q.from,to:q.to,bucket:q.bucket,group_by:q.group_by,currency:'USD',filters:q.filters,buckets,totals,
-        groups:groups.sort((a,b) => tokenTotal(b)-tokenTotal(a) || a.key.localeCompare(b.key)).map(row => ({key:row.key,label:label(row.key),...summary(row)})),
-        series:series.map(row => ({bucket_start:q.bucket === 'day' ? iso(Date.parse(String(row.bucket))) : iso(Number(row.bucket)*HOUR),key:row.key,...summary(row)})).sort((a,b)=>a.bucket_start.localeCompare(b.bucket_start)||a.key.localeCompare(b.key)),
+        groups:groups.sort((a,b) => tokenTotal(b)-tokenTotal(a) || a.key.localeCompare(b.key)).map(row => ({key:row.key,label:label(row.key),...groupSummary(row)})),
+        series:series.map(row => ({bucket_start:q.bucket === 'day' ? iso(Date.parse(String(row.bucket))) : iso(Number(row.bucket)*HOUR),key:row.key,...groupSummary(row)})).sort((a,b)=>a.bucket_start.localeCompare(b.bucket_start)||a.key.localeCompare(b.key)),
         latest_ended_at:await latest(workspace),generated_at:iso(now)};
     },
     async cache(workspace: string, q: AnalyticsQuery, now: number) {

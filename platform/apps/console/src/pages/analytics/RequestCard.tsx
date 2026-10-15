@@ -166,7 +166,7 @@ function Details({ call }: { call: ModelCallRecord }) {
         </h3>
         <dl className="divide-y divide-ddc-divider tabular-nums">
           <Pair label={TEXT.common.total}>{formatUsd(call.cost_usd_micros)}</Pair>
-          {parts && (
+          {call.cost_usd_micros !== null && (
             <>
               <Pair label="Вход">{formatUsd(parts.input)}</Pair>
               <Pair label="Выход">{formatUsd(parts.output)}</Pair>

@@ -28,6 +28,9 @@ export interface CostParts {
   cache_write: number;
 }
 
+/** Части стоимости одной записи журнала: без цены каждая часть равна null. */
+export type CallCostParts = { [K in keyof CostParts]: number | null };
+
 export type UsageGroupBy =
   | "model"
   | "agent"
@@ -245,7 +248,7 @@ export interface ModelCallRecord {
   finish_reason: string | null;
   error_message: string | null;
   cost_usd_micros: number | null;
-  cost_parts_usd_micros: CostParts | null;
+  cost_parts_usd_micros: CallCostParts;
   price_source: "card" | "catalog" | "none";
 }
 

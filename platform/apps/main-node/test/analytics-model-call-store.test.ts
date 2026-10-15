@@ -1,5 +1,6 @@
-import {it,expect} from 'vitest';
-import {fixture,fact,NOW} from './_helpers/analytics-seed.js';
+import {it,expect,vi} from 'vitest';
+import {createBetterSqlite3SqlClient} from '@open-managed-agents/sql-client';
+import {fixture,fact,seed,NOW} from './_helpers/analytics-seed.js';
 import {parseQuery} from '../src/lib/analytics/query-params.js';
 it('inserts idempotently per workspace',async()=>{const {store}=await fixture();await store.insert(fact());await store.insert(fact({workspace_id:'other'}));expect((await store.session('ws','ses_1')).totals.requests).toBe(3);expect((await store.session('other','ses_1')).totals.requests).toBe(1);});
 it.each(['model','agent','harness','card','environment','speed','none'])('groups by %s with numeric sums and UTC boundaries',async(group_by)=>{const {store}=await fixture();const r=await store.usage('ws',parseQuery({from:'2026-10-15',to:'2026-10-16',group_by},'usage',NOW),NOW);expect(r.totals).toMatchObject({requests:3,errors:1,input_tokens:80,unpriced_requests:1,usage_missing_requests:1,cost_usd_micros:420});expect(r.buckets).toHaveLength(2);expect(r.groups.reduce((n,g)=>n+g.requests,0)).toBe(3);});
@@ -96,4 +97,23 @@ it('counts minute load in the open lower and closed upper time window', async ()
   expect(rows.reduce((total, row) => total + row.requests, 0)).toBe(2);
   expect(rows.map(row => row.input_tokens)).toEqual([40, 40]);
   expect(rows.every(row => Number.isInteger(row.minute))).toBe(true);
+});
+
+it('never groups by a string constant, which Postgres rejects as a non-integer constant', async () => {
+  const sql = await createBetterSqlite3SqlClient(':memory:');
+  const prepare = vi.spyOn(sql, 'prepare');
+  const store = await seed(sql);
+  const reports = [];
+  for (const bucket of ['day', 'hour']) {
+    reports.push(await store.usage('ws', parseQuery({from: '2026-10-16', bucket, group_by: 'none'}, 'usage', NOW), NOW));
+  }
+  const groupItems = prepare.mock.calls
+    .map(([text]) => /GROUP BY (.*)$/s.exec(text)?.[1] ?? '')
+    .flatMap(clause => clause.split(','))
+    .map(item => item.trim());
+  expect(groupItems.filter(item => /^'[^']*'$/.test(item))).toEqual([]);
+  for (const report of reports) {
+    expect(report.groups).toMatchObject([{key: 'all', label: 'Всё', requests: 2}]);
+    expect(report.series.every(row => row.key === 'all')).toBe(true);
+  }
 });

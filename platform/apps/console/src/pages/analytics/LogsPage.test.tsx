@@ -248,7 +248,8 @@ describe("LogsPage", () => {
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             cost_usd_micros: null,
-            cost_parts_usd_micros: null,
+            // Так отвечает сервер без цены: объект частей, каждая часть null.
+            cost_parts_usd_micros: { input: null, output: null, cache_read: null, cache_write: null },
             price_source: "none",
             effort: null,
             model_source: "builtin",
@@ -267,6 +268,11 @@ describe("LogsPage", () => {
     expect(card.querySelector(".callout-danger")).toHaveTextContent("Провайдер вернул 529");
     expect(within(card).getByText("Harness не прислал токены этого вызова.")).toBeInTheDocument();
     expect(within(card).getByText("Цена не задана")).toBeInTheDocument();
+    // Без цены части не показываются: четыре строки «нет цены» ничего не добавляют.
+    for (const part of ["Вход", "Выход", "Чтение кэша", "Запись кэша"]) {
+      const cost = within(card).getByRole("region", { name: "Стоимость" });
+      expect(within(cost).queryByText(part, { selector: "dt" })).toBeNull();
+    }
     const pair = (label: string) =>
       plain(within(card).getByText(label, { selector: "dt" }).nextElementSibling?.textContent ?? "");
     expect(pair("Карточка")).toBe("Ключ сервера");

@@ -71,6 +71,14 @@
   background: linear-gradient(to bottom, transparent, var(--session-card-bg, var(--ddc-surface)));
 }
 
+/* Содержимое файла из вызова write: подсветка кода без собственной белой
+   плашки highlight.js, фон даёт блок вызова. Правила highlight.js стоят вне
+   слоя, поэтому здесь нужна большая специфичность, а не утилита Tailwind. */
+div[data-tool-code] pre code.hljs {
+  padding: 0;
+  background: transparent;
+}
+
 /* Кнопка стоит поверх затухания по центру. */
 [data-session-clamp-toggle="more"] {
   position: absolute;

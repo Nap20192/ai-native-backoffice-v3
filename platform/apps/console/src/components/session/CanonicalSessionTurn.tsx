@@ -467,12 +467,12 @@ function RequestCard({
 }) {
   const usage = block.request?.usage ?? null;
   const failed = block.request?.isError === true;
-  const showHead = block.thinking || failed || usage !== null;
+  const showHead = block.thinking || failed;
 
   return (
     <div
       className={cn(
-        "group",
+        "group relative",
         SESSION_CARD_CLASS,
         "space-y-1",
         selected && SESSION_CARD_SELECTED_CLASS,
@@ -506,18 +506,17 @@ function RequestCard({
               Ошибка запроса
             </Badge>
           ) : null}
-          {usage ? (
-            <span
-              className={cn(
-                "ml-auto flex flex-none items-center gap-2 tabular-nums text-ddc-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-data-[selected=true]:opacity-100",
-              )}
-              data-session-usage
-            >
-              <span>↑ {formatTokensRu(totalInput(usage))}</span>
-              <span>↓ {formatTokensRu(usage.output)}</span>
-            </span>
-          ) : null}
         </div>
+      ) : null}
+      {usage ? (
+        <span
+          className="pointer-events-none absolute top-1.5 right-3 z-10 flex items-center gap-2 text-xs leading-5 tabular-nums text-ddc-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-data-[selected=true]:opacity-100"
+          data-search-skip
+          data-session-usage
+        >
+          <span>↑ {formatTokensRu(totalInput(usage))}</span>
+          <span>↓ {formatTokensRu(usage.output)}</span>
+        </span>
       ) : null}
       {block.items.map((item, index) => (
         <RequestItemView
@@ -862,7 +861,10 @@ function ToolDetails({ call }: { call: ToolCall }) {
       <>
         {path ? <PathChip path={path} /> : null}
         {content && language ? (
-          <div className="relative [--session-card-bg:var(--ddc-surface-muted)]" data-tool-code>
+          <div
+            className="relative [--session-card-bg:var(--ddc-surface-sunken)] [&_pre]:my-0 [&_pre]:rounded-lg [&_pre]:border-0 [&_pre]:bg-ddc-surface-sunken [&_pre]:pr-9"
+            data-tool-code
+          >
             <CopyButton className="absolute top-3 right-2 z-10" text={content} />
             <ClampedContent>
               <Markdown>{fenced(content, language)}</Markdown>

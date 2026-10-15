@@ -67,6 +67,8 @@ export interface NodeManagedSessionRuntimeDriver {
   accept(input: ExecuteNodeManagedSessionEvents): Promise<void>;
   archiveThread(input: ArchiveNodeManagedSessionThread): Promise<void>;
   subscribe(input: SubscribeNodeManagedSessionRuntime): AsyncIterable<unknown>;
+  /** Delivers accepted input to this process's live subscribers. */
+  publishAccepted?(input: AcceptNodeManagedSessionEvents): void;
 }
 
 export interface NodeManagedSessionRuntimeCoordination
@@ -452,6 +454,20 @@ export class DefaultNodeManagedSessionRuntimeDriver
     return this.dependencies.engine.archiveThread(input);
   }
 
+  /** Accepted input is committed before dispatch but never produced by the
+   * runtime, so echo it to live subscribers here, as the Cloudflare SessionDO
+   * broadcast does. Clients then render the user turn without a reload.
+   * Replicated streams de-duplicate it against the SQL tail by event id. */
+  publishAccepted(input: AcceptNodeManagedSessionEvents): void {
+    for (const event of input.events) {
+      this.realtime.publish({
+        workspaceId: input.workspaceId,
+        sessionId: input.sessionId,
+        frame: { event },
+      });
+    }
+  }
+
   subscribe(input: SubscribeNodeManagedSessionRuntime): AsyncIterable<unknown> {
     let writerClosed = false;
     let detach = () => {};
@@ -585,6 +601,7 @@ export class NodeManagedSessionRuntimeAdapter
   }
 
   async sessionEventsAccepted(input: AcceptedSessionEvents): Promise<void> {
+    this.driver.publishAccepted?.(input);
     await (this.coordination ?? {
       sessionEventsAccepted: (accepted: AcceptedSessionEvents) =>
         this.driver.accept(accepted),

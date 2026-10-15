@@ -1,89 +1,166 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-
-vi.mock("../../lib/api", () => ({
-  useApi: () => ({ api: apiMock }),
+const api = vi.hoisted(() => ({
+  agents: { retrieve: vi.fn() },
 }));
 
-import { FilesPanel, ResourcePanel } from "./Panels";
+vi.mock("../../lib/useManagedApi", () => ({ useManagedApi: () => api }));
+
+import { AgentChip, EnvironmentChip, VaultChip } from "./Panels";
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
 
 beforeEach(() => {
-  apiMock.mockReset();
-});
-
-describe("FilesPanel", () => {
-  it("показывает размер файла русскими единицами и дату в формате dd.MM.yyyy HH:mm", async () => {
-    apiMock.mockResolvedValue({
-      data: [
-        {
-          filename: "отчёт.csv",
-          size_bytes: 1536,
-          uploaded_at: "2026-10-15T09:30:00.000Z",
-          media_type: "text/csv",
-        },
-      ],
-      has_more: false,
-    });
-
-    render(<FilesPanel sessionId="sess_1" onClose={() => {}} />);
-
-    expect(await screen.findByText("отчёт.csv")).toBeInTheDocument();
-    expect(screen.getByText(/1,5 КБ/)).toBeInTheDocument();
-    expect(screen.getByText(/\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}/)).toBeInTheDocument();
-    expect(screen.queryByText(/\bKB\b/)).toBeNull();
-  });
-
-  it("для пустого списка показывает пустое состояние после загрузки", async () => {
-    apiMock.mockResolvedValue({ data: [], has_more: false });
-
-    render(<FilesPanel sessionId="sess_1" onClose={() => {}} />);
-
-    expect(await screen.findByText("Файлов пока нет")).toBeInTheDocument();
-  });
-
-  it("пока файлы грузятся, показывает скелетон, а не пустое состояние", () => {
-    apiMock.mockReturnValue(new Promise(() => {}));
-
-    render(<FilesPanel sessionId="sess_1" onClose={() => {}} />);
-
-    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
-    expect(screen.queryByText("Файлов пока нет")).toBeNull();
-  });
-
-  it("при ошибке пишет по-русски и подписывает кнопку закрытия", async () => {
-    apiMock.mockRejectedValue(new Error("boom"));
-
-    render(<FilesPanel sessionId="sess_1" onClose={() => {}} />);
-
-    expect(await screen.findByText("Не удалось загрузить")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Закрыть панель" })).toBeInTheDocument();
-  });
-
-  it("на узком экране ложится поверх рабочей области, шире xl стоит справа", () => {
-    apiMock.mockReturnValue(new Promise(() => {}));
-
-    render(<FilesPanel sessionId="sess_1" onClose={() => {}} />);
-
-    const panel = screen.getByRole("complementary", { name: "Файлы сессии" });
-    expect(panel).toHaveClass("absolute", "inset-0", "xl:static", "xl:w-[420px]");
+  vi.useRealTimers();
+  api.agents.retrieve.mockReset().mockResolvedValue({
+    id: "agent_01ABCDEFGH",
+    created_at: new Date(Date.now() - 14 * 3_600_000).toISOString(),
   });
 });
 
-describe("ResourcePanel", () => {
-  it("называет вид ресурса и ведёт по русской ссылке на карточку", async () => {
-    apiMock.mockResolvedValue({ name: "Помощник по отпускам", description: "Оформляет заявки" });
+function renderInRouter(node: React.ReactNode) {
+  return render(<MemoryRouter>{node}</MemoryRouter>);
+}
 
-    render(
-      <MemoryRouter>
-        <ResourcePanel panel={{ kind: "agent", id: "agent_1" }} onClose={() => {}} />
-      </MemoryRouter>,
+const agent = {
+  id: "agent_01ABCDEFGH",
+  name: "Глубокий исследователь",
+  version: 1,
+  description: "Ищет источники и собирает отчёт с цитатами.",
+  model: { id: "claude-opus-5", effort: { type: "low" as const } },
+};
+
+describe("AgentChip", () => {
+  it("рисует имя агента ссылкой на его страницу", () => {
+    renderInRouter(<AgentChip agent={agent} />);
+
+    expect(screen.getByRole("link", { name: /Глубокий исследователь/ })).toHaveAttribute(
+      "href",
+      "/agents/agent_01ABCDEFGH",
+    );
+  });
+
+  it("при наведении показывает карточку: короткий id, версию, описание, модель, усилие и возраст", async () => {
+    renderInRouter(<AgentChip agent={agent} />);
+
+    await userEvent.hover(screen.getByRole("link", { name: /Глубокий исследователь/ }));
+
+    expect(await screen.findByText("Агент")).toBeInTheDocument();
+    expect(screen.getByText("agent_01…FGH")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Открыть/ })).toHaveAttribute(
+      "href",
+      "/agents/agent_01ABCDEFGH",
+    );
+    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(screen.getByText("Ищет источники и собирает отчёт с цитатами.")).toBeInTheDocument();
+    expect(screen.getByText("claude-opus-5")).toBeInTheDocument();
+    expect(screen.getByText("Низкое усилие")).toBeInTheDocument();
+    expect(await screen.findByText("Создан 14 ч назад")).toBeInTheDocument();
+    expect(api.agents.retrieve).toHaveBeenCalledWith("agent_01ABCDEFGH");
+  });
+
+  it("не падает, если дату создания получить не удалось", async () => {
+    api.agents.retrieve.mockRejectedValue(new Error("нет"));
+    renderInRouter(<AgentChip agent={agent} />);
+
+    await userEvent.hover(screen.getByRole("link", { name: /Глубокий исследователь/ }));
+
+    expect(await screen.findByText("claude-opus-5")).toBeInTheDocument();
+    await waitFor(() => expect(api.agents.retrieve).toHaveBeenCalled());
+    expect(screen.queryByText(/^Создан /)).toBeNull();
+  });
+});
+
+describe("EnvironmentChip", () => {
+  const environment = {
+    id: "env_01ZXCVBNM",
+    name: "qwe",
+    scope: "organization" as const,
+    config: { type: "cloud" as const },
+    created_at: new Date(Date.now() - 14 * 3_600_000).toISOString(),
+  };
+
+  it("рисует имя окружения ссылкой на его страницу", () => {
+    renderInRouter(<EnvironmentChip id="env_01ZXCVBNM" environment={environment} />);
+
+    expect(screen.getByRole("link", { name: /qwe/ })).toHaveAttribute(
+      "href",
+      "/environments/env_01ZXCVBNM",
+    );
+  });
+
+  it("при наведении показывает тип, область и возраст", async () => {
+    renderInRouter(<EnvironmentChip id="env_01ZXCVBNM" environment={environment} />);
+
+    await userEvent.hover(screen.getByRole("link", { name: /qwe/ }));
+
+    expect(await screen.findByText("Окружение")).toBeInTheDocument();
+    expect(screen.getByText("env_01ZX…BNM")).toBeInTheDocument();
+    expect(screen.getByText("Тип")).toBeInTheDocument();
+    expect(screen.getByText("Облако")).toBeInTheDocument();
+    expect(screen.getByText("Область")).toBeInTheDocument();
+    expect(screen.getByText("Организация")).toBeInTheDocument();
+    expect(screen.getByText("Создано")).toBeInTheDocument();
+    expect(screen.getByText("14 ч назад")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Открыть/ })).toHaveAttribute(
+      "href",
+      "/environments/env_01ZXCVBNM",
+    );
+  });
+
+  it("пока окружение не загрузилось, подписывает чип коротким id", () => {
+    renderInRouter(<EnvironmentChip id="env_01ZXCVBNM" environment={null} />);
+
+    expect(screen.getByRole("link", { name: /env_01ZX…BNM/ })).toHaveAttribute(
+      "href",
+      "/environments/env_01ZXCVBNM",
+    );
+  });
+
+  it("своя инфраструктура и личная область называются по-русски", async () => {
+    renderInRouter(
+      <EnvironmentChip
+        id="env_2"
+        environment={{
+          ...environment,
+          scope: "account",
+          config: { type: "self_hosted" },
+        }}
+      />,
     );
 
-    expect(await screen.findByText("Помощник по отпускам")).toBeInTheDocument();
-    expect(screen.getByText("Агент")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Открыть агента/ })).toHaveAttribute("href", "/agents/agent_1");
+    await userEvent.hover(screen.getByRole("link", { name: /qwe/ }));
+
+    expect(await screen.findByText("Свой сервер")).toBeInTheDocument();
+    expect(screen.getByText("Личная")).toBeInTheDocument();
+  });
+});
+
+describe("VaultChip", () => {
+  it("называет хранилище по имени и ведёт на его страницу", () => {
+    renderInRouter(<VaultChip vault={{ id: "vlt_1", name: "Ключи прод" }} />);
+
+    expect(screen.getByRole("link", { name: /Ключи прод/ })).toHaveAttribute("href", "/vaults/vlt_1");
+  });
+
+  it("без имени берёт короткий id", () => {
+    renderInRouter(<VaultChip vault={{ id: "vlt_0123456789ABC" }} />);
+
+    expect(screen.getByRole("link", { name: /vlt_0123…ABC/ })).toHaveAttribute(
+      "href",
+      "/vaults/vlt_0123456789ABC",
+    );
   });
 });

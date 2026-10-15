@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Консоль агентов</title>
 
-    <!-- Favicon variants. SVG is the primary mark; modern browsers prefer
-         it. apple-touch-icon is an opaque rounded SVG so the iOS install
-         animation doesn't flash the wallpaper through transparent corners.
-         mask-icon is for older Safari pinned-tab rendering, which paints a
-         monochrome stencil tinted to the supplied color. -->
+    <!-- Значки без названия продукта. Современные браузеры берут logo.svg,
+         зелёный DDC с буквой «А». Значок apple-touch-icon непрозрачный и
+         скруглённый, чтобы анимация установки в iOS не просвечивала обоями
+         через углы. Mask-icon читает старый Safari для закреплённой вкладки.
+         Развёртывание подменяет значки через CONSOLE_BRANDING_DIR. -->
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
     <link rel="mask-icon" href="/logo.svg" color="#00805e" />
@@ -18,27 +18,19 @@
     <meta name="theme-color" content="#00805E" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0F141A" media="(prefers-color-scheme: dark)" />
 
-    <!-- SEO: short description + canonical. The console is a single-page
-         app behind auth, so canonical is the production app root — every
-         in-app route shares the same indexable surface. -->
+    <!-- Описание страницы. Консоль работает во внутреннем контуре за входом
+         и не имеет публичного адреса, поэтому канонической ссылки и картинки
+         превью с абсолютным адресом здесь нет. -->
     <meta name="description" content="Консоль конструктора агентов: агенты, сессии и инфраструктура." />
-    <link rel="canonical" href="https://app.openma.dev/" />
 
-    <!-- Open Graph (Facebook, LinkedIn, Slack, Discord). -->
+    <!-- Open Graph и карточка Twitter без картинки: превью текстом. -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Консоль конструктора агентов" />
     <meta property="og:description" content="Агенты, сессии и инфраструктура." />
-    <meta property="og:url" content="https://app.openma.dev/" />
-    <meta property="og:image" content="https://app.openma.dev/og.svg" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:site_name" content="openma" />
-
-    <!-- Twitter / X large image card. -->
-    <meta name="twitter:card" content="summary_large_image" />
+    <meta property="og:site_name" content="Консоль агентов" />
+    <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Консоль конструктора агентов" />
     <meta name="twitter:description" content="Агенты, сессии и инфраструктура." />
-    <meta name="twitter:image" content="https://app.openma.dev/og.svg" />
 
     <!-- Cloudflare Turnstile грузится на странице входа и только тогда, когда
          сервер объявил ключ сайта (components/Turnstile.tsx). Предварительного

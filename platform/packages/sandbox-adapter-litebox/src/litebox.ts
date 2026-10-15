@@ -2,7 +2,7 @@
 //
 // BoxLite (https://github.com/boxlite-ai/boxlite, npm: @boxlite-ai/boxlite)
 // is a local-first micro-VM sandbox — each box gets its own kernel via
-// Firecracker. Hardware-level isolation, no daemon required, ships a
+// libkrun. Hardware-level isolation, no daemon required, ships a
 // Rust core with a Node.js binding. The selling point vs LocalSubprocess:
 // real isolation against `rm -rf /` from a prompt-injected agent without
 // needing the operator to run docker.
@@ -23,15 +23,53 @@
 // the first exec/readFile/writeFile call. We track this via `created` —
 // once true, mutating ops that affect ctor opts throw.
 
-import type { ProcessHandle, SandboxExecutor, SandboxFactory } from "@open-managed-agents/sandbox";
+import type {
+  ProcessHandle,
+  SandboxDuplexProcess,
+  SandboxDuplexProcessPort,
+  SandboxDuplexProcessSpec,
+  SandboxEnvironmentNetworking,
+  SandboxEnvironmentSpec,
+  SandboxExecutor,
+  SandboxFactory,
+} from "@open-managed-agents/sandbox";
+import {
+  buildEnvironmentSetupScript,
+  environmentPackageLists,
+  PACKAGE_MANAGER_HOSTS,
+} from "@open-managed-agents/sandbox";
+import { promises as dns } from "node:dns";
 import { promises as fs, mkdirSync } from "node:fs";
+import { isIP } from "node:net";
 import { dirname, join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { getLogger } from "@open-managed-agents/observability";
 
-const moduleLogger = getLogger("litebox-sandbox");
+// Resolved per call: main-node imports this module (components.ts) before
+// node-foundation installs the root logger, and a child taken at import time
+// would stay bound to the bootstrap noop logger for the process lifetime.
+const moduleLogger = () => getLogger("litebox-sandbox");
+
+/** Package installs run once per VM; apt update + install on a cold mirror
+ *  cache routinely takes a minute or more. */
+const SETUP_TIMEOUT_SECS = 600;
+/** Variables `setOutboundContext` sets; the package install needs them to
+ *  reach registries through the vault proxy. */
+const OUTBOUND_PROXY_ENV: ReadonlySet<string> = new Set([
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "CURL_CA_BUNDLE",
+]);
+
+type LiteBoxNetwork =
+  | { mode: "enabled"; allowNet?: string[] }
+  | { mode: "disabled" };
 
 export interface LiteBoxSandboxOptions {
   /** Container image. Default: `node:22-bookworm` (includes git for Managed repository resources). */
@@ -39,8 +77,15 @@ export interface LiteBoxSandboxOptions {
   /** Optional VM resource limits. */
   memoryMib?: number;
   cpus?: number;
+  /** Root disk size of the VM in GB. BoxLite 0.9.0 sizes it to the image
+   *  by default (node:22-bookworm: 1.3 GB with ~120 MB free), too small for
+   *  agent CLIs installed as environment packages. */
+  diskSizeGb?: number;
   /** Default per-call timeout (ms). */
   defaultTimeoutMs?: number;
+  /** How long a duplex process kill waits for BoxLite to deliver the signal,
+   *  and then for the process to exit, before it warns (ms). Default 2000. */
+  killTimeoutMs?: number;
   /** Logger for debug/warn output. */
   logger?: { warn: (msg: string, ctx?: unknown) => void; log: (msg: string) => void };
   /** Optional name (must be unique). */
@@ -55,12 +100,48 @@ export interface LiteBoxSandboxOptions {
   /** Host-owned lifecycle root for copy staging. The factory binds this to
    *  the session workdir so crash leftovers are reaped with the session. */
   scratchRoot?: string;
+  /** Managed Environment applied when the box is created: packages are
+   *  installed right after boot, networking becomes the box egress policy. */
+  environment?: SandboxEnvironmentSpec;
+  /** Host-side IPv4 lookup for allowed hosts pinned in the guest's
+   *  /etc/hosts. Default: the host resolver (`dns.lookup`). */
+  resolveHost?: (hostname: string) => Promise<string[]>;
 }
+
+const lookupIPv4 = async (hostname: string): Promise<string[]> =>
+  (await dns.lookup(hostname, { all: true, family: 4 })).map(({ address }) => address);
 
 interface LiteBoxExecResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+}
+interface LiteBoxNativeStream {
+  next(): Promise<string | null>;
+}
+interface LiteBoxNativeStdin {
+  write(data: Buffer): Promise<void>;
+  close(): Promise<void>;
+}
+/** Streaming execution of the native binding (`JsExecution` in 0.9.0). */
+interface LiteBoxNativeExecution {
+  stdin(): Promise<LiteBoxNativeStdin>;
+  stdout(): Promise<LiteBoxNativeStream>;
+  stderr(): Promise<LiteBoxNativeStream>;
+  wait(): Promise<{ exitCode: number }>;
+  kill(): Promise<void>;
+  signal(signal: number): Promise<void>;
+}
+interface LiteBoxNativeBox {
+  exec(
+    command: string,
+    args: string[],
+    env: Array<[string, string]>,
+    tty: boolean,
+    user: string | null,
+    timeoutSecs: number | null,
+    workingDir: string,
+  ): Promise<LiteBoxNativeExecution>;
 }
 interface LiteBoxInstance {
   exec(
@@ -72,9 +153,12 @@ interface LiteBoxInstance {
   copyIn(hostPath: string, containerDest: string, options?: unknown): Promise<void>;
   copyOut(containerSrc: string, hostDest: string, options?: unknown): Promise<void>;
   stop(): Promise<void>;
+  /** SimpleBox (0.9.0) keeps the native box behind this internal accessor;
+   *  its `exec` is the only streaming exec the SDK has. */
+  _ensureBox?(): Promise<LiteBoxNativeBox>;
 }
 
-export class LiteBoxSandbox implements SandboxExecutor {
+export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort {
   private envVars: Record<string, string> = {};
   private commandSecrets: Array<{ prefix: string; secrets: Record<string, string> }> = [];
   private volumes: Array<{ hostPath: string; guestPath: string; readOnly?: boolean }> = [];
@@ -84,8 +168,8 @@ export class LiteBoxSandbox implements SandboxExecutor {
 
   constructor(private opts: LiteBoxSandboxOptions = {}) {
     this.logger = opts.logger ?? {
-      warn: (msg) => moduleLogger.warn({}, msg),
-      log: (msg) => moduleLogger.info(msg),
+      warn: (msg) => moduleLogger().warn({}, msg),
+      log: (msg) => moduleLogger().info(msg),
     };
     // Per-instance host scratch dir for copyIn / copyOut staging. Cleaned
     // up on destroy.
@@ -104,14 +188,96 @@ export class LiteBoxSandbox implements SandboxExecutor {
         cwd: "/workspace",
         timeoutSecs: Math.max(1, Math.ceil(timeoutMs / 1000)),
       });
+      const stderr = stripRuntimeNoise(r.stderr);
       const separator = r.stdout.length > 0 && !r.stdout.endsWith("\n") ? "\n" : "";
       const combined =
-        (r.stdout + (r.stderr ? `${separator}${r.stderr}` : "")).replace(/\s+$/, "") +
+        (r.stdout + (stderr ? `${separator}${stderr}` : "")).replace(/\s+$/, "") +
         (r.exitCode !== 0 ? `\n[exit ${r.exitCode}]` : "");
       return combined;
     } catch (err) {
       return `[error: ${(err as Error).message}]`;
     }
+  }
+
+  /**
+   * Live stdio process inside the VM, for protocol runtimes such as ACP
+   * (an agent CLI started by the `acp-sandbox` harness). The process gets
+   * the sandbox env (`setEnvVars`) overlaid with `spec.env`, runs without a
+   * timeout and lives until it exits, is killed, or the box stops. Both
+   * output streams are drained eagerly: BoxLite's `wait()` does not settle
+   * while output is unread.
+   */
+  async spawnDuplexProcess(spec: SandboxDuplexProcessSpec): Promise<SandboxDuplexProcess> {
+    const box = await this.ensureBox();
+    if (typeof box._ensureBox !== "function") {
+      throw new Error(
+        "LiteBoxSandbox: this @boxlite-ai/boxlite build has no streaming exec, " +
+        "so duplex (ACP) processes are unavailable",
+      );
+    }
+    const native = await box._ensureBox();
+    const env = Object.entries({ ...this.envVars, ...spec.env })
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string");
+    const execution = await native.exec(
+      spec.command,
+      spec.args ?? [],
+      env,
+      false,
+      null,
+      null,
+      spec.cwd ? this.normalise(spec.cwd) : "/workspace",
+    );
+    const [stdin, stdout, stderr] = await Promise.all([
+      execution.stdin(),
+      execution.stdout(),
+      execution.stderr(),
+    ]);
+    let finished = false;
+    const killTimeoutMs = this.opts.killTimeoutMs ?? 2_000;
+    const exited = execution.wait().then(({ exitCode }) => {
+      finished = true;
+      return exitCode < 0
+        ? { code: null, signal: signalName(-exitCode) }
+        : { code: exitCode, signal: null };
+    });
+    return {
+      stdin: new WritableStream<Uint8Array>({
+        write: (chunk) => stdin.write(Buffer.from(chunk)),
+        close: () => stdin.close(),
+        abort: () => stdin.close(),
+      }),
+      stdout: nativeReadable(stdout),
+      stderr: nativeReadable(stderr, stripRuntimeNoise),
+      // BoxLite 0.9.0 (checked in a VM, 2026-10-16): signal() and kill() of a
+      // streaming exec never settle and deliver nothing, the process lives
+      // until the box stops. Closing stdin does reach it, and a stdio agent
+      // (ACP) exits on EOF, so kill closes stdin first, sends the signal for
+      // a BoxLite that delivers it, and warns when the process outlives both.
+      kill: async (signal = "SIGTERM") => {
+        // The ACP spawner passes ChildHandle signals through, so any name
+        // can arrive here even though the port type lists two.
+        const number = osConstants.signals[signal as keyof typeof osConstants.signals];
+        if (typeof number !== "number") throw new Error(`LiteBoxSandbox: unknown signal ${signal}`);
+        if (finished) return;
+        await stdin.close().catch(() => {});
+        const sent = signal === "SIGKILL" ? execution.kill() : execution.signal(number);
+        let delivered: boolean;
+        try {
+          delivered = await settlesWithin(sent, killTimeoutMs);
+        } catch (err) {
+          if (!finished) throw err;
+          return;
+        }
+        if (delivered || finished) return;
+        if (!(await settlesWithin(exited, killTimeoutMs))) {
+          this.logger.warn(
+            `duplex process ${spec.command} did not exit after ${signal}: BoxLite did not deliver ` +
+            "the signal and closing stdin did not end it; it stops with the box",
+          );
+        }
+      },
+      exited,
+    };
   }
 
   async startProcess(_command: string): Promise<ProcessHandle | null> {
@@ -302,9 +468,10 @@ export class LiteBoxSandbox implements SandboxExecutor {
           image?: string;
           memoryMib?: number;
           cpus?: number;
+          diskSizeGb?: number;
           name?: string;
           volumes?: Array<{ hostPath: string; guestPath: string; readOnly?: boolean }>;
-          network?: { mode: "enabled" | "disabled"; allowNet?: string[] };
+          network?: LiteBoxNetwork;
         }) => LiteBoxInstance;
       };
       const mod = (await import(
@@ -315,37 +482,133 @@ export class LiteBoxSandbox implements SandboxExecutor {
           `pnpm add @boxlite-ai/boxlite (cause: ${String(err)})`,
         );
       })) as LiteBoxModule;
-      this.logger.log(`creating box (image=${this.opts.image ?? "node:22-bookworm"})`);
+      const image = this.opts.image ?? "node:22-bookworm";
+      const networking = this.opts.environment?.networking;
+      const network = liteBoxNetwork(networking, outboundProxyHosts());
+      this.logger.log(`creating box (image=${image}, network=${describeNetwork(network)})`);
+      for (const warning of allowlistWarnings(networking, network)) this.logger.warn(warning);
       const box = new mod.SimpleBox({
-        image: this.opts.image ?? "node:22-bookworm",
+        image,
         memoryMib: this.opts.memoryMib,
         cpus: this.opts.cpus,
+        diskSizeGb: this.opts.diskSizeGb,
         name: this.opts.name,
         volumes: this.volumes,
-        network: { mode: "enabled" },
+        network,
       });
-      const workspace = await box.exec("mkdir", ["-p", "/workspace"]);
-      if (workspace.exitCode !== 0) {
-        throw new Error(
-          `LiteBoxSandbox could not initialize /workspace: ${workspace.stderr || workspace.stdout}`,
-        );
-      }
-      // Apply pending CA cert upload now that the box exists (a no-op exec
-      // forces lazy creation per BoxLite's contract).
-      if (this.pendingCaUpload) {
-        const { hostPath, guestPath } = this.pendingCaUpload;
-        try {
-          await box.copyIn(hostPath, guestPath);
-        } catch (err) {
-          this.logger.warn(
-            `vault CA cert upload failed (${(err as Error).message}); ` +
-            `outbound TLS through oma-vault will fail with cert errors`,
-          );
-        }
+      try {
+        await this.initializeBox(box, networking);
+      } catch (err) {
+        await box.stop().catch(() => {});
+        throw err;
       }
       return box;
     })();
     return this.boxPromise;
+  }
+
+  private async initializeBox(
+    box: LiteBoxInstance,
+    networking: SandboxEnvironmentNetworking | undefined,
+  ): Promise<void> {
+    // The first exec creates and boots the box: BoxLite spawns boxlite-shim
+    // then, and the shim keeps the environment it was spawned with.
+    const workspace = await withShimDnsWorkaround(
+      process.env,
+      () => box.exec("mkdir", ["-p", "/workspace"]),
+      () => this.logger.log(
+        "GODEBUG=netdns=go set while the box boots, for boxlite-shim: its static glibc " +
+        "getaddrinfo crashes the VM on the first guest DNS query",
+      ),
+    );
+    if (workspace.exitCode !== 0) {
+      throw new Error(
+        `LiteBoxSandbox could not initialize /workspace: ${stripRuntimeNoise(workspace.stderr) || workspace.stdout}`,
+      );
+    }
+    const pinnable = [...(environmentAllowedHosts(networking) ?? [])]
+      .filter((host) => !host.startsWith("*.") && isIP(host) === 0);
+    if (pinnable.length > 0) await this.pinAllowedHosts(box, pinnable);
+    // Apply pending CA cert upload now that the box exists (a no-op exec
+    // forces lazy creation per BoxLite's contract).
+    if (this.pendingCaUpload) {
+      const { hostPath, guestPath } = this.pendingCaUpload;
+      try {
+        await box.copyIn(hostPath, guestPath);
+      } catch (err) {
+        this.logger.warn(
+          `vault CA cert upload failed (${(err as Error).message}); ` +
+          `outbound TLS through oma-vault will fail with cert errors`,
+        );
+      }
+    }
+    const packages = this.opts.environment?.packages;
+    const script = buildEnvironmentSetupScript(packages);
+    if (script === null) return;
+    const summary = environmentPackageLists(packages)
+      .map(({ manager, names }) => `${manager}: ${names.join(" ")}`)
+      .join("; ");
+    this.logger.log(`installing environment packages (${summary})`);
+    const startedAt = Date.now();
+    // Install scripts are third-party code (npm/pip postinstall): they get the
+    // outbound proxy settings only, never other sandbox variables such as
+    // Vault secrets set for the agent.
+    const setup = await box.exec("sh", ["-c", script], this.installEnv(), {
+      cwd: "/workspace",
+      timeoutSecs: SETUP_TIMEOUT_SECS,
+    });
+    if (setup.exitCode !== 0) {
+      const output = `${setup.stdout}\n${stripRuntimeNoise(setup.stderr)}`.trim();
+      const hint = networking?.type === "limited" && !networking.allowPackageManagers
+        ? " (networking is limited and package managers are not allowed)"
+        : "";
+      throw new Error(
+        `LiteBoxSandbox: environment packages failed to install (exit ${setup.exitCode})${hint}: ` +
+        output.slice(-600),
+      );
+    }
+    this.logger.log(`environment packages installed in ${Date.now() - startedAt} ms`);
+  }
+
+  /**
+   * BoxLite 0.9.0 answers guest DNS for an allowlist from zones it builds
+   * in a Go map, so their order changes per box. Matching is first suffix
+   * match: the zone of an apex host (pypi.org, rubygems.org → "org.") can
+   * come before the zone of deb.debian.org ("debian.org.") and answer
+   * 0.0.0.0 for it. Checked in VMs with the package registries allowed:
+   * deb.debian.org resolved to 0.0.0.0 in 4 of 8 boxes and apt failed;
+   * every box sinkholed some allowed registry. Exact allowed names resolved
+   * on the host and pinned in the guest's /etc/hosts skip that answer;
+   * egress is still filtered by SNI / Host header on ports 80 and 443.
+   * Wildcards cannot be pinned, and the vault proxy host is left to
+   * BoxLite's DNS (both are warned about when the box is created). Pinned
+   * addresses are resolved once, when the box starts: a CDN host
+   * (deb.debian.org is Fastly) may move while a long-lived box keeps them.
+   */
+  private async pinAllowedHosts(box: LiteBoxInstance, hosts: string[]): Promise<void> {
+    const resolveHost = this.opts.resolveHost ?? lookupIPv4;
+    const resolved = await Promise.allSettled(hosts.map((host) => resolveHost(host)));
+    const lines: string[] = [];
+    let pinned = 0;
+    resolved.forEach((result, index) => {
+      const host = hosts[index]!;
+      if (result.status === "rejected") {
+        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        this.logger.warn(`allowed host ${host} did not resolve on the host (${reason}); it is not pinned`);
+        return;
+      }
+      if (result.value.length > 0) pinned += 1;
+      for (const address of result.value) lines.push(`${address} ${host}`);
+    });
+    if (lines.length === 0) return;
+    const written = await box.exec("sh", ["-c", 'printf "%s\\n" "$@" >> /etc/hosts', "sh", ...lines]);
+    if (written.exitCode !== 0) {
+      this.logger.warn(
+        `could not pin allowed hosts in /etc/hosts: ${`${written.stdout}\n${stripRuntimeNoise(written.stderr)}`.trim()}`,
+      );
+      return;
+    }
+    this.logger.log(`pinned ${pinned} allowed host(s) in /etc/hosts`);
   }
 
   /**
@@ -357,6 +620,12 @@ export class LiteBoxSandbox implements SandboxExecutor {
   private normalise(p: string): string {
     if (p.startsWith("/")) return p;
     return `/workspace/${p}`;
+  }
+
+  private installEnv(): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(this.envVars).filter(([name]) => OUTBOUND_PROXY_ENV.has(name)),
+    );
   }
 
   private buildEnv(command: string): Record<string, string> {
@@ -382,12 +651,246 @@ export class LiteBoxSandbox implements SandboxExecutor {
   }
 }
 
+/**
+ * Native output stream → byte stream. Pumps eagerly and keeps draining after
+ * the consumer cancels, so BoxLite's `wait()` can settle. `stripLeading`
+ * drops chunks until the first one with content left after it.
+ */
+function nativeReadable(
+  source: LiteBoxNativeStream,
+  stripLeading?: (text: string) => string,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let leading = stripLeading !== undefined;
+  let cancelled = false;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      void (async () => {
+        try {
+          for (let chunk = await source.next(); chunk !== null; chunk = await source.next()) {
+            const text = leading ? stripLeading!(chunk) : chunk;
+            if (text.length === 0) continue;
+            leading = false;
+            if (!cancelled) controller.enqueue(encoder.encode(text));
+          }
+        } catch {
+          // A reset native stream ends this output; wait() still reports the exit.
+        }
+        if (!cancelled) controller.close();
+      })();
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+}
+
+/** true when `promise` settles within `ms`; its rejection propagates. */
+async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** BoxLite reports a signal death as a negative exit code (-9 → SIGKILL). */
+function signalName(signal: number): string {
+  const known = Object.entries(osConstants.signals).find(([, value]) => value === signal);
+  return known ? known[0] : `SIG${signal}`;
+}
+
 async function removeBestEffort(path: string, recursive = false): Promise<void> {
   try {
     await fs.rm(path, { recursive, force: true });
   } catch {
     // Scratch cleanup must never mask the sandbox operation's outcome.
   }
+}
+
+/**
+ * boxlite-shim (0.9.0) is a static glibc binary that hosts gvproxy (Go).
+ * gvproxy answers guest DNS through Go's cgo resolver, so the first lookup
+ * from the VM runs the shim's static `getaddrinfo`, which dlopens the host's
+ * NSS modules (`hosts: mymachines resolve ...` on systemd hosts) built for a
+ * different glibc. The shim dies with SIGSEGV (`exit` file in the box dir:
+ * signal 11), the open exec stream fails with "h2 protocol error" and every
+ * later call gets "Connection refused". Go's pure resolver keeps NSS out of
+ * the shim; the shim inherits this process's environment when BoxLite
+ * spawns it. An operator-chosen `netdns` setting is left alone.
+ *
+ * This is a workaround for how boxlite-shim is built (gvproxy without the
+ * netgo tag), not a fix; setting GODEBUG=netdns=go in the server's own
+ * environment makes it unnecessary.
+ */
+export function applyShimDnsWorkaround(
+  env: Record<string, string | undefined>,
+): boolean {
+  const current = env.GODEBUG ?? "";
+  if (/(^|,)\s*netdns=/.test(current)) return false;
+  env.GODEBUG = current.trim() ? `${current},netdns=go` : "netdns=go";
+  return true;
+}
+
+const shimDnsWindows = new WeakMap<
+  Record<string, string | undefined>,
+  { holds: number; previous: string | undefined; applied: string }
+>();
+
+/**
+ * Runs `boot` (the call that makes BoxLite spawn boxlite-shim) with
+ * `applyShimDnsWorkaround` applied to `env`, then puts GODEBUG back, so the
+ * setting reaches the shim and not every later child of this process.
+ * Overlapping boots share one window: GODEBUG is restored when the last one
+ * settles, and only if nothing else changed it meanwhile. `onApplied` runs
+ * when the window opens.
+ */
+export async function withShimDnsWorkaround<T>(
+  env: Record<string, string | undefined>,
+  boot: () => Promise<T>,
+  onApplied: () => void = () => {},
+): Promise<T> {
+  let window = shimDnsWindows.get(env);
+  if (!window) {
+    const previous = env.GODEBUG;
+    if (!applyShimDnsWorkaround(env)) return boot();
+    window = { holds: 0, previous, applied: env.GODEBUG! };
+    shimDnsWindows.set(env, window);
+    onApplied();
+  }
+  window.holds += 1;
+  try {
+    return await boot();
+  } finally {
+    window.holds -= 1;
+    if (window.holds === 0) {
+      shimDnsWindows.delete(env);
+      if (env.GODEBUG === window.applied) {
+        if (window.previous === undefined) delete env.GODEBUG;
+        else env.GODEBUG = window.previous;
+      }
+    }
+  }
+}
+
+/**
+ * Environment networking → BoxLite egress policy. BoxLite 0.9.0 semantics
+ * (checked in a VM): `enabled` with an empty or absent `allowNet` is
+ * unrestricted; a non-empty `allowNet` lets TCP reach only those hosts;
+ * `disabled` removes the network. A limited environment therefore never maps
+ * to an empty `allowNet`: with nothing allowed the box gets no network.
+ * MCP servers are reached by the host process, not from the VM, so
+ * `allowMcpServers` adds no VM egress.
+ */
+export function liteBoxNetwork(
+  networking: SandboxEnvironmentNetworking | undefined,
+  extraHosts: readonly string[] = [],
+): LiteBoxNetwork {
+  const hosts = environmentAllowedHosts(networking);
+  if (hosts === null) return { mode: "enabled" };
+  if (hosts.size === 0) return { mode: "disabled" };
+  for (const entry of extraHosts) {
+    const host = normaliseHost(entry);
+    if (host) hosts.add(host);
+  }
+  return { mode: "enabled", allowNet: [...hosts] };
+}
+
+/** Hosts a limited environment allows (normalised, package registries
+ *  included when allowed); `null` when networking is unrestricted. */
+function environmentAllowedHosts(
+  networking: SandboxEnvironmentNetworking | undefined,
+): Set<string> | null {
+  if (!networking || networking.type === "unrestricted") return null;
+  const hosts = new Set<string>();
+  for (const entry of networking.allowedHosts) {
+    const host = normaliseHost(entry);
+    if (host) hosts.add(host);
+  }
+  if (networking.allowPackageManagers) {
+    for (const list of Object.values(PACKAGE_MANAGER_HOSTS)) {
+      for (const host of list) hosts.add(host);
+    }
+  }
+  return hosts;
+}
+
+/**
+ * Where a limited environment's allowlist is weaker than it reads (BoxLite
+ * 0.9.0): wildcards and the vault proxy host are left to BoxLite's allowlist
+ * DNS, which answers zones in random order and may sinkhole them; a client
+ * that honours HTTPS_PROXY reaches any host through the vault proxy; and
+ * with no allowed host at all the box has no network, the proxy included.
+ */
+function allowlistWarnings(
+  networking: SandboxEnvironmentNetworking | undefined,
+  network: LiteBoxNetwork,
+): string[] {
+  if (!networking || networking.type === "unrestricted") return [];
+  if (network.mode === "disabled") {
+    return ["limited networking without allowed hosts: the box has no network, the vault proxy included"];
+  }
+  // A limited environment always has a host set (see environmentAllowedHosts).
+  const warnings = [...environmentAllowedHosts(networking)!]
+    .filter((host) => host.startsWith("*."))
+    .map((host) =>
+      `allowed host ${host} is not pinned in /etc/hosts: BoxLite 0.9.0 allowlist DNS may answer 0.0.0.0 for it`);
+  for (const proxy of outboundProxyHosts()) {
+    const host = normaliseHost(proxy);
+    if (!host) continue;
+    warnings.push(
+      `vault proxy ${host} is allowed but not pinned (BoxLite 0.9.0 allowlist DNS may answer 0.0.0.0); ` +
+      "clients that honour HTTPS_PROXY reach any host through it, so the allowlist does not limit them",
+    );
+  }
+  return warnings;
+}
+
+function describeNetwork(network: LiteBoxNetwork): string {
+  if (network.mode === "disabled") return "disabled";
+  return network.allowNet ? `allow ${network.allowNet.length} host(s)` : "unrestricted";
+}
+
+/** The vault proxy stays reachable when egress is limited to some hosts.
+ *  With no allowed host the box has no network at all (see liteBoxNetwork),
+ *  the proxy included: allowing only the proxy would open every host to
+ *  clients that use it. */
+function outboundProxyHosts(): string[] {
+  const proxyUrl = process.env.OMA_VAULT_PROXY_URL;
+  return proxyUrl ? [proxyUrl] : [];
+}
+
+/** `https://user@Example.com:443/path` → `example.com`; `*.example.com` stays. */
+function normaliseHost(entry: string): string | null {
+  const withoutScheme = entry.trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  const authority = withoutScheme.replace(/[/?#].*$/s, "");
+  const host = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d+$/, "");
+  return host || null;
+}
+
+const ANSI = "(?:\\x1b\\[[0-9;]*m)*";
+const RUNTIME_LOG_LINE = new RegExp(
+  `^${ANSI}\\d{4}-\\d{2}-\\d{2}T[0-9:.]+Z${ANSI}\\s+${ANSI}\\s*(?:TRACE|DEBUG|INFO|WARN|ERROR)${ANSI}\\s+${ANSI}libcontainer::[^\\n]*(?:\\n|$)`,
+);
+
+/**
+ * The guest's container runtime (youki libcontainer inside boxlite-guest)
+ * logs to the exec'd process's stderr before the command starts: on every
+ * exec "WARN libcontainer::process::init::process: seccomp not available,
+ * unable to set seccomp privileges!" with ANSI colors. The model and the
+ * console would otherwise see it as command output. Only those leading
+ * runtime lines are dropped; the command's own stderr is untouched.
+ */
+export function stripRuntimeNoise(stderr: string): string {
+  let rest = stderr;
+  for (let match = RUNTIME_LOG_LINE.exec(rest); match; match = RUNTIME_LOG_LINE.exec(rest)) {
+    rest = rest.slice(match[0].length);
+  }
+  return rest;
 }
 
 // ── Factory (DIP entry point) ───────────────────────────────────────
@@ -397,9 +900,11 @@ export const sandboxFactory: SandboxFactory = async (ctx, env) => {
     image: env.SANDBOX_IMAGE,
     memoryMib: env.LITEBOX_MEMORY_MIB ? Number(env.LITEBOX_MEMORY_MIB) : undefined,
     cpus: env.LITEBOX_CPUS ? Number(env.LITEBOX_CPUS) : undefined,
+    diskSizeGb: env.LITEBOX_DISK_SIZE_GB ? Number(env.LITEBOX_DISK_SIZE_GB) : undefined,
     name: `oma-${ctx.sessionId}`,
     memoryRoot: ctx.memoryRoot,
     outputsRoot: ctx.outputsRoot,
     scratchRoot: ctx.workdir,
+    environment: ctx.environment,
   });
 };

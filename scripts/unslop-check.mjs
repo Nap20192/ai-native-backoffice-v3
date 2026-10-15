@@ -19,6 +19,8 @@ const PROSE = /\.(md|mdx|txt)$/i;
 const CODE = /\.(ts|tsx|js|jsx|mjs|cjs|sh|json|ya?ml|html|css)$/i;
 const SKIP_PATH = /(^|\/)(node_modules|dist|\.audit|\.verify-evidence|data|data-preview|coverage)\/|(^|\/)\.(claude|agents)\/skills\/unslop\/|pnpm-lock\.yaml$|package-lock\.json$/;
 const CYRILLIC = /[А-Яа-яЁё]/;
+// Тексты, импортированные из OpenMA, английские; в них проверяем только наши русские строки.
+const VENDORED = /^platform\//;
 
 const WORDS_EN = [
   [7, /\b(delve[sd]?|delving|crucial|pivotal|tapestry|testament|underscor(e|es|ed|ing)|showcas(e|es|ed|ing)|fostering|garner(s|ed)?|interplay|intricate|vibrant|enduring)\b/i],
@@ -60,9 +62,9 @@ function stripInlineCode(line) {
   return line.replace(/`[^`]*`/g, (m) => " ".repeat(m.length));
 }
 
-function checkLine(raw, { prose }) {
+function checkLine(raw, { prose, cyrillicOnly = false }) {
   if (raw.includes("unslop-ignore")) return [];
-  if (!prose && !CYRILLIC.test(raw)) return [];
+  if ((!prose || cyrillicOnly) && !CYRILLIC.test(raw)) return [];
   const line = stripInlineCode(raw);
   const found = new Set();
   if (/[—–]/.test(line)) found.add(13);
@@ -99,7 +101,7 @@ export function checkText(text, path, firstLine = 1) {
   text.split("\n").forEach((raw, i) => {
     if (prose && /^\s*(```|~~~)/.test(raw)) { fenced = !fenced; return; }
     if (fenced) return;
-    for (const rule of checkLine(raw, { prose })) {
+    for (const rule of checkLine(raw, { prose, cyrillicOnly: VENDORED.test(path) })) {
       out.push({ path, line: firstLine + i, rule, hint: HINT[rule], text: raw.trim().slice(0, 160) });
     }
   });
@@ -139,7 +141,7 @@ function checkAdded(lines, root) {
     }
     if (fenceState.get(path).has(line)) continue;
     const prose = PROSE.test(path);
-    for (const rule of checkLine(text, { prose })) out.push({ path, line, rule, hint: HINT[rule], text: text.trim().slice(0, 160) });
+    for (const rule of checkLine(text, { prose, cyrillicOnly: VENDORED.test(path) })) out.push({ path, line, rule, hint: HINT[rule], text: text.trim().slice(0, 160) });
   }
   return out;
 }

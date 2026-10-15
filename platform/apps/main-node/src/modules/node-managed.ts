@@ -84,6 +84,9 @@ import {
   buildNodeManagedAppendablePromptReminders,
   NodeManagedSessionInputPreparer,
 } from "../lib/node-managed-session-inputs.js";
+import { applyVaultEnvironment } from "../lib/node-managed-vault-env.js";
+import { harnessUserMessage } from "../lib/node-managed-harness-user-message.js";
+import { runHarnessForTurn } from "../lib/node-managed-harness-turn.js";
 import { NodeManagedMemorySnapshotMaterializer } from "../lib/node-managed-memory-snapshots.js";
 import { NodeSessionExecutionWorker } from "../lib/node-session-execution-worker.js";
 import { createNodeMcpProxyBinding, type NodeMcpProxyTarget } from "../lib/http-mcp-proxy.js";
@@ -424,9 +427,12 @@ export async function createManagedNodeRuntime(
       },
     }),
     sandboxMode: ({ session }) => resolveSessionSandboxMode(session, openAIAgentsSecrets),
-    buildSandbox: async ({ session }) => buildSandbox(
+    buildSandbox: async ({ session, environment }) => buildSandbox(
         session.id,
         join(config.paths.sandboxWorkdir, session.id),
+        environment.config.type === "cloud"
+          ? { packages: environment.config.packages, networking: environment.config.networking }
+          : undefined,
       ),
     ...(sharedSessionOutputs === undefined ? {} : {
       isSandboxCurrent: ({ workspaceId, session, runtimeGeneration }: { workspaceId: string; session: { id: string }; runtimeGeneration: string }) =>
@@ -465,6 +471,21 @@ export async function createManagedNodeRuntime(
         session,
         sandbox,
         runtimeGeneration,
+      });
+      // Vault variables reach the sandbox only for harnesses whose agent CLI
+      // runs there (acp-sandbox); the value is plain in that sandbox.
+      await applyVaultEnvironment({
+        harness: session.agent.openma?.harness,
+        sandbox,
+        credentials: managedCredentialStore,
+        workspaceId,
+        vaultIds: session.vaultIds,
+        warn: (message, details) => logger.warn({
+          ...details,
+          op: "main-node.vault_env.policy_not_enforced",
+          sessionId: session.id,
+          workspaceId,
+        }, message),
       });
     },
     synchronizeSandbox: async ({
@@ -571,9 +592,12 @@ export async function createManagedNodeRuntime(
     },
     disposeTools,
     buildHarness: () => ({
-      run: async (ctx) => {
-        await resolveHarness(ctx.agent.harness).run(ctx);
-      },
+      run: (ctx) => runHarnessForTurn(resolveHarness(ctx.agent.harness), ctx, (err) => logger.warn({
+        err,
+        op: "main-node.harness.dispose_failed",
+        sessionId: ctx.session_id,
+        workspaceId: ctx.tenant_id,
+      }, "harness dispose after the turn failed")),
     }),
     buildHarnessContext: async (input) => {
       const agent = toLegacyHarnessAgentConfig(input.session);
@@ -614,7 +638,7 @@ export async function createManagedNodeRuntime(
       const feishuTools = await resolveFeishuAgentTools(input.session.id);
       return {
         agent,
-        userMessage: { type: "user.message", content: [] },
+        userMessage: harnessUserMessage(input.acceptedEvents, agent.harness),
         session_id: input.session.id,
         tenant_id: input.workspaceId,
         tools: { ...input.tools, ...feishuTools },

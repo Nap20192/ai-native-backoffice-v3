@@ -163,7 +163,7 @@ export function ConsoleShell({
 
   return (
     <div
-      className="console-shell"
+      className="console-shell ddc-app-shell"
       data-console-shell
       data-sidebar-state={sidebarState}
       style={{ "--shell-sidebar-current-w": `${sidebarWidth}px` } as CSSProperties}

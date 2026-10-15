@@ -444,6 +444,10 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   v1.route("/oma/me", buildMeRoutes({
     services,
     authDisabled,
+    loadUser: async (userId) => {
+      const user = auth ? await auth.findUser(userId) : null;
+      return user ? { id: userId, email: user.email ?? "", name: user.name } : null;
+    },
     loadTenant: async (tenantId) => {
       const r = await sql
         .prepare(`SELECT id, name FROM "tenant" WHERE id = ?`)

@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 
 import { I18nProvider } from "../i18n";
 import { AppSidebar } from "./AppSidebar";
+import { ANALYTICS_CRUMBS, ANALYTICS_PAGES, analyticsNav } from "./analytics/analytics-nav";
 import { CommandPalette } from "./CommandPalette";
 
 vi.mock("../lib/useApiQuery", () => ({
@@ -156,13 +157,18 @@ describe("AppSidebar tracks", () => {
     const headings = containerHeadings(sidebar).map((heading) => heading.textContent);
     const links = within(sidebar).getAllByRole("link").map((link) => link.textContent);
 
-    expect(headings).toEqual(["Управляемые агенты", "Инфраструктура", "Конфигурация"]);
+    expect(headings).toEqual(["Управляемые агенты", "Аналитика", "Инфраструктура", "Конфигурация"]);
     expect(links).toEqual([
       "Сводка",
       "Агенты",
       "Сессии",
       "Файлы",
       "Запуски оценки",
+      "Использование",
+      "Кэширование",
+      "Лимиты",
+      "Стоимость",
+      "Журнал запросов",
       "Окружения",
       "Хранилища секретов",
       "Навыки",
@@ -172,6 +178,46 @@ describe("AppSidebar tracks", () => {
       "API-ключи",
       "Локальные среды",
     ]);
+  });
+
+  it("ведёт пять пунктов аналитики на свои маршруты", () => {
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
+    const hrefs = within(sidebar)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("href")?.startsWith("/analytics/"))
+      .map((link) => [link.textContent, link.getAttribute("href")]);
+
+    expect(hrefs).toEqual([
+      ["Использование", "/analytics/usage"],
+      ["Кэширование", "/analytics/caching"],
+      ["Лимиты", "/analytics/limits"],
+      ["Стоимость", "/analytics/cost"],
+      ["Журнал запросов", "/analytics/logs"],
+    ]);
+  });
+
+  it("подписи группы «Аналитика» есть на трёх языках", () => {
+    expect(analyticsNav("ru").label).toBe("Аналитика");
+    expect(analyticsNav("en").items.map((i) => i.label)).toEqual([
+      "Usage",
+      "Caching",
+      "Rate limits",
+      "Cost",
+      "Logs",
+    ]);
+    expect(analyticsNav("en").label).toBe("Analytics");
+    expect(analyticsNav("zh-CN").items.map((i) => i.label)).toEqual(["用量", "缓存", "速率限制", "成本", "日志"]);
+    expect(analyticsNav("zh-CN").label).toBe("分析");
+  });
+
+  it("каждому пункту аналитики соответствует маршрут с подписью и загрузчиком страницы", async () => {
+    const items = analyticsNav("ru").items;
+    expect(ANALYTICS_PAGES.map((page) => `/analytics/${page.path}`)).toEqual(items.map((item) => item.to));
+    expect(ANALYTICS_PAGES.map((page) => page.crumb)).toEqual(items.map((item) => item.label));
+    expect(ANALYTICS_CRUMBS.root).toBe("Аналитика");
+    const loaded = await ANALYTICS_PAGES[0].load();
+    expect(typeof loaded.Component).toBe("function");
   });
 
   it("does not offer the integrations group in the sidebar or the command palette", async () => {

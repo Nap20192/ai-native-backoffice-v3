@@ -1,255 +1,209 @@
-import { Button } from "@/components/ui/button";
-import { useEffect, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowRightIcon, XIcon } from "lucide-react";
+import { ArrowRightIcon } from "lucide-react";
 
-import { useApi } from "../../lib/api";
-import { Skeleton } from "../../components/Skeleton";
-import { EmptyState } from "../../components/EmptyState";
-import { formatBytesRu, formatDateTimeRu } from "../../components/session/format-ru";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { cn } from "@/lib/utils";
+import { AgentIcon, EnvIcon, VaultIcon } from "../../components/icons";
+import { formatRelativeRu } from "../../components/session/format-ru";
+import { shortenId } from "../../lib/format";
+import { useManagedApi } from "../../lib/useManagedApi";
 
 /**
- * Правые панели, которые открывает `SessionDetail`. Вынесены сюда, чтобы
- * основная страница занималась потоком событий и чатом: панели сами грузят
- * данные и показывают их, им нужны только id и обработчик закрытия.
- *
- * Два вида:
- *   - `ResourcePanel` загружает агента, окружение или хранилище и показывает
- *     его JSON. Открывается по клику на чип в шапке сессии.
- *   - `FilesPanel` перечисляет файлы, которые агент записал в
- *     `/mnt/session/outputs/`, со ссылками на скачивание.
- *
- * На экране шире xl панель стоит справа шириной 420px. Уже xl она ложится
- * поверх рабочей области сессии (родитель relative), иначе чат сжимался бы
- * до нуля.
+ * Чипы агента, окружения и хранилища для шапки и вкладки «Сессия». Чип
+ * ведёт на страницу ресурса, при наведении или фокусе открывает карточку с
+ * кратким описанием. Боковых панелей с JSON ресурса больше нет.
  */
 
-const PANEL_CLASS =
-  "absolute inset-0 z-10 flex min-h-0 w-full flex-col border-l border-ddc-divider bg-ddc-surface animate-fade-in xl:static xl:z-auto xl:w-[420px] xl:shrink-0 xl:animate-none";
+const CHIP_CLASS =
+  "inline-flex h-5 max-w-xs min-w-0 items-center gap-1 rounded-md px-2 text-xs leading-4 text-ddc-tone-ghost-fg ring-1 ring-inset ring-ddc-tone-ghost-ring hover:bg-ddc-surface-muted hover:text-ddc-text";
 
-const KIND_LABEL: Record<"agent" | "environment" | "vault", string> = {
-  agent: "Агент",
-  environment: "Окружение",
-  vault: "Хранилище секретов",
+const CARD_CLASS = "w-64 space-y-2 p-3 text-xs";
+
+const EFFORT_LABEL: Record<string, string> = {
+  low: "Низкое усилие",
+  medium: "Среднее усилие",
+  high: "Высокое усилие",
+  xhigh: "Очень высокое усилие",
+  max: "Максимальное усилие",
 };
 
-const KIND_LINK_LABEL: Record<"agent" | "environment" | "vault", string> = {
-  agent: "Открыть агента",
-  environment: "Открыть окружение",
-  vault: "Открыть хранилище",
+const SCOPE_LABEL: Record<string, string> = {
+  organization: "Организация",
+  account: "Личная",
 };
 
-function PanelSkeleton() {
+const ENVIRONMENT_TYPE_LABEL: Record<string, string> = {
+  cloud: "Облако",
+  self_hosted: "Свой сервер",
+};
+
+function relativeAge(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const at = new Date(iso).getTime();
+  return Number.isFinite(at) ? formatRelativeRu(Date.now() - at) : null;
+}
+
+function CardHeader({ kind, id, to }: { kind: string; id: string; to: string }) {
   return (
-    <div className="space-y-2" aria-busy="true" role="status">
-      <span className="sr-only">Загрузка…</span>
-      <Skeleton className="h-4 w-full" />
-      <Skeleton className="h-4 w-5/6" />
-      <Skeleton className="h-4 w-2/3" />
-      <Skeleton className="h-4 w-3/4" />
+    <div className="flex items-center gap-2">
+      <span className="eyebrow">{kind}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-2xs text-ddc-text-muted" title={id}>
+        {shortenId(id)}
+      </span>
+      <Link to={to} className="link inline-flex flex-none items-center gap-1 text-xs">
+        Открыть
+        <ArrowRightIcon className="size-3.5" aria-hidden="true" />
+      </Link>
     </div>
   );
 }
 
-function PanelError({ message }: { message: string }) {
+function CardRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="callout-danger flex-col items-stretch gap-0.5" role="alert">
-      <div className="font-medium">Не удалось загрузить</div>
-      <div className="break-words">{message}</div>
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-ddc-text-muted">{label}</span>
+      <span className="min-w-0 truncate text-ddc-text">{children}</span>
     </div>
   );
 }
 
-export function ResourcePanel({
-  panel,
-  onClose,
-}: {
-  panel: { kind: "agent" | "environment" | "vault"; id: string };
-  onClose: () => void;
-}) {
-  // Destructure the JSON call function from the shared transport object.
-  // explicitly. A previous version assigned the whole object to `api` and
-  // then called `api(url)`, which threw "api is not a function" and white-
-  // screened the page on first badge click.
-  const { api } = useApi();
-  const [data, setData] = useState<Record<string, unknown> | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+// ── Агент ────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    setData(null);
-    setErr(null);
-    const url =
-      panel.kind === "agent"
-        ? `/v1/agents/${panel.id}`
-        : panel.kind === "environment"
-        ? `/v1/environments/${panel.id}`
-        : `/v1/vaults/${panel.id}`;
-    api<Record<string, unknown>>(url)
-      .then((d) => setData(d))
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-    // `api` from useApi() is a fresh closure every render — including it in
-    // deps caused setData → re-render → new api → effect refire → infinite
-    // loop. The stable inputs are kind + id; api itself is callable as-is.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel.kind, panel.id]);
+export interface AgentCardInfo {
+  id: string;
+  name: string;
+  version?: number | null;
+  description?: string | null;
+  model?: { id: string; effort?: { type: string } | string | null } | string | null;
+}
 
-  const linkPath =
-    panel.kind === "agent"
-      ? `/agents/${panel.id}`
-      : panel.kind === "environment"
-      ? `/environments/${panel.id}`
-      : `/vaults/${panel.id}`;
+function modelParts(model: AgentCardInfo["model"]): { id: string | null; effort: string | null } {
+  if (!model) return { id: null, effort: null };
+  if (typeof model === "string") return { id: model, effort: null };
+  const raw = typeof model.effort === "string" ? model.effort : model.effort?.type;
+  return { id: model.id, effort: raw ? (EFFORT_LABEL[raw] ?? raw) : null };
+}
 
-  // For agent / env, prefer name + description in the visible header.
-  const displayName =
-    (data?.name as string | undefined) ??
-    (data?.display_name as string | undefined) ??
-    panel.id;
-  const description = (data?.description as string | undefined) ?? null;
+export function AgentChip({ agent }: { agent: AgentCardInfo }) {
+  const managedApi = useManagedApi();
+  const [createdAt, setCreatedAt] = useState<string | null>(null);
+  const [requested, setRequested] = useState(false);
+
+  // Дата создания лежит только у самого агента, снимок в сессии её не несёт.
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open || requested) return;
+      setRequested(true);
+      managedApi.agents
+        .retrieve(agent.id)
+        .then((full) => setCreatedAt(full.created_at ?? null))
+        .catch(() => {});
+    },
+    [agent.id, managedApi, requested],
+  );
+
+  const to = `/agents/${agent.id}`;
+  const { id: modelId, effort } = modelParts(agent.model);
+  const age = relativeAge(createdAt);
 
   return (
-    <aside className={PANEL_CLASS} aria-label={KIND_LABEL[panel.kind]}>
-      <div className="flex shrink-0 items-start gap-3 border-b border-ddc-divider px-5 py-4">
-        <div className="min-w-0 flex-1">
-          <div className="eyebrow">{KIND_LABEL[panel.kind]}</div>
-          <div className="mt-1 truncate text-base font-semibold text-ddc-heading" title={displayName}>
-            {displayName}
-          </div>
-          {description && (
-            <div className="mt-0.5 line-clamp-2 text-xs text-ddc-text-muted">{description}</div>
-          )}
-          <div className="mt-1 truncate font-mono text-xs text-ddc-text-muted" title={panel.id}>
-            {panel.id}
-          </div>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={onClose}
-          title="Закрыть"
-          aria-label="Закрыть панель"
-          className="-my-0.5 -mr-1"
-        >
-          <XIcon />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-5 text-xs">
-        {err && <PanelError message={err} />}
-        {!data && !err && <PanelSkeleton />}
-        {data && (
-          <pre className="overflow-x-auto rounded-xl bg-ddc-surface-muted p-3 font-mono text-xs break-all whitespace-pre-wrap text-ddc-label">
-            {JSON.stringify(data, null, 2)}
-          </pre>
-        )}
-      </div>
-      <div className="shrink-0 border-t border-ddc-divider bg-ddc-footer px-5 py-3">
-        <Link to={linkPath} className="link inline-flex items-center gap-1.5 text-sm">
-          {KIND_LINK_LABEL[panel.kind]}
-          <ArrowRightIcon className="size-4" aria-hidden="true" />
+    <HoverCard openDelay={200} closeDelay={100} onOpenChange={onOpenChange}>
+      <HoverCardTrigger asChild>
+        <Link to={to} className={CHIP_CLASS}>
+          <AgentIcon className="size-3.5 flex-none text-ddc-icon-muted" />
+          <span className="truncate">{agent.name || shortenId(agent.id)}</span>
         </Link>
-      </div>
-    </aside>
+      </HoverCardTrigger>
+      <HoverCardContent align="start" className={CARD_CLASS}>
+        <CardHeader kind="Агент" id={agent.id} to={to} />
+        <div className="flex items-center gap-2">
+          <AgentIcon className="size-4 flex-none text-ddc-icon-muted" />
+          <span className="min-w-0 truncate text-sm font-medium text-ddc-heading">{agent.name}</span>
+          {agent.version != null && (
+            <span className="inline-flex h-5 flex-none items-center rounded-md bg-ddc-tone-neutral-bg px-1.5 text-2xs font-medium text-ddc-tone-neutral-fg">
+              v{agent.version}
+            </span>
+          )}
+        </div>
+        {agent.description && (
+          <p className="line-clamp-2 text-ddc-text-muted">{agent.description}</p>
+        )}
+        {(modelId || effort) && (
+          <div className="flex items-center gap-2">
+            {modelId && <span className="min-w-0 truncate font-mono text-ddc-text">{modelId}</span>}
+            {effort && <span className="flex-none text-ddc-text-muted">{effort}</span>}
+          </div>
+        )}
+        {age && <p className="text-ddc-text-muted">Создан {age}</p>}
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
-interface SessionOutputFile {
-  filename: string;
-  size_bytes: number;
-  uploaded_at: string;
-  media_type: string;
+// ── Окружение ────────────────────────────────────────────────────────────
+
+export interface EnvironmentCardInfo {
+  name?: string;
+  scope?: string | null;
+  config?: { type?: string } | null;
+  created_at?: string | null;
 }
 
-export function FilesPanel({
-  sessionId,
-  onClose,
+export function EnvironmentChip({
+  id,
+  environment,
 }: {
-  sessionId: string;
-  onClose: () => void;
+  id: string;
+  environment: EnvironmentCardInfo | null;
 }) {
-  const { api } = useApi();
-  const [files, setFiles] = useState<SessionOutputFile[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    setFiles(null);
-    setErr(null);
-    api<{ data: SessionOutputFile[]; has_more: boolean }>(
-      `/v1/sessions/${sessionId}/outputs`,
-    )
-      .then((d) => setFiles(d.data ?? []))
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-    // api closure changes every render; sessionId is the only stable input
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  const to = `/environments/${id}`;
+  const label = environment?.name || shortenId(id);
+  const type = environment?.config?.type;
+  const scope = environment?.scope;
+  const age = relativeAge(environment?.created_at);
 
   return (
-    <aside className={PANEL_CLASS} aria-label="Файлы сессии">
-      <div className="flex shrink-0 items-start gap-3 border-b border-ddc-divider px-5 py-4">
-        <div className="min-w-0 flex-1">
-          <div className="eyebrow">Файлы</div>
-          <div className="mt-1 text-base font-semibold text-ddc-heading">Результаты сессии</div>
-          <div className="mt-0.5 text-xs text-ddc-text-muted">
-            Файлы, которые агент сохранил в <code className="font-mono">/mnt/session/outputs/</code>
-          </div>
+    <HoverCard openDelay={200} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <Link to={to} className={CHIP_CLASS}>
+          <EnvIcon className="size-3.5 flex-none text-ddc-icon-muted" />
+          <span className="truncate">{label}</span>
+        </Link>
+      </HoverCardTrigger>
+      <HoverCardContent align="start" className={CARD_CLASS}>
+        <CardHeader kind="Окружение" id={id} to={to} />
+        <div className="flex items-center gap-2">
+          <EnvIcon className="size-4 flex-none text-ddc-icon-muted" />
+          <span className="min-w-0 truncate text-sm font-medium text-ddc-heading">{label}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={onClose}
-          title="Закрыть"
-          aria-label="Закрыть панель"
-          className="-my-0.5 -mr-1"
-        >
-          <XIcon />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto text-xs">
-        {err && (
-          <div className="p-5">
-            <PanelError message={err} />
-          </div>
+        {type && <CardRow label="Тип">{ENVIRONMENT_TYPE_LABEL[type] ?? type}</CardRow>}
+        {scope && (
+          <CardRow label="Область">
+            <span className="inline-flex h-5 items-center rounded-md bg-ddc-tone-neutral-bg px-1.5 text-2xs font-medium text-ddc-tone-neutral-fg">
+              {SCOPE_LABEL[scope] ?? scope}
+            </span>
+          </CardRow>
         )}
-        {!files && !err && (
-          <div className="p-5">
-            <PanelSkeleton />
-          </div>
-        )}
-        {files && files.length === 0 && (
-          <EmptyState
-            size="sm"
-            kind="file"
-            title="Файлов пока нет"
-            body={
-              <>
-                Чтобы файлы появились здесь, агент должен сохранять их в{" "}
-                <code className="font-mono">/mnt/session/outputs/</code>.
-              </>
-            }
-            className="m-5 border-0 shadow-none"
-          />
-        )}
-        {files && files.length > 0 && (
-          <ul className="divide-y divide-ddc-divider">
-            {files.map((f) => (
-              <li key={f.filename} className="flex items-center gap-3 px-5 py-3">
-                <div className="min-w-0 flex-1">
-                  <a
-                    href={`/v1/sessions/${sessionId}/outputs/${encodeURIComponent(f.filename)}`}
-                    download={f.filename}
-                    className="link block truncate font-mono text-sm"
-                    title={f.filename}
-                  >
-                    {f.filename}
-                  </a>
-                  <div className="mt-0.5 text-2xs text-ddc-text-muted tabular-nums">
-                    {formatBytesRu(f.size_bytes)} · {f.media_type} · {formatDateTimeRu(f.uploaded_at)}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </aside>
+        {age && <CardRow label="Создано">{age}</CardRow>}
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+// ── Хранилище секретов ───────────────────────────────────────────────────
+
+export function VaultChip({
+  vault,
+  className,
+}: {
+  vault: { id: string; name?: string };
+  className?: string;
+}) {
+  return (
+    <Link to={`/vaults/${vault.id}`} className={cn(CHIP_CLASS, className)} title={vault.name ?? vault.id}>
+      <VaultIcon className="size-3.5 flex-none text-ddc-icon-muted" />
+      <span className="truncate">{vault.name || shortenId(vault.id)}</span>
+    </Link>
   );
 }

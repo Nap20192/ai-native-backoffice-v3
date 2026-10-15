@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryBlobStore } from "@open-managed-agents/blob-store";
-import { createBetterSqlite3SqlClient } from "@open-managed-agents/sql-client";
+import { createBetterSqlite3SqlClient, createPostgresSqlClient, type SqlClient } from "@open-managed-agents/sql-client";
 import { ensureSessionExecutionCoordinatorSchema, SqlSessionExecutionCoordinator } from "@open-managed-agents/session-runtime-sql";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
@@ -72,10 +72,12 @@ function craftTar(entries: Array<{ name: string; type: "0" | "1" | "2" | "5"; li
 
 const scope = { workspaceId: "workspace_1", environmentId: "env_1", sessionId: "session_1", workId: "exec_1" };
 
-async function fixture() {
+async function fixture(open?: () => Promise<SqlClient>) {
   const root = await mkdtemp(join(tmpdir(), "oma-checkpoint-sql-"));
   roots.push(root);
-  const sql = await createBetterSqlite3SqlClient(join(root, "checkpoint.db"));
+  const sql = open === undefined
+    ? await createBetterSqlite3SqlClient(join(root, "checkpoint.db"))
+    : await open();
   await ensureSessionExecutionCoordinatorSchema(sql);
   const coordinator = new SqlSessionExecutionCoordinator(sql);
   const now = Date.now();
@@ -528,5 +530,38 @@ describe("official Node Managed Session workspace checkpoints", () => {
     await expect(port.materialize({ scope, fence: runtimeFence, strategy: "durable_mount",
       activeCheckpoint: null, idempotencyKey: "wrong", signal: new AbortController().signal }))
       .rejects.toThrow(/does not support/);
+  });
+});
+
+// PostgreSQL rejects a placeholder used only as `? IS NULL` (42P18), which
+// the active-pointer comparison used. Runs only with OMA_TEST_POSTGRES_URL.
+const postgresUrl = process.env.OMA_TEST_POSTGRES_URL;
+const postgresClients: SqlClient[] = [];
+afterEach(async () => {
+  await Promise.all(postgresClients.splice(0).map((client) =>
+    (client as unknown as { sql: { end(options?: { timeout?: number }): Promise<void> } })
+      .sql.end({ timeout: 5 })));
+});
+
+async function freshPostgres(): Promise<SqlClient> {
+  const sql = await createPostgresSqlClient(postgresUrl!);
+  postgresClients.push(sql);
+  await sql.exec(`DROP TABLE IF EXISTS managed_session_workspace_checkpoints,
+    managed_session_executions, managed_session_claim_locks`);
+  return sql;
+}
+
+describe.skipIf(postgresUrl === undefined)("workspace checkpoints on PostgreSQL", () => {
+  it("publishes the first checkpoint and then compares the active pointer", async () => {
+    const { checkpoints, fence } = await fixture(freshPostgres);
+    const first = await sandbox();
+    await first.writeFile("/workspace/report.txt", "first");
+    const a = await createCandidate(checkpoints, first, fence);
+    expect(await checkpoints.publish({ fence, candidate: a, expectedId: null })).toBe(true);
+    await first.writeFile("/workspace/report.txt", "second");
+    const b = await createCandidate(checkpoints, first, fence);
+    expect(await checkpoints.publish({ fence, candidate: b, expectedId: null })).toBe(false);
+    expect(await checkpoints.publish({ fence, candidate: b, expectedId: a.id })).toBe(true);
+    expect((await checkpoints.active(scope))?.candidate.id).toBe(b.id);
   });
 });

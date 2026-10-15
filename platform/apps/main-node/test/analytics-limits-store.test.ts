@@ -1,0 +1,4 @@
+import {it,expect} from 'vitest';
+import {createBetterSqlite3SqlClient} from '@open-managed-agents/sql-client';
+import {createModelCardLimitsStore} from '../src/lib/analytics/limits-store.js';
+it('replaces all limits, records actor, supports clearing and isolates workspace',async()=>{const sql=await createBetterSqlite3SqlClient(':memory:');const s=createModelCardLimitsStore(sql);await s.upsert('ws','c',{requests_per_minute:10,input_tokens_per_minute:20,output_tokens_per_minute:30},'user',100);await s.upsert('ws','c',{requests_per_minute:null,input_tokens_per_minute:40,output_tokens_per_minute:null},null,200);expect(await s.get('ws','c')).toEqual({workspace_id:'ws',card_id:'c',requests_per_minute:null,input_tokens_per_minute:40,output_tokens_per_minute:null,updated_by:null,updated_at:200});expect(await s.get('other','c')).toBeNull();});

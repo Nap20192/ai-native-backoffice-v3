@@ -268,7 +268,12 @@ export class SqlSessionEventStore
           input.expectedRevision,
         );
     });
-    const interrupt = [...interruptLanes].flatMap((laneId) => [
+    // A lane filter is added only when present: PostgreSQL cannot infer the
+    // type of a placeholder used only with IS NULL (42P18).
+    const interrupt = [...interruptLanes].flatMap((laneId) => {
+      const lane = laneId === null ? "" : "AND lane_id = ?";
+      const laneParams = laneId === null ? [] : [laneId];
+      return [
           this.client.prepare(
             `UPDATE managed_session_executions
                 SET state = 'cancelled', settled_at_ms = ?,
@@ -276,7 +281,7 @@ export class SqlSessionEventStore
                     failure = 'interrupted before execution',
                     revision = revision + 1
               WHERE workspace_id = ? AND session_id = ? AND state = 'queued'
-                AND (? IS NULL OR lane_id = ?)
+                ${lane}
                 AND EXISTS (
                   SELECT 1 FROM managed_sessions
                    WHERE workspace_id = ? AND id = ? AND revision = ?
@@ -286,8 +291,7 @@ export class SqlSessionEventStore
             timestamp(controlTimestamp),
             input.workspaceId,
             input.sessionId,
-            laneId,
-            laneId,
+            ...laneParams,
             input.workspaceId,
             input.sessionId,
             input.expectedRevision,
@@ -300,7 +304,7 @@ export class SqlSessionEventStore
                     revision = revision + 1
               WHERE workspace_id = ? AND session_id = ? AND state = 'running'
                 AND lease_expires_at_ms <= ?
-                AND (? IS NULL OR lane_id = ?)
+                ${lane}
                 AND EXISTS (
                   SELECT 1 FROM managed_sessions
                    WHERE workspace_id = ? AND id = ? AND revision = ?
@@ -311,8 +315,7 @@ export class SqlSessionEventStore
             input.workspaceId,
             input.sessionId,
             timestamp(controlTimestamp),
-            laneId,
-            laneId,
+            ...laneParams,
             input.workspaceId,
             input.sessionId,
             input.expectedRevision,
@@ -323,7 +326,7 @@ export class SqlSessionEventStore
                   revision = revision + 1
             WHERE workspace_id = ? AND session_id = ? AND state = 'running'
               AND lease_expires_at_ms > ?
-              AND (? IS NULL OR lane_id = ?)
+              ${lane}
               AND EXISTS (
                 SELECT 1 FROM managed_sessions
                  WHERE workspace_id = ? AND id = ? AND revision = ?
@@ -333,13 +336,13 @@ export class SqlSessionEventStore
           input.workspaceId,
           input.sessionId,
           timestamp(controlTimestamp),
-          laneId,
-          laneId,
+          ...laneParams,
           input.workspaceId,
           input.sessionId,
           input.expectedRevision,
           ),
-        ]);
+        ];
+    });
     const results = await this.client.batch([
       revisionGuard,
       ...eventStatements,

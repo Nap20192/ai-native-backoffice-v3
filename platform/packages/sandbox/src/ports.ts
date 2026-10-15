@@ -15,6 +15,8 @@
 //   - E2BSandboxExecutor (./adapters/e2b.ts) — wraps the official `e2b`
 //     SDK. The configured API may be E2B Cloud or any compatible service.
 
+import type { SandboxEnvironmentSpec } from "./environment-setup";
+
 export interface ProcessHandle {
   id: string;
   pid: number;
@@ -283,6 +285,11 @@ export interface SandboxFactoryContext {
    *  per-(tenant, session) dirs under here when mountSessionOutputs
    *  is called; remote adapters that don't host-mount can ignore it. */
   outputsRoot?: string;
+  /** The session's cloud Environment (packages + networking). Adapters that
+   *  own an isolated machine install the packages once it exists and map
+   *  networking onto their egress controls; host-process adapters ignore it.
+   *  Absent for self-hosted environments and hosts that predate the field. */
+  environment?: SandboxEnvironmentSpec;
 }
 
 export interface SandboxMemoryWorkspacePort {

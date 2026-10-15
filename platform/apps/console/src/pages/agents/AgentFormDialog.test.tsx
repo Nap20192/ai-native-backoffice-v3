@@ -215,3 +215,41 @@ describe("AgentFormDialog edit mode", () => {
     expect(screen.getByRole("button", { name: "Сохранить изменения" })).toBeEnabled();
   });
 });
+
+describe("AgentFormDialog: подсказки по-русски", () => {
+  it("на вкладке инструментов называет вариант так же, как он подписан в списке", async () => {
+    renderDialog();
+    await pickBlankTemplate();
+    await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.textContent).toContain("По умолчанию");
+    expect(panel.textContent).not.toMatch(/\bdefault\b/);
+  });
+
+  it("у закреплённой версии навыка подсказка и пояснение без английского latest", async () => {
+    renderDialog();
+    await pickBlankTemplate();
+    await userEvent.click(screen.getByRole("tab", { name: "Навыки" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Excel (xlsx)" }));
+
+    const panel = screen.getByRole("tabpanel");
+    const version = within(panel).getByRole("textbox", { name: "Версия навыка xlsx" });
+    expect(version).toHaveAttribute("placeholder", "последняя");
+    expect(panel.textContent).toContain("последнюю версию");
+    expect(panel.textContent).not.toMatch(/\blatest\b/);
+  });
+
+  it("у версии вызываемого агента подсказка «последняя»", async () => {
+    renderDialog({
+      agent: {
+        ...existingAgent,
+        multiagent: { type: "coordinator", agents: [{ type: "agent", id: "agent-2" }] },
+      } as unknown as Agent,
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /^Мультиагентность/ }));
+
+    const version = screen.getByRole("spinbutton");
+    expect(version).toHaveAttribute("placeholder", "последняя");
+  });
+});

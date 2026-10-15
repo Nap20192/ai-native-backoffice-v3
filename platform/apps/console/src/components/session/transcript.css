@@ -1,0 +1,104 @@
+/* Разговор сессии: подсветка поиска, затухание «Читать дальше», поле ввода
+   в одну строку. Цвета только из токенов DDC. Правила без слоя, поэтому
+   поле ввода перебивает index.css по специфичности, а не по порядку. */
+
+/* ---------- Поиск по разговору ----------
+   CSS Custom Highlight API: DOM не меняется, Markdown рендерится как раньше.
+   В ::highlight() работают только color, background-color, text-decoration
+   и text-shadow. Тёмный текст на янтарном фоне читается в обеих темах. */
+::highlight(session-search) {
+  background-color: var(--color-amber-200);
+  color: var(--color-ink-900);
+}
+
+::highlight(session-search-current) {
+  background-color: var(--color-amber-400);
+  color: var(--color-ink-900);
+}
+
+/* Родной крестик поля type="search" не нужен, у поля свой. */
+[data-session-transcript-toolbar] input[type="search"]::-webkit-search-cancel-button,
+[data-session-transcript-toolbar] input[type="search"]::-webkit-search-decoration {
+  appearance: none;
+  display: none;
+}
+
+/* ---------- Блок разговора ---------- */
+
+/* Фон карточки, под который затухает длинный текст. */
+[data-session-card] {
+  --session-card-bg: var(--ddc-surface);
+}
+
+[data-session-card][data-selected="true"] {
+  --session-card-bg: var(--ddc-selected-bg);
+}
+
+/* Блок сразу после перехода по ссылке или поиску: рамку даёт data-selected,
+   а наведение с мини-карты даёт data-hovered. */
+[data-session-card][data-hovered="true"]:not([data-selected="true"]) {
+  --session-card-bg: var(--ddc-surface-muted);
+}
+
+/* ---------- Читать дальше ---------- */
+
+/* Свёрнутый длинный текст. 15rem это около десяти строк по 24px. */
+[data-session-clamp][data-clamp-state="collapsed"] {
+  position: relative;
+  max-height: 15rem;
+  overflow: hidden;
+}
+
+/* Затухание нижней трети до цвета карточки. */
+[data-session-clamp][data-clamp-state="collapsed"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 5rem;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--session-card-bg, var(--ddc-surface)));
+}
+
+/* Кнопка стоит поверх затухания по центру. */
+[data-session-clamp-toggle="more"] {
+  position: absolute;
+  inset: auto 0 0.25rem 0;
+  z-index: 1;
+  width: fit-content;
+  margin-inline: auto;
+}
+
+/* ---------- Поле ввода в одну строку ----------
+   Контейнер 40px: строка 32px, рамка 1px и отступ 3px. Рост текста идёт
+   вверх, кнопки остаются у нижней кромки (align-items: flex-end). */
+.session-composer.session-composer-line [data-slot="input-group"] {
+  height: auto;
+  min-height: calc(var(--composer-control-height) + 8px);
+  align-items: flex-end;
+  gap: 0;
+  padding: 3px;
+  border-radius: var(--composer-radius);
+}
+
+.session-composer.session-composer-line .session-composer-textarea {
+  min-height: var(--composer-control-height);
+  padding: 5px 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+}
+
+/* Круглые кнопки. Правило index.css с радиусом 0.5rem сильнее утилиты
+   rounded-full из слоя, поэтому радиус задаётся здесь. */
+.session-composer.session-composer-line .session-composer-control {
+  border-radius: 9999px;
+}
+
+.session-composer.session-composer-line .session-composer-action {
+  background: var(--ddc-primary);
+  color: var(--ddc-on-primary);
+}
+
+.session-composer.session-composer-line .session-composer-action:hover:not(:disabled) {
+  background: var(--ddc-primary-hover);
+  color: var(--ddc-on-primary);
+}

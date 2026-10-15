@@ -314,13 +314,14 @@ export class NodeManagedWorkspaceCheckpoints {
           (SELECT 1 FROM managed_session_executions WHERE ${current})
         ON CONFLICT (workspace_id, session_id) DO NOTHING`)
         .bind(fence.workspaceId, fence.sessionId, ...args),
+      // No `? IS NULL` here: PostgreSQL cannot type such a placeholder (42P18).
       this.deps.sql.prepare(`UPDATE managed_session_workspace_checkpoints
         SET candidate_id = ?, candidate_json = ?, published_at_ms = ?, revision = revision + 1
         WHERE workspace_id = ? AND session_id = ?
-          AND ((? IS NULL AND candidate_id IS NULL) OR candidate_id = ?)
+          AND ${expectedId === null ? "candidate_id IS NULL" : "candidate_id = ?"}
           AND EXISTS (SELECT 1 FROM managed_session_executions WHERE ${current})`)
         .bind(candidate.id, JSON.stringify(candidate), now,
-          fence.workspaceId, fence.sessionId, expectedId, expectedId, ...args),
+          fence.workspaceId, fence.sessionId, ...(expectedId === null ? [] : [expectedId]), ...args),
     ]);
     return results[2]?.meta.changes === 1;
   }

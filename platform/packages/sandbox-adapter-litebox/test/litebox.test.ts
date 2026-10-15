@@ -19,7 +19,15 @@ vi.mock("@boxlite-ai/boxlite", () => ({
   },
 }));
 
-import { LiteBoxSandbox, sandboxFactory } from "../src/litebox";
+import { NoopLogger, setRootLogger, type Logger } from "@open-managed-agents/observability";
+import {
+  applyShimDnsWorkaround,
+  LiteBoxSandbox,
+  liteBoxNetwork,
+  sandboxFactory,
+  stripRuntimeNoise,
+  withShimDnsWorkaround,
+} from "../src/litebox";
 
 function fakeBox() {
   return {
@@ -43,6 +51,7 @@ const originalEnv = {
   outputs: process.env.FILES_BLOB_DIR,
   proxy: process.env.OMA_VAULT_PROXY_URL,
   ca: process.env.OMA_VAULT_CA_CERT,
+  godebug: process.env.GODEBUG,
 };
 
 function restore(name: string, value: string | undefined) {
@@ -57,6 +66,7 @@ beforeEach(() => {
   delete process.env.FILES_BLOB_DIR;
   delete process.env.OMA_VAULT_PROXY_URL;
   delete process.env.OMA_VAULT_CA_CERT;
+  delete process.env.GODEBUG;
 });
 
 afterEach(() => {
@@ -64,6 +74,7 @@ afterEach(() => {
   restore("FILES_BLOB_DIR", originalEnv.outputs);
   restore("OMA_VAULT_PROXY_URL", originalEnv.proxy);
   restore("OMA_VAULT_CA_CERT", originalEnv.ca);
+  restore("GODEBUG", originalEnv.godebug);
   vi.restoreAllMocks();
 });
 
@@ -289,6 +300,19 @@ describe("LiteBoxSandbox", () => {
     await defaults.destroy();
   });
 
+  it("factory sizes the VM root disk from LITEBOX_DISK_SIZE_GB", async () => {
+    queueBox();
+    queueBox();
+    const sized = await sandboxFactory({ sessionId: "session" } as never, { LITEBOX_DISK_SIZE_GB: "8" });
+    await sized.exec("x");
+    const plain = await sandboxFactory({ sessionId: "session" } as never, {});
+    await plain.exec("x");
+    expect(sdk.options[0]).toMatchObject({ diskSizeGb: 8 });
+    expect(sdk.options[1]?.diskSizeGb).toBeUndefined();
+    await sized.destroy();
+    await plain.destroy();
+  });
+
   it("factory scopes copy staging to the session workdir lifecycle", async () => {
     const workdir = await fs.mkdtemp(join(tmpdir(), "openma-litebox-session-"));
     const sandbox = await sandboxFactory({ sessionId: "session", workdir }, {});
@@ -309,4 +333,447 @@ describe("LiteBoxSandbox", () => {
     await sandbox.exec("x");
     await sandbox.destroy();
   });
+
+  it("strips the guest runtime's libcontainer log line from command output", async () => {
+    const box = queueBox();
+    box.exec
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: SECCOMP_WARN })
+      .mockResolvedValueOnce({ exitCode: 3, stdout: "out\n", stderr: `${SECCOMP_WARN}real error\n` });
+    const sandbox = new LiteBoxSandbox();
+    await expect(sandbox.exec("false")).resolves.toBe("out\nreal error\n[exit 3]");
+    await sandbox.destroy();
+  });
+
+  it("forces Go's pure resolver for the shim only while the box boots", async () => {
+    const box = queueBox();
+    const seen: Array<string | undefined> = [];
+    box.exec.mockImplementation(async () => {
+      seen.push(process.env.GODEBUG);
+      return { exitCode: 0, stdout: "ok\n", stderr: "" };
+    });
+    const log = vi.fn();
+    const sandbox = new LiteBoxSandbox({ logger: { warn: vi.fn(), log } });
+    await sandbox.exec("x");
+    // First exec boots the box (BoxLite spawns boxlite-shim); later ones must
+    // not hand the setting to other children of the server.
+    expect(seen).toEqual(["netdns=go", undefined]);
+    expect(process.env.GODEBUG).toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("GODEBUG=netdns=go"));
+    await sandbox.destroy();
+  });
+
+  it("creates the box with the environment egress policy", async () => {
+    queueBox();
+    const workdir = await fs.mkdtemp(join(tmpdir(), "openma-litebox-net-"));
+    const sandbox = await sandboxFactory({
+      sessionId: "s",
+      workdir,
+      environment: {
+        networking: { type: "limited", allowedHosts: ["https://Example.com/x"], allowPackageManagers: false, allowMcpServers: false },
+      },
+    }, {});
+    await sandbox.exec("x");
+    expect(sdk.options[0]?.network).toEqual({ mode: "enabled", allowNet: ["example.com"] });
+    await sandbox.destroy?.();
+    await fs.rm(workdir, { recursive: true, force: true });
+  });
+
+  it("installs environment packages once, before the first command", async () => {
+    const box = queueBox();
+    const log = vi.fn();
+    const sandbox = new LiteBoxSandbox({
+      logger: { warn: vi.fn(), log },
+      environment: { packages: { apt: ["jq"], npm: ["left-pad"], pip: [] } },
+    });
+    await sandbox.setEnvVars({ OMA_OUTPUTS_DIR: "/mnt/session/outputs", ANTHROPIC_API_KEY: "vault-secret" });
+    await sandbox.exec("jq --version");
+    await sandbox.exec("echo again");
+    const calls = box.exec.mock.calls as unknown as Array<[string, string[], Record<string, string>?, Record<string, unknown>?]>;
+    expect(calls.map(([command]) => command)).toEqual(["mkdir", "sh", "sh", "sh"]);
+    expect(calls[2]?.[1]).toEqual(["-c", "jq --version"]);
+    expect(calls[3]?.[1]).toEqual(["-c", "echo again"]);
+    const [, setupArgs, setupEnv, setupOptions] = calls[1]!;
+    expect(setupArgs[1]).toContain("apt-get install -y -qq --no-install-recommends 'jq'");
+    expect(setupArgs[1]).toContain("npm install -g --no-fund --no-audit --loglevel=error 'left-pad'");
+    expect(setupArgs[1]).not.toContain("pip install");
+    // Third-party install scripts (npm/pip postinstall) never see sandbox
+    // variables such as Vault secrets; only the outbound proxy settings.
+    expect(setupEnv).toEqual({});
+    expect(calls[2]?.[2]).toMatchObject({ ANTHROPIC_API_KEY: "vault-secret" });
+    expect(setupOptions).toEqual({ cwd: "/workspace", timeoutSecs: 600 });
+    expect(log).toHaveBeenCalledWith("installing environment packages (apt: jq; npm: left-pad)");
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^environment packages installed in \d+ ms$/));
+    await sandbox.destroy();
+  });
+
+  it("passes only the outbound proxy settings to the package install", async () => {
+    process.env.OMA_VAULT_PROXY_URL = "http://proxy";
+    process.env.OMA_VAULT_CA_CERT = join(tmpdir(), "missing-ca.pem");
+    const box = queueBox();
+    const sandbox = new LiteBoxSandbox({
+      logger: { warn: vi.fn(), log: vi.fn() },
+      environment: { packages: { npm: ["left-pad"] } },
+    });
+    await sandbox.setOutboundContext({ tenantId: "t", sessionId: "s" });
+    await sandbox.setEnvVars({ CLAUDE_CODE_OAUTH_TOKEN: "vault-secret" });
+    await sandbox.exec("true");
+    const calls = box.exec.mock.calls as unknown as Array<[string, string[], Record<string, string>?]>;
+    const setupEnv = calls.find(([command, args]) => command === "sh" && args[1]?.includes("npm install"))?.[2];
+    expect(setupEnv).toEqual({
+      HTTP_PROXY: "http://proxy",
+      HTTPS_PROXY: "http://proxy",
+      http_proxy: "http://proxy",
+      https_proxy: "http://proxy",
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/oma-vault-ca.crt",
+      SSL_CERT_FILE: "/etc/ssl/oma-vault-ca.crt",
+      CURL_CA_BUNDLE: "/etc/ssl/oma-vault-ca.crt",
+    });
+    await sandbox.destroy();
+  });
+
+  it("warns about allowlist gaps of BoxLite 0.9.0: wildcards, the vault proxy, no network", async () => {
+    process.env.OMA_VAULT_PROXY_URL = "http://vault.internal:8790";
+    queueBox();
+    const warn = vi.fn();
+    const sandbox = new LiteBoxSandbox({
+      logger: { warn, log: vi.fn() },
+      resolveHost: async () => ["198.51.100.1"],
+      environment: {
+        networking: { type: "limited", allowedHosts: ["api.example.com", "*.cdn.example.net"], allowPackageManagers: false, allowMcpServers: false },
+      },
+    });
+    await sandbox.exec("true");
+    const warnings = warn.mock.calls.map(([message]) => String(message));
+    expect(warnings).toContainEqual(expect.stringContaining("*.cdn.example.net"));
+    expect(warnings).toContainEqual(expect.stringContaining("vault.internal"));
+    await sandbox.destroy();
+
+    queueBox();
+    const quietWarn = vi.fn();
+    const none = new LiteBoxSandbox({
+      logger: { warn: quietWarn, log: vi.fn() },
+      environment: { networking: { type: "limited", allowedHosts: [], allowPackageManagers: false, allowMcpServers: false } },
+    });
+    await none.exec("true");
+    expect(quietWarn.mock.calls.map(([message]) => String(message))).toContainEqual(
+      expect.stringContaining("no network, the vault proxy included"),
+    );
+    await none.destroy();
+
+    // A proxy URL without a host adds no allowed host and no warning.
+    process.env.OMA_VAULT_PROXY_URL = "http://";
+    queueBox();
+    const hostlessWarn = vi.fn();
+    const hostless = new LiteBoxSandbox({
+      logger: { warn: hostlessWarn, log: vi.fn() },
+      resolveHost: async () => ["198.51.100.1"],
+      environment: {
+        networking: { type: "limited", allowedHosts: ["api.example.com"], allowPackageManagers: false, allowMcpServers: false },
+      },
+    });
+    await hostless.exec("true");
+    expect(hostlessWarn).not.toHaveBeenCalled();
+    expect(sdk.options.at(-1)?.network).toEqual({ mode: "enabled", allowNet: ["api.example.com"] });
+    await hostless.destroy();
+  });
+
+  it("pins exact allowed hosts in /etc/hosts before installing packages", async () => {
+    // BoxLite 0.9.0 builds its allowlist DNS zones from a Go map: the zone
+    // of an apex host (pypi.org → "org.") can shadow deb.debian.org in a
+    // random order and answer 0.0.0.0. Pinned names skip that DNS answer;
+    // TCP is still filtered by SNI / Host header.
+    process.env.OMA_VAULT_PROXY_URL = "http://vault.internal:8790";
+    process.env.OMA_VAULT_CA_CERT = "";
+    const box = queueBox();
+    const log = vi.fn();
+    const resolveHost = vi.fn(async (host: string) =>
+      host === "api.example.com" ? ["203.0.113.7", "203.0.113.8"] : ["198.51.100.1"]);
+    const sandbox = new LiteBoxSandbox({
+      logger: { warn: vi.fn(), log },
+      resolveHost,
+      environment: {
+        packages: { apt: ["jq"] },
+        networking: {
+          type: "limited",
+          allowedHosts: ["api.example.com", "*.cdn.example.net", "10.1.2.3", "https://git.example.org/repo"],
+          allowPackageManagers: false,
+          allowMcpServers: false,
+        },
+      },
+    });
+    await sandbox.exec("x");
+    const calls = box.exec.mock.calls as unknown as Array<[string, string[], Record<string, string>?, Record<string, unknown>?]>;
+    expect(calls.map(([command]) => command)).toEqual(["mkdir", "sh", "sh", "sh"]);
+    expect(calls[1]?.[1]).toEqual([
+      "-c",
+      'printf "%s\\n" "$@" >> /etc/hosts',
+      "sh",
+      "203.0.113.7 api.example.com",
+      "203.0.113.8 api.example.com",
+      "198.51.100.1 git.example.org",
+    ]);
+    expect(calls[2]?.[1][1]).toContain("apt-get install");
+    expect(resolveHost.mock.calls.map(([host]) => host)).toEqual(["api.example.com", "git.example.org"]);
+    expect(log).toHaveBeenCalledWith("pinned 2 allowed host(s) in /etc/hosts");
+    await sandbox.destroy();
+  });
+
+  it("skips hosts that do not resolve and keeps going when /etc/hosts cannot be written", async () => {
+    const box = queueBox();
+    box.exec
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: `${SECCOMP_WARN}sh: /etc/hosts: Read-only file system\n` });
+    const warn = vi.fn();
+    const sandbox = new LiteBoxSandbox({
+      logger: { warn, log: vi.fn() },
+      resolveHost: async (host) => {
+        if (host === "down.example.com") throw new Error("ENOTFOUND down.example.com");
+        return host === "empty.example.com" ? [] : ["192.0.2.10"];
+      },
+      environment: {
+        networking: {
+          type: "limited",
+          allowedHosts: ["down.example.com", "empty.example.com", "up.example.com"],
+          allowPackageManagers: false,
+          allowMcpServers: false,
+        },
+      },
+    });
+    await expect(sandbox.exec("echo ok")).resolves.toBe("ok");
+    expect(box.exec.mock.calls[1]?.[1]).toEqual(["-c", 'printf "%s\\n" "$@" >> /etc/hosts', "sh", "192.0.2.10 up.example.com"]);
+    expect(warn).toHaveBeenCalledWith(
+      "allowed host down.example.com did not resolve on the host (ENOTFOUND down.example.com); it is not pinned",
+    );
+    expect(warn).toHaveBeenCalledWith("could not pin allowed hosts in /etc/hosts: sh: /etc/hosts: Read-only file system");
+    await sandbox.destroy();
+
+    const none = queueBox();
+    const nothing = new LiteBoxSandbox({
+      logger: { warn: vi.fn(), log: vi.fn() },
+      resolveHost: async () => { throw "offline"; },
+      environment: {
+        networking: { type: "limited", allowedHosts: ["a.example.com"], allowPackageManagers: false, allowMcpServers: false },
+      },
+    });
+    await nothing.exec("x");
+    expect(none.exec.mock.calls.map(([command]) => command)).toEqual(["mkdir", "sh"]);
+    expect(none.exec.mock.calls[1]?.[1]).toEqual(["-c", "x"]);
+    await nothing.destroy();
+  });
+
+  it("pins nothing for unrestricted or disabled networking and resolves with the host DNS by default", async () => {
+    const resolveHost = vi.fn(async () => ["192.0.2.1"]);
+    for (const networking of [
+      { type: "unrestricted" } as const,
+      { type: "limited", allowedHosts: [], allowPackageManagers: false, allowMcpServers: false } as const,
+    ]) {
+      const box = queueBox();
+      const sandbox = new LiteBoxSandbox({ resolveHost, environment: { networking } });
+      await sandbox.exec("x");
+      expect(box.exec.mock.calls.map(([command]) => command)).toEqual(["mkdir", "sh"]);
+      await sandbox.destroy();
+    }
+    expect(resolveHost).not.toHaveBeenCalled();
+
+    const box = queueBox();
+    const sandbox = new LiteBoxSandbox({
+      logger: { warn: vi.fn(), log: vi.fn() },
+      environment: {
+        networking: { type: "limited", allowedHosts: ["localhost"], allowPackageManagers: false, allowMcpServers: false },
+      },
+    });
+    await sandbox.exec("x");
+    expect(box.exec.mock.calls[1]?.[1]).toEqual(["-c", 'printf "%s\\n" "$@" >> /etc/hosts', "sh", "127.0.0.1 localhost"]);
+    await sandbox.destroy();
+  });
+
+  it("fails the sandbox and stops the VM when packages do not install", async () => {
+    const box = queueBox();
+    box.exec
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({
+        exitCode: 100,
+        stdout: "[oma-setup] apt: 1 package(s)\n",
+        stderr: `${SECCOMP_WARN}E: Unable to locate package nope\n[oma-setup] apt failed (exit 100)\n`,
+      });
+    const sandbox = new LiteBoxSandbox({
+      environment: {
+        packages: { apt: ["nope"] },
+        networking: { type: "limited", allowedHosts: [], allowPackageManagers: false, allowMcpServers: false },
+      },
+    });
+    const failure = sandbox.exec("x");
+    await expect(failure).rejects.toThrow(
+      "environment packages failed to install (exit 100) (networking is limited and package managers are not allowed)",
+    );
+    await expect(failure).rejects.toThrow(/E: Unable to locate package nope\n\[oma-setup\] apt failed \(exit 100\)$/);
+    await expect(sandbox.exec("y")).rejects.toThrow("environment packages failed to install");
+    expect(box.stop).toHaveBeenCalledTimes(1);
+    expect(sdk.options[0]?.network).toEqual({ mode: "disabled" });
+    await sandbox.destroy();
+
+    const open = queueBox();
+    open.exec
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 127, stdout: "", stderr: "[oma-setup] npm not found in the sandbox image\n" });
+    const unrestricted = new LiteBoxSandbox({ environment: { packages: { npm: ["x"] } } });
+    await expect(unrestricted.exec("x")).rejects.toThrow(
+      "environment packages failed to install (exit 127): [oma-setup] npm not found in the sandbox image",
+    );
+    await unrestricted.destroy();
+  });
+
+  it("stops the VM when /workspace cannot be created, even if stopping fails", async () => {
+    for (const [result, message] of [
+      [{ exitCode: 1, stdout: "", stderr: `${SECCOMP_WARN}mkdir: read-only\n` }, "/workspace: mkdir: read-only"],
+      [{ exitCode: 1, stdout: "only stdout", stderr: SECCOMP_WARN }, "/workspace: only stdout"],
+    ] as const) {
+      const box = queueBox();
+      box.exec.mockResolvedValueOnce({ ...result });
+      box.stop.mockRejectedValueOnce(new Error("already gone"));
+      const sandbox = new LiteBoxSandbox();
+      await expect(sandbox.exec("x")).rejects.toThrow(message);
+      expect(box.stop).toHaveBeenCalledTimes(1);
+      await sandbox.destroy();
+    }
+  });
+
+  it("reports a failed parent directory before copying into the box", async () => {
+    const box = queueBox();
+    box.exec
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "denied" })
+      .mockResolvedValueOnce({ exitCode: 1, stdout: "out", stderr: "" });
+    const sandbox = new LiteBoxSandbox();
+    await expect(sandbox.writeFile("/ro/a.txt", "x")).rejects.toThrow("could not create /ro: denied");
+    await expect(sandbox.writeFileBytes("/ro/b.bin", new Uint8Array([1]))).rejects.toThrow("could not create /ro: out");
+    expect(box.copyIn).not.toHaveBeenCalled();
+    await sandbox.destroy();
+  });
+
+  it("logs through the root logger installed after the module was imported", async () => {
+    queueBox();
+    const lines: string[] = [];
+    const capture: Logger = {
+      trace: () => {}, debug: () => {}, error: () => {}, fatal: () => {},
+      info: (a: unknown, b?: string) => { lines.push(typeof a === "string" ? a : String(b)); },
+      warn: (a: unknown, b?: string) => { lines.push(typeof a === "string" ? a : String(b)); },
+      child: () => capture,
+    } as Logger;
+    setRootLogger(capture);
+    try {
+      const sandbox = new LiteBoxSandbox({ image: "img:1" });
+      await sandbox.exec("x");
+      await sandbox.destroy();
+    } finally {
+      setRootLogger(new NoopLogger());
+    }
+    expect(lines).toContain("creating box (image=img:1, network=unrestricted)");
+  });
 });
+
+const SECCOMP_WARN =
+  "\u001b[2m2026-10-15T18:43:49.677495Z\u001b[0m \u001b[33m WARN\u001b[0m " +
+  "\u001b[2mlibcontainer::process::init::process\u001b[0m\u001b[2m:\u001b[0m " +
+  "seccomp not available, unable to set seccomp privileges!\n";
+
+describe("stripRuntimeNoise", () => {
+  it("drops leading libcontainer log lines with or without ANSI colors", () => {
+    expect(stripRuntimeNoise(SECCOMP_WARN)).toBe("");
+    expect(stripRuntimeNoise(`${SECCOMP_WARN}${SECCOMP_WARN}boom\n`)).toBe("boom\n");
+    expect(stripRuntimeNoise(
+      "2026-10-15T14:31:28.571895Z  WARN libcontainer::process::init::process: seccomp not available\nnext",
+    )).toBe("next");
+  });
+
+  it("keeps the command's own stderr, including look-alike lines after it", () => {
+    expect(stripRuntimeNoise("")).toBe("");
+    expect(stripRuntimeNoise("plain error\n")).toBe("plain error\n");
+    const later = `own line\n${SECCOMP_WARN}`;
+    expect(stripRuntimeNoise(later)).toBe(later);
+    expect(stripRuntimeNoise("2026-10-15T14:31:28Z WARN myapp::x: hi\n")).toBe("2026-10-15T14:31:28Z WARN myapp::x: hi\n");
+  });
+});
+
+describe("applyShimDnsWorkaround", () => {
+  it("adds netdns=go, keeps other GODEBUG settings and respects an explicit netdns", () => {
+    const empty: Record<string, string | undefined> = {};
+    expect(applyShimDnsWorkaround(empty)).toBe(true);
+    expect(empty.GODEBUG).toBe("netdns=go");
+    const other: Record<string, string | undefined> = { GODEBUG: "http2client=0" };
+    expect(applyShimDnsWorkaround(other)).toBe(true);
+    expect(other.GODEBUG).toBe("http2client=0,netdns=go");
+    const explicit: Record<string, string | undefined> = { GODEBUG: "x=1, netdns=cgo+2" };
+    expect(applyShimDnsWorkaround(explicit)).toBe(false);
+    expect(explicit.GODEBUG).toBe("x=1, netdns=cgo+2");
+  });
+});
+
+describe("withShimDnsWorkaround", () => {
+  it("restores GODEBUG when the last overlapping boot settles", async () => {
+    const env: Record<string, string | undefined> = { GODEBUG: "http2client=0" };
+    const onApplied = vi.fn();
+    let finishFirst!: () => void;
+    const first = withShimDnsWorkaround(env, () => new Promise<void>((resolve) => { finishFirst = resolve; }), onApplied);
+    const second = withShimDnsWorkaround(env, async () => env.GODEBUG, onApplied);
+    await expect(second).resolves.toBe("http2client=0,netdns=go");
+    expect(env.GODEBUG).toBe("http2client=0,netdns=go");
+    finishFirst();
+    await first;
+    expect(env.GODEBUG).toBe("http2client=0");
+    expect(onApplied).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes GODEBUG it added, also when the boot fails", async () => {
+    const env: Record<string, string | undefined> = {};
+    await expect(withShimDnsWorkaround(env, async () => {
+      expect(env.GODEBUG).toBe("netdns=go");
+      throw new Error("boot failed");
+    })).rejects.toThrow("boot failed");
+    expect("GODEBUG" in env).toBe(false);
+  });
+
+  it("leaves an operator-chosen netdns and a GODEBUG changed meanwhile alone", async () => {
+    const explicit: Record<string, string | undefined> = { GODEBUG: "netdns=cgo" };
+    const onApplied = vi.fn();
+    await withShimDnsWorkaround(explicit, async () => {}, onApplied);
+    expect(explicit.GODEBUG).toBe("netdns=cgo");
+    expect(onApplied).not.toHaveBeenCalled();
+    const changed: Record<string, string | undefined> = {};
+    await withShimDnsWorkaround(changed, async () => { changed.GODEBUG = "x=1"; });
+    expect(changed.GODEBUG).toBe("x=1");
+  });
+});
+
+describe("liteBoxNetwork", () => {
+  const limited = (allowedHosts: string[], allowPackageManagers = false) =>
+    ({ type: "limited", allowedHosts, allowPackageManagers, allowMcpServers: true }) as const;
+
+  it("keeps unrestricted and absent networking fully enabled", () => {
+    expect(liteBoxNetwork(undefined)).toEqual({ mode: "enabled" });
+    expect(liteBoxNetwork({ type: "unrestricted" }, ["http://proxy:8080"])).toEqual({ mode: "enabled" });
+  });
+
+  it("turns limited networking without any allowed host into no network", () => {
+    expect(liteBoxNetwork(limited([" ", ""]), ["http://proxy:8080"])).toEqual({ mode: "disabled" });
+  });
+
+  it("allows only the listed hosts, normalised and deduplicated, plus the vault proxy", () => {
+    expect(liteBoxNetwork(
+      limited(["API.example.com", "https://api.example.com:8443/v1?q=1", "user@git.example.org", "*.cdn.example.net"]),
+      ["http://10.0.2.2:3128", "http://"],
+    )).toEqual({
+      mode: "enabled",
+      allowNet: ["api.example.com", "git.example.org", "*.cdn.example.net", "10.0.2.2"],
+    });
+  });
+
+  it("opens the package registries when package managers are allowed", () => {
+    const network = liteBoxNetwork(limited([], true));
+    expect(network.mode).toBe("enabled");
+    const allowNet = network.mode === "enabled" ? network.allowNet ?? [] : [];
+    expect(allowNet).toEqual(expect.arrayContaining(["deb.debian.org", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org"]));
+    expect(allowNet).not.toContain("example.com");
+  });
+});
+

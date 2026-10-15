@@ -1,0 +1,5 @@
+import {it,expect,vi} from 'vitest';
+import {createBetterSqlite3SqlClient} from '@open-managed-agents/sql-client';
+import {ensureAnalyticsSchema} from '../src/lib/analytics/schema.js';
+it('creates tables, four indexes and two migration steps once',async()=>{const sql=await createBetterSqlite3SqlClient(':memory:');await Promise.all([ensureAnalyticsSchema(sql),ensureAnalyticsSchema(sql)]);await ensureAnalyticsSchema(sql);expect((await sql.prepare('SELECT * FROM analytics_schema_migrations').all()).results).toHaveLength(2);expect((await sql.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'model_calls_ws_%'").all()).results).toHaveLength(4);expect(await sql.prepare('SELECT * FROM model_card_limits').first()).toBeNull();});
+it('retries after a migration failure',async()=>{const sql=await createBetterSqlite3SqlClient(':memory:');const original=sql.exec.bind(sql);vi.spyOn(sql,'exec').mockRejectedValueOnce(new Error('fail'));await expect(ensureAnalyticsSchema(sql)).rejects.toThrow('fail');sql.exec=original;await expect(ensureAnalyticsSchema(sql)).resolves.toBeUndefined();});

@@ -52,6 +52,10 @@ const HOST_KERNEL = os.release();
 // (это подтверждает первая проба, строка env.probe.baseline).
 const ENV_PACKAGE = { manager: "apt", name: "jq" };
 const NET_PROBE_URL = "https://example.com";
+// Хост, который пользователь разрешает в «Разрешённых хостах» карточки окружения.
+// Адреса у него свои, не как у example.com: блокировку и пропуск видно раздельно.
+const NET_ALLOWED_HOST = "example.org";
+const NET_ALLOWED_URL = `https://${NET_ALLOWED_HOST}`;
 
 const newNonce = () => randomBytes(4).toString("hex");
 const nonce = newNonce();
@@ -228,7 +232,11 @@ async function captureStream(sessionId) {
           if (!data || name === "ping") continue;
           try {
             const event = JSON.parse(data);
-            seen.events.push({ sse: name ?? null, type: event.type ?? null, id: event.id ?? null, text: textOf(event.content).slice(0, 160) });
+            // Реплику пользователя храним целиком: маркер nonce=<n> стоит в конце
+            // промпта (после ~250 символов), и по обрезанному тексту
+            // run.sse_user_message не нашёл бы её.
+            const text = textOf(event.content);
+            seen.events.push({ sse: name ?? null, type: event.type ?? null, id: event.id ?? null, text: event.type === "user.message" ? text : text.slice(0, 160) });
           } catch {
             seen.events.push({ sse: name ?? null, raw: data.slice(0, 160) });
           }
@@ -257,8 +265,9 @@ function commandFor(kind, n) {
     case "probe": // работает ли VM; pkg_jq — установлен ли пакет из настроек окружения
       return `echo VERIFY_OK_${n} && echo kernel=$(uname -r) && . /etc/os-release && echo os=$ID-$VERSION_CODENAME && echo pwd=$(pwd); `
         + `echo pkg_${ENV_PACKAGE.name}=$(dpkg-query -W -f='\${Status}' ${ENV_PACKAGE.name} 2>/dev/null || echo missing)`;
-    case "net": // HTTP-код внешнего хоста из VM (000 = недоступен)
-      return `echo VERIFY_OK_${n}; echo net_example=$(curl -s -m 10 -o /dev/null -w '%{http_code}' ${NET_PROBE_URL} || true)`;
+    case "net": // HTTP-коды внешнего и разрешённого хоста из VM (000 = недоступен)
+      return `echo VERIFY_OK_${n}; echo net_example=$(curl -s -m 10 -o /dev/null -w '%{http_code}' ${NET_PROBE_URL} || true); `
+        + `echo net_allowed=$(curl -s -m 10 -o /dev/null -w '%{http_code}' ${NET_ALLOWED_URL} || true)`;
     case "alive": // отвечает ли VM после сетевого хода
       return `echo VERIFY_OK_${n} && echo alive_kernel=$(uname -r)`;
     default: // ход агента в главной сессии
@@ -295,11 +304,109 @@ function analyzeTurn(events, n) {
     toolUses,
     results,
     pair,
+    messages,
     lastMessage: messages.at(-1),
     idle: after.find((e) => e.type === "session.status_idle"),
     errors: after.filter((e) => e.type === "session.error"),
     pos,
   };
+}
+// Текст ответа и текст страницы. Консоль рисует ответ через Markdown: строк ``` нет,
+// маркеры заголовков, списков, **, ` и ссылок убраны. Строки сверяются по порядку.
+const squash = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
+function markdownLines(text) {
+  return String(text ?? "")
+    .split("\n")
+    .filter((line) => !/^\s*(```|~~~)/.test(line))
+    .map((line) => squash(line
+      .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, "")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\*\*|`/g, "")))
+    .filter(Boolean);
+}
+// Первая строка ответа, которой нет в тексте страницы после предыдущей; null, если все на месте.
+// Сравниваются только буквы и цифры: разметка таблиц, курсива и экранирование в режиме real
+// не дают ложного провала, а срез начала ответа уносит буквы и виден.
+const bare = (text) => String(text ?? "").replace(/[^\p{L}\p{N}]+/gu, "");
+function missingInOrder(lines, pageText) {
+  const hay = bare(pageText);
+  let from = 0;
+  for (const line of lines) {
+    const needle = bare(line);
+    if (!needle) continue;
+    const at = hay.indexOf(needle, from);
+    if (at < 0) return line;
+    from = at + needle.length;
+  }
+  return null;
+}
+const occurrences = (haystack, needle) => (needle ? haystack.split(needle).length - 1 : 0);
+// Подписи длительности в ходе: «Работал 12 с», «Работает 1 мин 5 с», «Думал 0 с» -> секунды.
+function durationLabels(text) {
+  return [...String(text ?? "").matchAll(/(Работал|Работает|Думал)\s+(?:(\d+)\s*мин\s*)?(\d+)\s*с(?![а-яё])/g)]
+    .map((m) => ({ label: m[0], seconds: Number(m[2] ?? 0) * 60 + Number(m[3]) }));
+}
+// Ждать конца анимаций внутри scope (CSS-переходы раскрытия): конечные анимации из
+// getAnimations, не дольше 3 с, затем высота scope не меняется два замера подряд.
+async function settleAnimations(scope) {
+  await scope.evaluate((root) => Promise.race([
+    Promise.all(root.getAnimations({ subtree: true })
+      .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime ?? Infinity))
+      .map((a) => a.finished.catch(() => {}))),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ])).catch(() => {});
+  let previous = null;
+  for (let i = 0; i < 30; i++) {
+    const height = Math.round((await scope.boundingBox().catch(() => null))?.height ?? -1);
+    if (height === previous) return;
+    previous = height;
+    await sleep(100);
+  }
+}
+// Первая строка, которая на экране не видна целиком, или null, если видны все. innerText отдаёт
+// и текст, срезанный overflow (свёрнутый или ещё раскрывающийся блок процесса, line-clamp,
+// truncate), поэтому строка ищется в самом глубоком элементе и сверяется с его коробкой.
+// Срезом считается overflow hidden или clip у предков до ближайшей прокрутки (auto, scroll):
+// до текста в прокрутке можно докрутить. Сравниваются только буквы и цифры, как в missingInOrder.
+async function clippedLine(scope, lines) {
+  return scope.evaluate((root, wanted) => {
+    const bare = (text) => String(text ?? "").replace(/[^\p{L}\p{N}]+/gu, "");
+    const clips = (value) => value === "hidden" || value === "clip";
+    const scrolls = (value) => value === "auto" || value === "scroll";
+    const problem = (el) => {
+      for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (node.hidden || style.display === "none" || style.visibility === "hidden") return "скрыт";
+      }
+      const box = el.getBoundingClientRect();
+      if (box.height < 1 || box.width < 1) return "нулевой размер";
+      const own = getComputedStyle(el);
+      if ((clips(own.overflowY) && el.scrollHeight > el.clientHeight + 1) ||
+          (clips(own.overflowX) && el.scrollWidth > el.clientWidth + 1)) return "текст не помещается в свой блок (line-clamp, truncate)";
+      for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        const outer = node.getBoundingClientRect();
+        if (clips(style.overflowY) && (box.bottom > outer.bottom + 1 || box.top < outer.top - 1)) {
+          return `предок ${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0]} (overflow ${style.overflowY}) показывает ${Math.max(0, Math.round(Math.min(box.bottom, outer.bottom) - Math.max(box.top, outer.top)))} из ${Math.round(box.height)} px`;
+        }
+        if (clips(style.overflowX) && (box.right > outer.right + 1 || box.left < outer.left - 1)) {
+          return `предок ${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0]} (overflow-x ${style.overflowX}) срезает по ширине`;
+        }
+        if (scrolls(style.overflowY) || scrolls(style.overflowX)) break;
+      }
+      return null;
+    };
+    for (const line of wanted) {
+      const needle = bare(line);
+      if (!needle) continue;
+      const holders = [...root.querySelectorAll("*")].filter((el) => bare(el.textContent).includes(needle));
+      const deepest = holders.filter((el) => !holders.some((other) => other !== el && el.contains(other)));
+      if (deepest.length === 0) return `«${line}»: нет на странице`;
+      const problems = deepest.map(problem);
+      if (problems.every(Boolean)) return `«${line}»: ${problems[0]}`;
+    }
+    return null;
+  }, lines);
 }
 // Факты пробы: строки pkg_jq=…, kernel=… из вывода bash.
 function probeFacts(events, n) {
@@ -332,6 +439,7 @@ async function networkTurns(sessionId, label, evName) {
   return {
     file,
     code: netText.match(/^net_example=(\d{3})/m)?.[1],
+    allowedCode: netText.match(/^net_allowed=(\d{3})/m)?.[1],
     broken: BROKEN_EXEC.test(netText),
     netText: plain(netText).slice(0, 220),
     alive: aliveText.includes(`VERIFY_OK_${aliveN}`),
@@ -344,9 +452,9 @@ async function sendTurn(sessionId, kind, n) {
   });
 }
 // Доступен ли внешний хост с самого хоста: без этого проверка сети VM не имеет базы.
-async function hostReach() {
+async function hostReach(url = NET_PROBE_URL) {
   try {
-    const res = await fetch(NET_PROBE_URL, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000) });
     return String(res.status);
   } catch (error) {
     return `000 (${error.cause?.code ?? error.name})`;
@@ -354,7 +462,7 @@ async function hostReach() {
 }
 const describeNet = (n) => n.broken
   ? `поток exec BoxLite оборвался: «${n.netText}»`
-  : `net_example=${n.code ?? "нет строки"}`;
+  : `net_example=${n.code ?? "нет строки"}, net_allowed=${n.allowedCode ?? "нет строки"}`;
 
 async function waitTurnIdle(sessionId, n, timeout, label) {
   const t0 = Date.now();
@@ -398,9 +506,11 @@ async function turnChecks(prefix, events, n, evidenceFile) {
       a.pair.linkedById ? "проверено" : "внимание", evidenceFile,
       a.pair.linkedById ? "" : "связь по id не совпала, пара найдена по порядку событий");
     const noise = textOf(a.pair.toolResult.content).split("\n").filter((l) => /\u001b\[|libcontainer::/.test(l));
-    record(`${prefix}.tool_output_clean`, "в выводе bash нет служебных строк рантайма песочницы (ANSI, libcontainer)",
-      noise.length === 0 ? "проверено" : "внимание", evidenceFile,
-      noise.length === 0 ? "" : `строк ${noise.length}, первая: ${plain(noise[0]).slice(0, 160)}; stderr рантайма VM попадает в tool_result, его видят модель и пользователь`);
+    // Дефект исправлен 2026-10-16 (stripRuntimeNoise в litebox.ts), поэтому провал, а не «внимание».
+    await check(`${prefix}.tool_output_clean`, "в выводе bash нет служебных строк рантайма песочницы (ANSI, libcontainer)", () => {
+      assert(noise.length === 0, `строк ${noise.length}, первая: ${plain(noise[0]).slice(0, 160)}; stderr рантайма VM попадает в tool_result (stripRuntimeNoise в packages/sandbox-adapter-litebox/src/litebox.ts)`);
+      return evidenceFile;
+    });
   }
   const vmKernel = a.pair ? textOf(a.pair.toolResult.content).match(/kernel=(\S+)/)?.[1] : undefined;
   await check(`${prefix}.in_vm`, "команда выполнена в VM, а не на хосте (ядро VM ≠ ядро хоста)", () => {
@@ -543,13 +653,13 @@ async function sandboxEvidence(prefix, sessionId) {
     assert(chain.includes(serverNode), `цепочка ${chain.join(" <- ")} не содержит server-node ${serverNode}`);
     return `box ${last.boxId}: ${chain.map((p) => `${p}(${procComm(p)})`).join(" <- ")}`;
   });
-  // litebox-sandbox пишет «creating box (image=…)» модульным логгером, но на main-node
-  // этот логгер — заглушка: модуль адаптера грузится в components.ts:90 раньше
-  // setRootLogger (modules/node-foundation.ts:98), а getLogger вызывается при импорте (litebox.ts:34).
+  // litebox-sandbox пишет «creating box (image=…)» логгером, который берётся в момент
+  // записи (moduleLogger в litebox.ts), поэтому строка попадает в корневой логгер main-node.
   const creatingBox = serverLogLines().filter((l) => l.includes("creating box (image=")).length;
-  record(`${prefix}.server_log_box`, "в логе сервера есть «creating box (image=…)» от litebox-sandbox",
-    creatingBox >= minStarted ? "проверено" : "внимание", run.SERVER_LOG,
-    creatingBox >= minStarted ? "" : `строк ${creatingBox}: логгер litebox-sandbox на main-node не подключён (litebox.ts:34, components.ts:90 раньше node-foundation.ts:98); старт VM доказан проверкой ${prefix}.vm_process`);
+  await check(`${prefix}.server_log_box`, "в логе сервера есть «creating box (image=…)» от litebox-sandbox", () => {
+    assert(creatingBox >= minStarted, `строк ${creatingBox}, нужно ${minStarted}: логгер litebox-sandbox не дошёл до лога сервера (moduleLogger в packages/sandbox-adapter-litebox/src/litebox.ts)`);
+    return `${run.SERVER_LOG}: строк ${creatingBox}`;
+  });
 }
 
 async function archiveAndProveStop(prefix, sessionId) {
@@ -640,9 +750,10 @@ async function stepLogin() {
     assert(me.tenant?.id === user.tenant_id, `tenant ${me.tenant?.id}`);
     return "api/02-get-session-browser.json, api/02-me-browser.json";
   });
-  record("auth.me_email", "/v1/oma/me отдаёт почту пользователя",
-    me.user?.email === user.email ? "проверено" : "внимание", "api/02-me-browser.json",
-    me.user?.email === user.email ? "" : "email пустой: main-node подключает buildMeRoutes без loadUser (apps/main-node/src/modules/node-http.ts:444-475)");
+  await check("auth.me_email", "/v1/oma/me отдаёт почту пользователя", () => {
+    assert(me.user?.email === user.email, `email «${me.user?.email ?? ""}»: проверьте loadUser в buildMeRoutes (apps/main-node/src/modules/node-http.ts)`);
+    return "api/02-me-browser.json";
+  });
 }
 
 async function stepCreateEnvironment() {
@@ -725,7 +836,7 @@ async function startProbeSession(title) {
 
 async function stepProbeEnvironment() {
   // Обходной путь: в API и консоли нет проверки окружения, песочница ленивая
-  // (apps/main-node/src/lib/node-session-router.ts:41). Технический агент по API,
+  // (apps/main-node/src/lib/node-session-router.ts, NodeSessionRouter.init). Технический агент по API,
   // сессия на этом окружении и одна команда bash доказывают, что VM поднимается.
   const session = await startProbeSession(names.probeSession);
   ids.probeSession = session.id;
@@ -762,6 +873,7 @@ async function stepProbeEnvironment() {
   // Сеть при настройке по умолчанию («Без ограничений»): внешний хост должен быть доступен,
   // а VM должна отвечать и после запроса.
   ids.hostNet = await hostReach();
+  ids.hostAllowed = await hostReach(NET_ALLOWED_URL);
   const net = await networkTurns(session.id, "проба сети", "21b-probe-network-events");
   ids.baselineNet = net;
   if (!reachable(ids.hostNet)) {
@@ -771,15 +883,15 @@ async function stepProbeEnvironment() {
     await check("env.probe.network", `сеть «Без ограничений»: ${NET_PROBE_URL} доступен из VM (с хоста код ${ids.hostNet}), VM работает после запроса`, () => {
       assert(reachable(net.code), `из VM: ${describeNet(net)}`);
       assert(net.alive, `VM после сетевого запроса не отвечает: «${net.aliveText}»`);
-      return `${net.file}: net_example=${net.code}`;
+      return `${net.file}: net_example=${net.code}, net_allowed=${net.allowedCode}`;
     });
   }
   if (!KEEP_SESSION) await archiveAndProveStop("env.probe", session.id);
 }
 
 async function stepConfigureEnvironment() {
-  // Карточка окружения (env-detail): описание, сеть «Ограниченный» без разрешённых хостов
-  // (менеджерам пакетов сеть разрешена) и пакет apt jq. Затем сверка через API.
+  // Карточка окружения (env-detail): описание, сеть «Ограниченный» с одним разрешённым
+  // хостом (менеджерам пакетов сеть тоже разрешена) и пакет apt jq. Затем сверка через API.
   await openSection("Окружения", "Окружений пока нет");
   await shot("environments-list-with-env");
   await tableRow(names.env).click();
@@ -791,6 +903,7 @@ async function stepConfigureEnvironment() {
   await page.getByRole("option", { name: "Ограниченный", exact: true }).click();
   const pmSwitch = page.getByRole("switch", { name: "Разрешить сетевой доступ менеджерам пакетов" });
   if ((await pmSwitch.getAttribute("aria-checked")) !== "true") await pmSwitch.click();
+  await page.getByRole("textbox", { name: "Разрешённые хосты" }).fill(NET_ALLOWED_HOST);
   await page.getByRole("button", { name: "Добавить пакет" }).click();
   await page.getByRole("combobox", { name: "Менеджер пакетов" }).last().click();
   await page.getByRole("option", { name: ENV_PACKAGE.manager, exact: true }).click();
@@ -802,12 +915,12 @@ async function stepConfigureEnvironment() {
   const ariaFile = await aria("environment-saved");
   const env = await api("GET", `/v1/environments/${ids.environment}`);
   saveJson("12-environment-configured", env);
-  await check("env.settings_saved", `карточка окружения сохранила описание, сеть limited и пакет ${ENV_PACKAGE.manager} ${ENV_PACKAGE.name} (GET /v1/environments/:id)`, () => {
+  await check("env.settings_saved", `карточка окружения сохранила описание, сеть limited с хостом ${NET_ALLOWED_HOST} и пакет ${ENV_PACKAGE.manager} ${ENV_PACKAGE.name} (GET /v1/environments/:id)`, () => {
     const net = env.config?.networking ?? {};
     assert(env.description === description, `description ${JSON.stringify(env.description)}`);
     assert(net.type === "limited", `networking.type ${net.type}`);
     assert(net.allow_package_managers === true, `allow_package_managers ${net.allow_package_managers}`);
-    assert(Array.isArray(net.allowed_hosts) && net.allowed_hosts.length === 0, `allowed_hosts ${JSON.stringify(net.allowed_hosts)}`);
+    assert(JSON.stringify(net.allowed_hosts) === JSON.stringify([NET_ALLOWED_HOST]), `allowed_hosts ${JSON.stringify(net.allowed_hosts)}`);
     assert((env.config?.packages?.[ENV_PACKAGE.manager] ?? []).includes(ENV_PACKAGE.name), `packages ${JSON.stringify(env.config?.packages)}`);
     return `api/12-environment-configured.json, ${ariaFile}`;
   });
@@ -832,7 +945,8 @@ async function stepProbeSettings() {
   const base = ids.baseline ?? {};
   if (!facts.ran) {
     record("env.packages_applied", `пакет ${ENV_PACKAGE.manager} ${ENV_PACKAGE.name} из настроек окружения установлен в VM`, "не проверено", evFile, "проба после настроек не выполнилась");
-    record("env.networking_limited_applied", "сеть «Ограниченный» без разрешённых хостов закрывает внешний хост в VM", "не проверено", evFile, "проба после настроек не выполнилась");
+    record("env.networking_limited_applied", "сеть «Ограниченный» закрывает неразрешённый внешний хост в VM", "не проверено", evFile, "проба после настроек не выполнилась");
+    record("env.networking_allowed_host", `сеть «Ограниченный» пропускает разрешённый пользователем ${NET_ALLOWED_HOST} из VM`, "не проверено", evFile, "проба после настроек не выполнилась");
   } else {
     if (base.pkg !== "missing") {
       record("env.packages_applied", `пакет ${ENV_PACKAGE.manager} ${ENV_PACKAGE.name} из настроек окружения установлен в VM`, "не проверено", evFile,
@@ -840,12 +954,12 @@ async function stepProbeSettings() {
     } else {
       await check("env.packages_applied", `пакет ${ENV_PACKAGE.manager} ${ENV_PACKAGE.name} из настроек окружения установлен в VM новой сессии`, () => {
         assert(facts.pkg === "install ok installed",
-          `pkg_${ENV_PACKAGE.name}=${facts.pkg}: пакеты окружения на main-node не ставятся; установка (ensureSetupApplied) вызывается только в Cloudflare SessionDO (apps/agent/src/runtime/session-do.ts:3608), в apps/main-node ссылок на неё нет`);
+          `pkg_${ENV_PACKAGE.name}=${facts.pkg}: пакеты окружения не встали; путь: buildSandbox в createManagedNodeRuntime (apps/main-node/src/modules/node-managed.ts) → initializeBox в packages/sandbox-adapter-litebox/src/litebox.ts (закрепление хостов, установка); ошибку установки ищите в api/22-settings-probe-events.json`);
         return evFile;
       });
     }
     const net = await networkTurns(session.id, "проба сети после настроек", "22b-settings-network-events");
-    const title = `сеть «Ограниченный» без разрешённых хостов: ${NET_PROBE_URL} из VM недоступен (curl даёт 000), VM работает после запроса`;
+    const title = `сеть «Ограниченный»: неразрешённый ${NET_PROBE_URL} из VM недоступен (curl даёт 000), VM работает после запроса`;
     if (!reachable(ids.hostNet)) {
       record("env.networking_limited_applied", title, "не проверено", net.file,
         `с хоста ${NET_PROBE_URL} недоступен (${ids.hostNet}): блокировку не отличить от отсутствия сети; из VM: ${describeNet(net)}`);
@@ -853,11 +967,23 @@ async function stepProbeSettings() {
       await check("env.networking_limited_applied", title, () => {
         const baseNote = ids.baselineNet ? `; при «Без ограничений» было: ${describeNet(ids.baselineNet)}` : "";
         assert(!reachable(net.code),
-          `net_example=${net.code}: VM ходит во внешнюю сеть; LiteBox всегда создаётся с network: { mode: "enabled" } (packages/sandbox-adapter-litebox/src/litebox.ts:325)`);
+          `net_example=${net.code}: VM ходит во внешнюю сеть; сеть окружения переводит в allowNet liteBoxNetwork (packages/sandbox-adapter-litebox/src/litebox.ts), строка «creating box (… network=…)» в логе сервера`);
         assert(!net.broken && net.code === "000",
-          `${describeNet(net)}: блокировку не увидеть, запрос рвёт VM${baseNote}; LiteBox создаётся с network: { mode: "enabled" } независимо от настроек (litebox.ts:325)`);
+          `${describeNet(net)}: блокировку не увидеть, запрос рвёт VM${baseNote}; обход падения boxlite-shim на DNS — applyShimDnsWorkaround (packages/sandbox-adapter-litebox/src/litebox.ts)`);
         assert(net.alive, `VM после сетевого запроса не отвечает: «${net.aliveText}»`);
         return `${net.file}: net_example=${net.code}`;
+      });
+    }
+    const allowedTitle = `сеть «Ограниченный»: разрешённый пользователем ${NET_ALLOWED_HOST} из VM отвечает 200, как с хоста`;
+    if (ids.hostAllowed !== "200") {
+      record("env.networking_allowed_host", allowedTitle, "не проверено", net.file,
+        `с хоста ${NET_ALLOWED_URL} даёт ${ids.hostAllowed}, а не 200: сравнивать не с чем; из VM: ${describeNet(net)}`);
+    } else {
+      await check("env.networking_allowed_host", allowedTitle, () => {
+        assert(!net.broken, `${describeNet(net)}: запрос рвёт VM`);
+        assert(net.allowedCode === "200",
+          `net_allowed=${net.allowedCode ?? "нет строки"}: разрешённый хост из VM недоступен; хост идёт в allowNet (liteBoxNetwork) и закрепляется в /etc/hosts VM (pinAllowedHosts, строка «pinned N allowed host(s)» в логе сервера), оба в packages/sandbox-adapter-litebox/src/litebox.ts`);
+        return `${net.file}: net_allowed=${net.allowedCode}, net_example=${net.code}`;
       });
     }
   }
@@ -965,7 +1091,7 @@ async function stepCreateSession() {
   const heading = page.getByRole("main").getByRole("heading", { level: 1 }).first();
   await heading.waitFor();
   await page.getByRole("textbox", { name: "Сообщение" }).waitFor();
-  await shot("session-new");
+  const sessionNewShot = await shot("session-new");
   cover("session-create");
   const session = await api("GET", `/v1/sessions/${ids.session}`);
   saveJson("40-session-created", session);
@@ -979,13 +1105,23 @@ async function stepCreateSession() {
   await check("session.title_saved", "название из окна «Новая сессия» сохранено (API title и h1 страницы)", () => {
     assert(session.title === names.session && headingText === names.session,
       `API title=${JSON.stringify(session.title)}, h1=${JSON.stringify(headingText)}; введено ${names.session}. ` +
-      "Вероятная причина: SessionsList.tsx:865-867 переопределяет name у {...register(\"title\")}, а onChange react-hook-form ищет поле по event.target.name");
+      "Поле ведёт Controller (pages/SessionsList.tsx, поле title окна «Новая сессия»); onChange react-hook-form register() ищет поле по event.target.name, поэтому name=\"oma-session-title\" поверх register() теряет ввод");
     return "api/40-session-created.json";
   });
-  const statusPill = await page.getByText(/^(Ожидает|Выполняется)$/).first().textContent().catch(() => null);
-  record("session.initial_status", "новая сессия без сообщений в статусе idle («Ожидает»)",
-    session.status === "idle" ? "проверено" : "внимание", "api/40-session-created.json",
-    session.status === "idle" ? "" : `status=${session.status}, в шапке «${statusPill ?? "?"}»: сервер создаёт сессию со status "running" (packages/managed-agents-application/src/sessions/application.ts:322), консоль показывает «Агент работает…» и кнопку «Поставить сообщение в очередь»`);
+  // Сервер создаёт сессию idle, если initialEvents не запускают ход
+  // (packages/managed-agents-application/src/sessions/application.ts, admitsBootstrapTurn).
+  // Консоль берёт статус из GET /v1/sessions/:id: при running шапка «Выполняется»
+  // и вечное «Агент работает…» в пустом разговоре.
+  await check("session.initial_status", "новая сессия без сообщений: API status idle, в шапке «Ожидает», в разговоре нет «Агент работает…»", async () => {
+    assert(session.status === "idle", `API status=${session.status}, ожидался idle`);
+    await page.getByRole("main").getByRole("heading", { level: 1, name: names.session }).waitFor({ timeout: 10_000 })
+      .catch(() => {});
+    const pill = (await page.getByText(/^(Ожидает|Выполняется)$/).first().textContent().catch(() => null))?.trim();
+    assert(pill === "Ожидает", `в шапке «${pill ?? "нет плашки статуса"}», ожидалось «Ожидает»`);
+    const working = await page.getByText("Агент работает…").count();
+    assert(working === 0, `до отправки в разговоре «Агент работает…» (${working} шт.)`);
+    return `api/40-session-created.json; ${sessionNewShot}`;
+  });
   await check("session.header_ui", "в шапке сессии видны агент и окружение", async () => {
     const agentBadge = page.locator(`[title="Агент: ${names.agent}"], [title="Агент: ${ids.agent}"]`);
     const envBadge = page.locator(`[title="Окружение: ${names.env}"], [title="Окружение: ${ids.environment}"]`);
@@ -1000,14 +1136,16 @@ async function stepAgentTurn() {
   const prompt = promptFor("run", nonce);
   await box.fill(prompt);
   await shot("turn-typed");
-  // Подпись кнопки зависит от статуса сессии (SessionComposer.tsx:163-166): при status=running
+  // Подпись кнопки зависит от статуса сессии (ComposerPrimaryAction в SessionComposer.tsx): при status=running
   // это «Поставить сообщение в очередь». Нажимаем ту кнопку, которую видит пользователь.
   const sendButton = page.getByRole("button", { name: /^(Отправить сообщение|Поставить сообщение в очередь)$/ }).first();
   await sendButton.waitFor();
   const sendLabel = await sendButton.getAttribute("aria-label");
-  record("run.ui_send_label", "кнопка отправки в новой сессии называется «Отправить сообщение»",
-    sendLabel === "Отправить сообщение" ? "проверено" : "внимание", screens.at(-1).file,
-    sendLabel === "Отправить сообщение" ? "" : `подпись «${sendLabel}»: консоль считает новую сессию выполняющейся (см. session.initial_status)`);
+  await check("run.ui_send_label", "кнопка отправки в новой сессии называется «Отправить сообщение»", () => {
+    assert(sendLabel === "Отправить сообщение",
+      `подпись «${sendLabel}»: консоль считает новую сессию выполняющейся (см. session.initial_status)`);
+    return screens.at(-1).file;
+  });
   // Тот же поток событий, что слушает консоль: что приходит вживую после отправки.
   const stream = await captureStream(ids.session);
   await sendButton.click();
@@ -1027,7 +1165,7 @@ async function stepAgentTurn() {
   });
   const events = await waitTurnIdle(ids.session, nonce, TURN_TIMEOUT, "ход агента");
   const evFile = saveJson("41-session-events", events);
-  const { vmKernel } = await turnChecks("run", events, nonce, evFile);
+  const { a: runTurn, vmKernel } = await turnChecks("run", events, nonce, evFile);
   ids.vmKernel = vmKernel;
 
   const article = page.locator("article[data-turn-id]").last();
@@ -1055,14 +1193,104 @@ async function stepAgentTurn() {
   const sseFile = saveJson("41-session-stream", stream.seen);
   const sseUser = stream.seen.events.filter((e) => e.type === "user.message" && String(e.text).includes(`nonce=${nonce}`));
   const sseTypes = [...new Set(stream.seen.events.map((e) => e.type ?? e.sse))];
-  record("run.sse_user_message", "поток /events/stream после отправки отдаёт user.message с маркером (консоль строит ход из потока)",
-    sseUser.length > 0 ? "проверено" : "внимание", sseFile,
-    sseUser.length > 0 ? "" : `HTTP ${stream.seen.status}, событий ${stream.seen.events.length}, типы: ${sseTypes.join(", ") || "нет"}${stream.seen.error ? `, ошибка ${stream.seen.error}` : ""}`);
+  // Консоль показывает реплику сразу (оптимистично), поэтому регресс серверного echo
+  // user.message ловит только эта проверка: провал, а не «внимание».
+  await check("run.sse_user_message", "поток /events/stream после отправки отдаёт user.message с маркером (консоль строит ход из потока)", () => {
+    assert(sseUser.length > 0, `HTTP ${stream.seen.status}, событий ${stream.seen.events.length}, типы: ${sseTypes.join(", ") || "нет"}${stream.seen.error ? `, ошибка ${stream.seen.error}` : ""}`);
+    return sseFile;
+  });
+
+  // Ответ хода целиком. Библиотека рисует сообщения ассистента через streamPrefixes
+  // (@openma/common, dist/chat-ui/components.js:537): считает их накопительными чанками ACP
+  // и передаёт prefixSkip = сумма длин предыдущих сообщений хода. У канонических событий
+  // каждое agent.message полное, и итоговый ответ терял начало (дефект 2026-10-16).
+  // Фейковая модель в ходе 1 пишет текст перед tool_use, поэтому сообщений в ходе два.
+  // Блок процесса раскрывается переходом height 220 мс (.reasoning-collapse-inner, overflow
+  // hidden): без ожидания снимок и clippedLine видят наполовину раскрытый блок (прогон 20261016-023057).
+  const openProcess = async () => {
+    const trigger = article.locator("[data-chat-reasoning-trigger]").first();
+    if ((await trigger.count()) && (await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+    await settleAnimations(article);
+  };
+  await check("run.answer_full", "ответ хода виден целиком: [data-session-turn-answer] содержит весь итоговый agent.message, первое сообщение хода видно целиком, тексты не повторяются", async () => {
+    const messages = (runTurn.messages ?? []).map((m) => textOf(m.content));
+    assert(messages.length > 0, "в журнале нет agent.message после реплики");
+    const finalText = messages.at(-1);
+    const lead = messages.length > 1 ? messages[0] : null;
+    if (FAKE) {
+      const reqs = fakeRequests(nonce);
+      const modelLead = reqs.find((r) => r.decision === "tool_use")?.reply_text ?? null;
+      const modelFinal = reqs.find((r) => r.decision === "final_text")?.reply_text ?? null;
+      assert(modelLead && modelLead.length >= 40,
+        `фейковая модель не отдала текст перед tool_use (reply_text ${JSON.stringify(modelLead)}): без двух сообщений в ходе срез по префиксу не виден, см. leadText в scripts/fake-model.mjs`);
+      assert(modelFinal?.includes("```") && modelFinal.includes(`VERIFY_DONE_${nonce}`),
+        `итоговый текст фейковой модели без блока кода с VERIFY_DONE_${nonce}: ${JSON.stringify(modelFinal)}`);
+      assert(squash(finalText) === squash(modelFinal), `последний agent.message в журнале не равен ответу модели: ${JSON.stringify(finalText.slice(0, 160))}`);
+      assert(lead !== null && squash(lead) === squash(modelLead),
+        `первый agent.message хода не равен тексту модели перед tool_use: ${JSON.stringify((lead ?? "нет").slice(0, 160))}`);
+    }
+    const answers = article.locator("[data-session-turn-answer]");
+    await answers.first().waitFor({ timeout: 15_000 });
+    const answerText = (await answers.allInnerTexts()).join("\n");
+    writeFileSync(join(EV, "api", "46-turn-answer-text.txt"), `${answerText}\n`);
+    const lost = missingInOrder(markdownLines(finalText), squash(answerText));
+    assert(!lost,
+      `в [data-session-turn-answer] нет строки итогового ответа «${lost}»; на странице «${squash(answerText).slice(0, 160)}» (api/46-turn-answer-text.txt). ` +
+      `Начало срезано на длину первого сообщения (${lead?.length ?? 0} символов) — это prefixSkip из streamPrefixes (@openma/common dist/chat-ui/components.js:537) в renderAssistant (components/session/CanonicalSessionTurn.tsx)`);
+    // Первое сообщение хода стоит в блоке процесса: оно видно после раскрытия «Работал N с».
+    await openProcess();
+    const leadLines = lead ? markdownLines(lead) : [];
+    let pageText = squash(await article.innerText());
+    for (let i = 0; i < 20 && missingInOrder(leadLines, pageText); i++) {
+      await sleep(250);
+      pageText = squash(await article.innerText());
+    }
+    const lostLead = missingInOrder(leadLines, pageText);
+    assert(!lostLead, `первое сообщение хода не видно целиком после раскрытия [data-chat-reasoning-trigger]: нет «${lostLead}»`);
+    if (FAKE) {
+      // Склейка сообщений или чанки рядом с целым сообщением дают повтор текста.
+      const finalLine = markdownLines(finalText)[0];
+      const leadCount = occurrences(pageText, squash(lead));
+      const finalCount = occurrences(pageText, finalLine);
+      assert(leadCount === 1 && finalCount === 1,
+        `повтор текста в ходе: первое сообщение ${leadCount} раз, строка «${finalLine}» итогового ответа ${finalCount} раз, ожидалось по 1`);
+    }
+    // innerText не видит overflow: проверяем, что строки на экране не срезаны.
+    const clipped = await clippedLine(article, [...leadLines, ...markdownLines(finalText)]);
+    assert(!clipped, `текст хода на экране срезан: ${clipped}`);
+    return `${await shot("turn-answer-full")}, api/46-turn-answer-text.txt; сообщений в ходе ${messages.length}, первое ${lead?.length ?? 0} символов, итоговое ${finalText.length}`;
+  });
+  // «Работал N с»: библиотека считает секунды по turn.startedAt/endedAt
+  // (agentUITurnElapsedSeconds, @openma/common dist/agent-ui/presentation.js:68), без них 0.
+  await check("run.turn_duration", "подпись длительности хода («Работал N с») не «0 с», если ход длился дольше секунды, и не больше длительности по журналу", async () => {
+    const started = Date.parse(runTurn.userMessage?.processed_at ?? "");
+    const ended = Date.parse(runTurn.idle?.processed_at ?? "");
+    assert(Number.isFinite(started) && Number.isFinite(ended),
+      `нет processed_at: user.message ${runTurn.userMessage?.processed_at}, session.status_idle ${runTurn.idle?.processed_at}`);
+    const actual = (ended - started) / 1000;
+    const trigger = article.locator("[data-chat-reasoning-trigger]").first();
+    const triggerText = (await trigger.count()) ? squash(await trigger.textContent()) : "";
+    await openProcess();
+    const labels = durationLabels(`${triggerText}\n${await article.innerText()}`);
+    const turnLabel = durationLabels(triggerText)[0] ?? null;
+    const evidence = `ход ${actual.toFixed(1)} с по журналу (user.message → session.status_idle), подпись «${triggerText || "нет"}»`;
+    if (actual > 1) {
+      const zeros = [...new Set(labels.filter((l) => l.seconds === 0).map((l) => l.label))];
+      assert(zeros.length === 0,
+        `${evidence}: на странице ${zeros.map((z) => `«${z}»`).join(", ")}. «Работал» — labels.workedFor(agentUITurnElapsedSeconds): projectCanonicalSessionTurn (components/session/CanonicalSessionTurn.tsx) не задаёт startedAt/endedAt; «Думал 0 с» — labels.thoughtFor(0) из AgentUITurnView`);
+    }
+    if (turnLabel) {
+      assert(turnLabel.seconds <= Math.ceil(actual) + 2, `${evidence}: подпись больше длительности хода (время идёт и после конца хода?)`);
+    }
+    return evidence;
+  });
+  cover("session-answer");
 
   await check("run.ui_tool_card", "в разговоре раскрывается карточка bash с выводом команды", async () => {
     const reasoning = article.locator("[data-chat-reasoning-trigger]").first();
     if ((await reasoning.count()) && (await reasoning.getAttribute("aria-expanded")) !== "true") await reasoning.click();
-    const group = article.getByRole("button", { name: /^Использовано \d+ инструмент/ }).first();
+    // «Использован 1 инструмент, 2 вызова» (bash дважды) или «Использовано 2 инструмента».
+    const group = article.getByRole("button", { name: /^Использован[о]? \d+ инструмент/ }).first();
     if (await group.count()) await group.click();
     const trigger = article.locator('[data-slot="collapsible-trigger"]', { hasText: "bash" }).first();
     await trigger.waitFor({ timeout: 15_000 });
@@ -1080,7 +1308,7 @@ async function stepAgentTurn() {
     if (text.includes("\\n")) problems.push("литералы \\n вместо переносов");
     if (text.includes("\\u001b")) problems.push("литералы \\u001b (ANSI)");
     if (!text.split("\n").some((line) => line.trim().startsWith("kernel="))) problems.push("kernel= не на отдельной строке");
-    assert(problems.length === 0, `${problems.join("; ")} (api/45-tool-card-text.txt). Причина: CanonicalSessionTurn.tsx:140-147 делает JSON.stringify(rawOutput) для массива content-блоков, а ai-elements/tool.tsx:187-209 показывает строку, начинающуюся с «[», как JSON`);
+    assert(problems.length === 0, `${problems.join("; ")} (api/45-tool-card-text.txt). Текст для карточки готовит formatToolOutput (lib/tool-output.ts, вызов в renderTool из managedTurnSlots, components/session/CanonicalSessionTurn.tsx), JSON карточка рисует только если текст разбирается JSON.parse (isJsonText в components/ai-elements/tool.tsx)`);
     return "api/45-tool-card-text.txt";
   });
   await check("run.ui_timeline", "на вкладке «Хронология» есть строка bash", async () => {
@@ -1145,9 +1373,12 @@ function featureEntries() {
   const dir = join(SKILL_DIR, "features");
   const out = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "README.md").sort()) {
-    const section = readFileSync(join(dir, file), "utf8").split(/^## /m).find((s) => s.startsWith("Sub-features"));
+    const text = readFileSync(join(dir, file), "utf8");
+    // Подфункции отдельных сценариев (пометка «<!-- scenario: … -->») считает их сценарий.
+    if (text.includes("<!-- scenario: ")) continue;
+    const section = text.split(/^## /m).find((s) => s.startsWith("Sub-features"));
     for (const line of (section ?? "").split("\n")) {
-      const m = line.match(/^- `([a-z0-9-]+)` — (.+)$/);
+      const m = line.match(/^- `([a-z0-9-]+)`(?: —|:) (.+)$/);
       if (m) out.push({ id: m[1], desc: m[2], file });
     }
   }

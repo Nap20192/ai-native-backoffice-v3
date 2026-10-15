@@ -82,11 +82,11 @@ describe("Login OAuth and layout", () => {
     const { container } = renderLogin();
 
     expect(
-      screen.getByRole("heading", { name: "Вход в openma" }),
+      screen.getByRole("heading", { name: "Вход в консоль агентов" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Почта")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("complementary", { name: "Openma platform story" }),
+      screen.queryByRole("complementary", { name: "О платформе" }),
     ).not.toBeInTheDocument();
 
     await user.click(
@@ -136,5 +136,30 @@ describe("Login OAuth and layout", () => {
       screen.getByRole("heading", { name: "Создание учётной записи" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Имя")).toBeInTheDocument();
+  });
+
+  it("names the product without OpenMA marks on the sign-in page", () => {
+    const { container } = renderLogin();
+
+    expect(container.textContent).not.toMatch(/openma/i);
+    expect(screen.queryByRole("img", { name: /openma/i })).toBeNull();
+    expect(container.querySelector("svg[viewBox='240 244 548 454']")).toBeNull();
+    // Название стоит на панели слева, знака рядом нет.
+    const panel = screen.getByRole("region", { name: "О платформе" });
+    expect(within(panel).getByText("Консоль агентов")).toBeInTheDocument();
+  });
+
+  it("words the account creation and email sign-in steps without the product name", async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    await user.click(screen.getByRole("button", { name: "Продолжить с почтой" }));
+    expect(screen.getByText("Впервые здесь?")).toBeInTheDocument();
+    expect(screen.queryByText(/Впервые в /)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Зарегистрироваться" }));
+    expect(screen.getByRole("heading", { name: "Создание учётной записи" })).toBeInTheDocument();
+    expect(screen.getByText("Регистрация")).toBeInTheDocument();
+    expect(screen.queryByText(/Начните работу/)).toBeNull();
   });
 });

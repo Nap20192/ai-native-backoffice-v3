@@ -1,0 +1,9 @@
+import {it,expect} from 'vitest';
+import {parseQuery,decodeCursor,encodeCursor,parseLimitsBody} from '../src/lib/analytics/query-params.js';
+import {NOW} from './_helpers/analytics-seed.js';
+it('defaults to thirty UTC days and clamps future end',()=>{expect(parseQuery({},'usage',NOW)).toMatchObject({from:'2026-09-17',to:'2026-10-16',bucket:'day',group_by:'model'});expect(parseQuery({to:'2026-12-31'},'usage',NOW).to).toBe('2026-10-16');});
+it.each([{from:'2026-01-01'},{from:'2026-10-09',bucket:'hour'},{from:'2026-02-30'},{from:'2026-10-17'},{bucket:'week'},{group_by:'bad'},{agent_id:Array(51).fill('x').join(',')},{model:'x'.repeat(201)},{format:'xml'}])('rejects invalid usage params %j',q=>expect(()=>parseQuery(q,'usage',NOW)).toThrow());
+it.each([{limit:'0'},{limit:'201'},{limit:'1.2'},{status:'bad'},{cursor:'bad'},{q:'abc'}])('rejects invalid journal params %j',q=>expect(()=>parseQuery(q,'model_calls',NOW)).toThrow());
+it('validates route specific options',()=>{expect(()=>parseQuery({group_by:'card'},'cache',NOW)).toThrow();expect(()=>parseQuery({metric:'x'},'limit',NOW)).toThrow();expect(()=>parseQuery({by:'x'},'limit',NOW)).toThrow();expect(parseQuery({metric:'rpm',by:'session'},'limit',NOW)).toMatchObject({metric:'rpm',by:'session'});});
+it('cursor roundtrips and rejects malformed payloads',()=>{expect(decodeCursor(encodeCursor({e:123,i:'sevt_1'}))).toEqual({e:123,i:'sevt_1'});for(const value of ['!!!',Buffer.from('{}').toString('base64url'),Buffer.from('{"e":"1","i":"x"}').toString('base64url')])expect(()=>decodeCursor(value)).toThrow();});
+it.each([{}, {requests_per_minute:0,input_tokens_per_minute:null,output_tokens_per_minute:null},{requests_per_minute:1,input_tokens_per_minute:null,output_tokens_per_minute:null,extra:1}])('rejects invalid limit body %j',body=>expect(()=>parseLimitsBody(body)).toThrow());

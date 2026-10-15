@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { useCallback, useState, type CSSProperties, type FormEvent } from "react";
 import {
-  CornerDownLeftIcon,
+  ArrowUpIcon,
   LoaderCircleIcon,
   PlusIcon,
   SquareIcon,
@@ -10,14 +10,13 @@ import {
 import {
   PromptInput,
   PromptInputButton,
-  PromptInputFooter,
   PromptInputSubmit,
   PromptInputTextarea,
-  PromptInputTools,
   usePromptInputAttachments,
   type PromptInputMessage,
   type PromptInputProps,
 } from "../ai-elements/prompt-input";
+import "./transcript.css";
 
 export interface SessionComposerProps {
   interrupting: boolean;
@@ -31,14 +30,15 @@ export interface SessionComposerProps {
   sending: boolean;
 }
 
-/** Кнопки поля ввода 32px вместо 28px общего стиля: цель нажатия не меньше
- *  32px (правило 13 DDC), высоту карточки она не меняет. */
+/** Кнопки поля ввода 32px: цель нажатия не меньше 32px (правило 13 DDC). */
 const COMPOSER_VARS = { "--composer-control-height": "32px" } as CSSProperties;
 
 /**
- * Managed-session composer with the same interaction shape as Backchat:
- * one compact card, a 48px writing area, a bottom tool row, and one primary
- * action slot that switches between send/queue and stop.
+ * Поле ввода сессии в одну строку 32px, как в консоли Claude: «+» слева
+ * внутри, поле, круглая кнопка отправки справа внутри. Кнопка одна на два
+ * действия и меняется между отправкой, очередью и остановкой. Длинный
+ * текст растит поле вверх, кнопки остаются у нижней кромки. Геометрию
+ * строки задаёт transcript.css (класс session-composer-line).
  */
 export function SessionComposer({
   interrupting,
@@ -61,7 +61,7 @@ export function SessionComposer({
   return (
     <PromptInput
       accept="image/*"
-      className="session-composer"
+      className="session-composer session-composer-line"
       style={COMPOSER_VARS}
       globalDrop
       maxFiles={10}
@@ -70,27 +70,27 @@ export function SessionComposer({
       onError={onError}
       onSubmit={handleSubmit}
     >
-      <ComposerAttachmentStrip disabled={sending || interrupting} />
-      <PromptInputTextarea
-        aria-label="Сообщение"
-        className="session-composer-textarea"
-        disabled={sending || interrupting}
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        placeholder="Напишите сообщение…"
-        rows={1}
-      />
-      <PromptInputFooter className="session-composer-footer">
-        <PromptInputTools>
+      <div className="flex w-full min-w-0 flex-col">
+        <ComposerAttachmentStrip disabled={sending || interrupting} />
+        <div className="session-composer-row flex min-w-0 items-end gap-1">
           <ComposerAttachButton disabled={sending || interrupting} />
-        </PromptInputTools>
-        <ComposerPrimaryAction
-          draft={draft}
-          interrupting={interrupting}
-          onStop={onStop}
-          running={running}
-          sending={sending}
-        />
-      </PromptInputFooter>
+          <PromptInputTextarea
+            aria-label="Сообщение"
+            className="session-composer-textarea min-w-0 flex-1"
+            disabled={sending || interrupting}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            placeholder="Сообщение агенту"
+            rows={1}
+          />
+          <ComposerPrimaryAction
+            draft={draft}
+            interrupting={interrupting}
+            onStop={onStop}
+            running={running}
+            sending={sending}
+          />
+        </div>
+      </div>
     </PromptInput>
   );
 }
@@ -101,7 +101,7 @@ function ComposerAttachButton({ disabled }: { disabled: boolean }) {
   return (
     <PromptInputButton
       aria-label="Добавить изображение"
-      className="session-composer-control"
+      className="session-composer-control shrink-0 rounded-full"
       disabled={disabled}
       onClick={() => attachments.openFileDialog()}
       size="icon-sm"
@@ -168,21 +168,21 @@ function ComposerPrimaryAction({
   return (
     <PromptInputSubmit
       aria-label={label}
-      className="session-composer-control"
+      className="session-composer-control session-composer-action shrink-0 rounded-full"
       data-session-composer-action="true"
       disabled={busy || (!stopIsPrimary && !canSend)}
       onStop={stopIsPrimary ? onStop : undefined}
       size="icon-sm"
       status={busy ? "submitted" : stopIsPrimary ? "streaming" : undefined}
       title={label}
-      variant="ghost"
+      variant="default"
     >
       {busy ? (
         <LoaderCircleIcon aria-hidden="true" className="size-4 animate-spin" />
       ) : stopIsPrimary ? (
         <SquareIcon aria-hidden="true" className="size-3.5" />
       ) : (
-        <CornerDownLeftIcon aria-hidden="true" className="size-4" />
+        <ArrowUpIcon aria-hidden="true" className="size-4" />
       )}
     </PromptInputSubmit>
   );

@@ -94,14 +94,53 @@ describe("DDC token wiring", () => {
   });
 });
 
-describe("нейтральный холст страницы", () => {
-  it("красит оболочку фоном body портала без тонировки и градиента", () => {
-    const shell = read("styles/console-shell.css");
-    const tokens = read("styles/ddc-tokens.css");
-    const shellRule = shell.match(/\.console-shell\s*\{[^}]*\}/)?.[0] ?? "";
+describe("фон оболочки по разделу 2.4 DDC", () => {
+  const shell = read("styles/console-shell.css");
+  const tokens = read("styles/ddc-tokens.css");
+  const index = read("index.css");
 
-    expect(shellRule).toContain("background-color: var(--ddc-bg);");
-    expect(shellRule).not.toContain("gradient");
-    expect(tokens.match(/@utility ddc-app-shell\s*\{[^}]*\}/)?.[0] ?? "").not.toContain("gradient");
+  it("несёт зелёный фон #EEF6F2 и два пятна brand в светлой теме, почти чёрный с пятнами в тёмной", () => {
+    expect(tokens).toMatch(/:root\s*\{[^}]*--ddc-shell: #eef6f2;/);
+    expect(tokens).toMatch(/:root\s*\{[^}]*--ddc-shell-glow-1: rgb\(110 205 171 \/ 0\.3\);/);
+    expect(tokens).toMatch(/:root\s*\{[^}]*--ddc-shell-glow-2: rgb\(24 154 114 \/ 0\.14\);/);
+    expect(tokens).toMatch(/\.dark\s*\{[^}]*--ddc-shell: #070a0e;/);
+    expect(tokens).toMatch(/\.dark\s*\{[^}]*--ddc-shell-glow-1: rgb\(24 154 114 \/ 0\.12\);/);
+    expect(tokens).toMatch(/\.dark\s*\{[^}]*--ddc-shell-glow-2: rgb\(0 128 94 \/ 0\.12\);/);
+  });
+
+  it("утилита ddc-app-shell красит фон цветом оболочки и двумя радиальными пятнами", () => {
+    const rule = tokens.match(/@utility ddc-app-shell\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(rule).toContain("background-color: var(--ddc-shell);");
+    expect(rule).toContain("radial-gradient(1100px 560px at 8% -12%, var(--ddc-shell-glow-1), transparent 62%)");
+    expect(rule).toContain("radial-gradient(900px 520px at 100% 0%, var(--ddc-shell-glow-2), transparent 60%)");
+  });
+
+  it("корень консоли получает утилиту, а .console-shell не перекрывает её своим фоном", () => {
+    const rule = shell.match(/\.console-shell\s*\{[^}]*\}/)?.[0] ?? "";
+    const component = read("components/ConsoleShell.tsx");
+
+    expect(component).toMatch(/className="console-shell ddc-app-shell"/);
+    expect(rule).not.toMatch(/background(-color|-image)?:/);
+  });
+
+  it("при печати оболочка белая, без тонировки и пятен", () => {
+    const print = index.slice(index.indexOf("@media print"));
+
+    expect(print).toContain("--ddc-shell: #ffffff;");
+    expect(print).toContain("--ddc-shell-glow-1: transparent;");
+    expect(print).toContain("--ddc-shell-glow-2: transparent;");
+  });
+
+  it("не оставляет в стилях записи об отступлении от фона оболочки", () => {
+    for (const [name, css] of [
+      ["styles/ddc-tokens.css", tokens],
+      ["styles/console-shell.css", shell],
+      ["styles/console-list.css", read("styles/console-list.css")],
+    ] as const) {
+      expect(css, name).not.toMatch(/отступлени/i);
+      expect(css, name).not.toMatch(/нейтральн\w* (холст|фон)/i);
+      expect(css, name).not.toMatch(/без тонировки/i);
+    }
   });
 });

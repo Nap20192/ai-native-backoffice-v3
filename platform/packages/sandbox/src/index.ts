@@ -54,3 +54,13 @@ export {
 } from "./orchestrator";
 
 export { createNoEnvironmentSandbox, isNoEnvironmentSandbox } from "./no-environment";
+
+export {
+  buildEnvironmentSetupScript,
+  environmentPackageLists,
+  PACKAGE_MANAGER_HOSTS,
+  type SandboxEnvironmentNetworking,
+  type SandboxEnvironmentPackages,
+  type SandboxEnvironmentSpec,
+  type SandboxPackageManager,
+} from "./environment-setup";

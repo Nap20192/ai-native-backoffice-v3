@@ -11,15 +11,15 @@ description: Проверка конструктора агентов (копи�
 Папка скилла: `.claude/skills/verify-agent-console/`, дальше `S=.claude/skills/verify-agent-console/scripts`.
 Команды запускаются из корня репозитория `/home/vnkjd/orca/projects/ai-native-backoffice-v3`.
 
-**Статус.** Скилл прогнан целиком 2026-10-15 (прогон `20261015-192728`: Node 24.21.0, Playwright 1.59.1 с Chromium 1243, fake-модель, LiteBox на `/dev/kvm`, git `b62dd98`). Цепочка от launch до конца cleanup заняла 77 с, включая сборку консоли, при образе VM уже в кэше.
-Ожидаемый итог на текущем коде — «ПРОВАЛ»: 77 проверок, 7 провалов, и все они — дефекты продукта, а не скилла:
-- `env.probe.network`, `env.networking_limited_applied` — сетевой запрос из VM обрывает exec BoxLite, и VM перестаёт отвечать;
-- `env.packages_applied` — пакеты окружения на main-node не ставятся;
-- `session.title_saved` — название из окна «Новая сессия» теряется;
-- `run.ui_prompt_on_send`, `run.ui_prompt_visible` — реплика пользователя не видна в разговоре до перезагрузки страницы;
-- `run.ui_tool_output_text` — вывод bash в карточке показан JSON-массивом content-блоков.
+**Статус.** Последний полный прогон 2026-10-16 `20261016-041400`: «ПРОЙДЕН», 80 проверок, 0 провалов. Node 24.21.0, Playwright 1.59.1 с Chromium 1243, fake-модель, LiteBox на `/dev/kvm`, git `36132d9` с незакоммиченными правками W4 (хэши изменений: консоль `740476daa13bf899`, сервер `c4b5b81d4baa786c`). Цепочка от launch до конца cleanup заняла около 160 с при образе VM в кэше, вместе с паузами `vac_wait_cool` (CPU до 94°C от соседних workflow).
+Прогон шёл из снимка дерева, а не из рабочей копии: пока он идёт, другие агенты правят консоль, и doctor падает на сверке хэша (`20261016-034810` остановлен по этой причине). Снимок (`git clone --shared` в `~/.cache/verify-agent-console/w4-snapshot`, поверх файлы W4, `pnpm install --frozen-lockfile --offline`) держит файлы W4 как в рабочей копии, без чужих незакоммиченных правок (аналитика, страница сессии) и с `pnpm-lock.yaml` из HEAD. Скрипты запускаются из снимка, доказательства пишутся в эту папку (`VERIFY_EVIDENCE_ROOT`).
+Ожидаемый итог на текущем коде: «ПРОЙДЕН», 80 проверок, 0 провалов. С 2026-10-16 добавлены `run.answer_full` и `run.turn_duration` (без правки консоли по срезу ответа и «Работал 0 с» падают они и `run.ui_turn_done`) и `env.networking_allowed_host`. Одна строка «внимание» это известная особенность продукта, не дефект скилла:
+- `agent.form_without_model_cards`: без карточек моделей в форме агента нет группы «Модель», агента создаёт YAML.
 
-Подфункций карты пройдено 16 из 37, остальные 21 идут строками «не проверено» `feature.*`.
+`session.initial_status` и `run.ui_send_label` это настоящие проверки: новая сессия без сообщения должна быть `idle` («Ожидает», без «Агент работает…», кнопка «Отправить сообщение»). Их провал значит, что вернулся дефект 2026-10-16, когда новая сессия создавалась со `status: "running"` и консоль бесконечно показывала «Агент работает…».
+
+Подфункций карты пройдено 17 из 38 (с 2026-10-16 добавлена `session-answer`), остальные 21 идут строками «не проверено» `feature.*`.
+История: 2026-10-15 (`20261015-193100`) было 7 провалов (сеть VM, пакеты окружения, название сессии, реплика в ходе, вывод bash); 2026-10-16 первый прогон после правок (`20261016-001648`) дал 12 провалов из-за ошибки DNS allowlist BoxLite 0.9.0, см. Gotchas в `features/environments.md`; `20261016-021532` дал 13 провалов `run.*` из-за разового сбоя BoxLite `spawn_failed … InitReady` в VM главной сессии (повтор прошёл, см. Gotchas в `features/sessions-and-agent-run.md`); `20261016-040821` дал 1 провал `env.probe.network` из-за того же сбоя на сетевом ходе пробы, повтор `20261016-041400` на том же дереве прошёл.
 Если упало что-то другое, исправьте скрипт и карту функций. Проверки не ослабляйте.
 
 ## Предусловия
@@ -112,7 +112,7 @@ $S/doctor.sh --run "$RUN"   # не меняет экземпляр; код 0 = �
 - порт 8791 слушает наш node;
 - `/health.pid` указывает на наш процесс, а база и blobs лежат в папке прогона;
 - `GET /` отдаёт `index.html` нашей сборки;
-- **код не менялся после launch:** git HEAD и хэши изменений консоли (`platform/apps/console`) и сервера (`platform/apps/main-node`, `platform/packages`) равны значениям из `run.env`. Сервер идёт без watch, а консоль собрана один раз, поэтому после правок старый экземпляр крутит прежний код; при расхождении FAIL;
+- **Код не менялся после launch.** Git HEAD и хэши изменений консоли (`platform/apps/console`) и сервера (`platform/apps/main-node`, `platform/apps/agent`, `platform/packages`) равны значениям из `run.env`. `apps/agent` (харнессы) добавлен 2026-10-16: до этого правка `acp-translate.ts` после launch не ловилась. Сервер идёт без watch, а консоль собрана один раз, поэтому после правок старый экземпляр крутит прежний код; при расхождении FAIL;
 - `/auth-info` в порядке;
 - cookie тестовой учётки принимается: `/v1/oma/me` и `/v1/agents` отвечают 200;
 - фейковая модель отвечает;
@@ -140,33 +140,37 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
    - Почта, пароль, `user_id` и `tenant_id` сохраняются в `state/test-user.json` (права 600, пароль не печатается), cookie — в `state/cookies.txt`.
 2. **`journey.sh`** записывает свой PID (роль `journey`), проверяет нагрузку и запускает `nice -n 15 node journey-env-to-agent.mjs`. Сценарий пишет PID Chromium (роль `journey-child`). Шаги:
    - **Вход.** На `/login` нажать «Продолжить с почтой», заполнить `#auth-email` и `#auth-password`, затем в группе «Действия входа» нажать «Войти». Дождаться навигации и h1 в `main`. Проверяются cookie `better-auth.session_token`, почта и `user.id` в `GET /auth/get-session`, тот же `user.id` и tenant в `/v1/oma/me`.
-     На main-node `/v1/oma/me` всегда отдаёт `user.email: ""`: `buildMeRoutes` подключён без `loadUser` (`apps/main-node/src/modules/node-http.ts:444-475`). Это строка «внимание» `auth.me_email`, почта сверяется через Better Auth.
+     `/v1/oma/me` отдаёт почту через `loadUser` в `buildMeRoutes` (`apps/main-node/src/modules/node-http.ts`, маршрут `/oma/me`); строка `auth.me_email`. Источник истины для почты: Better Auth.
    - **Окружение.** Ссылка «Окружения» в навигации «Разделы консоли». Перед скриншотом сценарий ждёт h1 «Окружения» в `main` и пустое состояние «Окружений пока нет» (`env.list_empty`) или строку таблицы, а не смену URL. Дальше «Новое окружение», окно `dialog "Новое окружение"`, поля «Название» и «Описание (необязательно)», «Создать». Затем:
      - строка `[data-testid="data-body-table"] tr[data-slot="table-row"]` с именем окружения;
      - сверка через `GET /v1/environments/:id`;
      - карточка `/environments/:id` (h1 и `#env-name`).
-   - **Проба окружения (обходной путь).** Действия «проверить окружение» нет ни в консоли, ни в API, а песочница создаётся лениво (`apps/main-node/src/lib/node-session-router.ts:41`). Поэтому по API создаются технический агент (только bash) и сессия на новом окружении, и отправляется одна команда. Проба доказывает:
+   - **Проба окружения (обходной путь).** Действия «проверить окружение» нет ни в консоли, ни в API, а песочница создаётся лениво (`NodeSessionRouter.init`, `apps/main-node/src/lib/node-session-router.ts`). Поэтому по API создаются технический агент (только bash) и сессия на новом окружении, и отправляется одна команда. Проба доказывает:
      - VM поднялась: `Box started successfully` в логе BoxLite, процесс `libkrun VM` с pid из строки `boxlite-shim subprocess spawned … pid=N` — потомок нашего server-node, папка `.openma/litebox-scratch-*`;
      - VM выполнила команду: `agent.tool_result` содержит `VERIFY_OK_<nonce>`; ядро в VM отличается от ядра хоста;
      - база для настроек: пакета `jq` в образе нет (`env.probe.baseline`);
      - сессия пробы видна в консоли с репликой и ответом (`env.probe.ui_visible`, страница открыта заново, история из `GET /events`);
-     - сеть «Без ограничений» (`env.probe.network`): отдельный ход `curl https://example.com` из VM и ещё один ход `echo` — жива ли VM после запроса. База — код того же адреса с хоста. Сейчас **провал**: с хоста код 200, а в VM ход с `curl` заканчивается `Attach stream error … h2 protocol error` и `[exit -1]`, следующий ход получает `Connection refused (os error 111)`. Поэтому сетевые ходы идут последними в сессиях пробы.
+     - сеть «Без ограничений» (`env.probe.network`): отдельный ход `curl https://example.com` и `curl https://example.org` из VM и ещё один ход `echo`, чтобы проверить, жива ли VM после запроса. База: код того же адреса с хоста. До 2026-10-16 запрос ронял boxlite-shim (`Attach stream error … h2 protocol error`, затем `Connection refused`); причина и обход в `features/environments.md`. Сетевые ходы по-прежнему идут последними в сессиях пробы.
 
      Затем сессия архивируется, и проверяется, что VM остановилась (`Box stopped`, scratch удалён).
-   - **Настройки окружения.** Снова «Окружения» → строка → карточка. Изменить `#env-description`, в «Тип доступа» выбрать «Ограниченный», включить «Разрешить сетевой доступ менеджерам пакетов», «Добавить пакет» → менеджер `apt`, «Пакеты и версии» `jq`, «Сохранить изменения», тост «Окружение сохранено». Сверка `GET /v1/environments/:id` (`env.settings_saved`). Затем новая сессия на этом окружении (песочница создаётся заново):
-     - `env.packages_applied` — в VM установлен `jq` (`dpkg-query`). Сейчас **провал**: установка пакетов (`ensureSetupApplied`) вызывается только в Cloudflare SessionDO (`apps/agent/src/runtime/session-do.ts:3608`), в `apps/main-node` её нет;
-     - `env.networking_limited_applied` — `curl https://example.com` из VM даёт 000, и VM отвечает после запроса. Сейчас **провал**: тот же обрыв exec, что и без ограничений, а в коде LiteBox сеть всегда `enabled` (`packages/sandbox-adapter-litebox/src/litebox.ts:325`). См. Gotchas сети в `features/environments.md`.
+   - **Настройки окружения.** Снова «Окружения» → строка → карточка. Изменить `#env-description`, в «Тип доступа» выбрать «Ограниченный», включить «Разрешить сетевой доступ менеджерам пакетов», в «Разрешённые хосты» вписать `example.org`, «Добавить пакет» → менеджер `apt`, «Пакеты и версии» `jq`, «Сохранить изменения», тост «Окружение сохранено». Сверка `GET /v1/environments/:id` (`env.settings_saved`). Затем новая сессия на этом окружении (песочница создаётся заново):
+     - `env.packages_applied`: в VM установлен `jq` (`dpkg-query`). Окружение доходит до адаптера через `buildSandbox` в `createManagedNodeRuntime` (`apps/main-node/src/modules/node-managed.ts`), пакеты ставит `initializeBox` (`packages/sandbox-adapter-litebox/src/litebox.ts`);
+     - `env.networking_limited_applied`: неразрешённый `https://example.com` из VM даёт 000, и VM отвечает после запроса;
+     - `env.networking_allowed_host`: разрешённый пользователем `https://example.org` из VM отвечает 200, как с хоста. «Ограниченный» превращается в `allowNet` BoxLite (`liteBoxNetwork` в `litebox.ts`), разрешённые имена закрепляются в `/etc/hosts` VM из-за ошибки DNS allowlist BoxLite 0.9.0. См. Gotchas сети в `features/environments.md`.
+
+     Главная сессия идёт на том же настроенном окружении, поэтому её VM тоже ставит `jq` и живёт с «Ограниченной» сетью.
 
      Шаги настроек не обязательные: их сбой пишется провалом, а сценарий идёт к агенту. В конце технический агент пробы архивируется, чтобы шаг агентов шёл по пустому списку.
    - **Агент.** «Агенты» (h1 и пустое состояние «Агентов пока нет», `agent.list_empty`), «Новый агент», шаблон-кнопка `/^Пустой агент/`, `#agent-name` и `#agent-system`, вкладка «Инструменты». Без карточек моделей в форме нет группы «Модель» (строка «внимание» `agent.form_without_model_cards`), поэтому в группе «Режим правки» переключиться на «YAML», в textbox «Конфигурация агента в формате YAML» вписать `model: claude-sonnet-4-6` и нажать «Создать агента». Результат: переход на `/agents/:id`, модель видна в регионе «Свойства агента». Запись сверяется через `GET /v1/agents/:id`.
    - **Сессия.** «Сессии» (h1), «Новая сессия». В окне два безымянных `combobox`: первый — агент, второй — окружение. В каждом выбрать `[data-slot="command-item"]` с нужным id. Заполнить `#session-title`, нажать «Создать». Результат: переход на `/sessions/:id`, в шапке бейджи `[title="Агент: …"]` и `[title="Окружение: …"]`. Сверка через API: `agent.id`, `environment_id`, `archived_at = null`.
-     - `session.title_saved` сейчас **провал**: введённое название не сохраняется, `title = null`, в h1 «Сессия без названия». Причина в консоли: `pages/SessionsList.tsx:865-867` ставит `name="oma-session-title"` поверх `{...register("title")}`, а `onChange` react-hook-form 7.75 ищет поле по `event.target.name`. Правка: убрать переопределение `name` (или вести поле через `Controller`).
-     - `session.initial_status` — «внимание»: сервер создаёт сессию со `status: "running"` (`packages/managed-agents-application/src/sessions/application.ts:322`), поэтому консоль до первого сообщения показывает «Выполняется» и «Агент работает…».
-   - **Ход агента.** Сценарий открывает тот же поток `GET /v1/sessions/:id/events/stream`, что и консоль (cookie браузера), затем в textbox «Сообщение» вводит промпт с маркером и нажимает кнопку отправки. Её подпись зависит от статуса (`SessionComposer.tsx:163-166`): в новой сессии это «Поставить сообщение в очередь» (строка «внимание» `run.ui_send_label`). Проверки в интерфейсе:
-     - `run.ui_prompt_on_send` и `run.ui_prompt_visible` — реплика пользователя (`[data-session-turn-prompt]` с `nonce=<n>`) видна в ходе сразу после отправки и после конца хода. Сейчас обе **провал**: реплики нет, пока страницу не перезагрузить (`run.ui_prompt_after_reload` проходит). Поток не отдаёт `user.message` (`run.sse_user_message`, «внимание»), см. Gotchas в `features/sessions-and-agent-run.md`;
+     - `session.title_saved`: название из окна сохранено (API и h1). Поле ведёт `Controller` (`pages/SessionsList.tsx`, поле `title` окна «Новая сессия»); до правки 2026-10-15 `{...register("title")}` с подменённым `name` терял ввод.
+     - `session.initial_status`: новая сессия без сообщения: в API `status = idle`, в шапке «Ожидает», в разговоре «Отправьте сообщение, чтобы начать сессию.», текста «Агент работает…» нет (снимок `session-new`). Статус при создании считает `createSession` в `packages/managed-agents-application/src/sessions/application.ts` (`admitsBootstrapTurn`): `running` только если начальные события ставят ход в очередь.
+   - **Ход агента.** Сценарий открывает тот же поток `GET /v1/sessions/:id/events/stream`, что и консоль (cookie браузера), затем в textbox «Сообщение» вводит промпт с маркером и нажимает кнопку отправки. Её подпись зависит от статуса (`ComposerPrimaryAction` в `SessionComposer.tsx`): в новой сессии это «Отправить сообщение» (`run.ui_send_label`; «Поставить сообщение в очередь» значит, что сессия ошибочно `running`). Проверки в интерфейсе:
+     - `run.ui_prompt_on_send` и `run.ui_prompt_visible`: реплика пользователя (`[data-session-turn-prompt]` с `nonce=<n>`) видна в ходе сразу после отправки и после конца хода; `run.sse_user_message`: поток отдаёт `user.message` с маркером. Как реплика попадает в ход, см. Gotchas в `features/sessions-and-agent-run.md`;
      - `article[data-turn-id]` получил `data-session-turn-status=completed`, ответ виден в `[data-session-turn-answer]`;
+     - `run.answer_full`: итоговый ответ (строка, блок кода с `VERIFY_DONE_<nonce>`, строка после него) виден целиком, первое сообщение хода (текст модели перед `tool_use`) тоже, повторов нет. «Виден» значит и в тексте страницы, и на экране: `clippedLine` проверяет, что строку не срезает предок с `overflow: hidden` (сценарий ждёт конца анимации раскрытия блока процесса, `settleAnimations`). `run.turn_duration`: нет «Работал 0 с» при ходе дольше секунды. Почему ответ резался (`streamPrefixes`), см. Gotchas в `features/sessions-and-agent-run.md`;
      - раскрывается карточка `bash` (`[data-chat-reasoning-trigger]` → `[data-slot="collapsible-trigger"]` → содержимое с `VERIFY_OK_<nonce>`);
-     - `run.ui_tool_output_text` — вывод в карточке показан текстом (строка `kernel=` отдельно, без `"type": "text"`, без литералов `\n` и `\u001b`). Сейчас **провал**: карточка показывает JSON-массив content-блоков (`components/session/CanonicalSessionTurn.tsx:140-147` делает `JSON.stringify`, `components/ai-elements/tool.tsx:187-209` рисует строку с «[» как JSON). Текст карточки сохраняется в `api/45-tool-card-text.txt`;
+     - `run.ui_tool_output_text`: вывод в карточке показан текстом (строка `kernel=` отдельно, без `"type": "text"`, без литералов `\n` и `\u001b`). Текст готовит `formatToolOutput` (`lib/tool-output.ts`). Текст карточки сохраняется в `api/45-tool-card-text.txt`;
      - на вкладке «Хронология» есть строка `[title^="bash · "]`;
      - в панели «Файлы сессии» есть ссылка `verify-<nonce>.txt`.
 
@@ -176,7 +180,7 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
      - файл `<прогон>/data/session-outputs/<tenant>/<session>/verify-<nonce>.txt` с содержимым `VERIFY_OK_<nonce>`. Он записан внутри VM в `/mnt/session/outputs`;
      - ядро VM отличается от ядра хоста;
      - записи BoxLite (третий старт VM) и процесс VM — потомок нашего сервера;
-     - вывод bash без служебных строк рантайма (`tool_output_clean`). Сейчас «внимание»: в каждый `tool_result` попадает stderr `libcontainer … seccomp not available` с ANSI-цветами;
+     - вывод bash без служебных строк рантайма (`tool_output_clean`): ведущую строку stderr `libcontainer … seccomp not available` срезает адаптер (`stripRuntimeNoise`);
      - решения фейковой модели.
 
      В конце сессия архивируется, и проверяется остановка VM.
@@ -187,6 +191,28 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
 Первый ход с новым `BOXLITE_HOME` скачивает образ `node:22-bookworm` и собирает его диск: 2026-10-15 это заняло около минуты, кэш вырос до 3 ГБ. Дальше проба идёт за 2–8 с.
 
 Устойчивые зацепки и ловушки по каждой функции описаны в `features/` (начните с `features/README.md`).
+
+## Сценарий Claude Code в песочнице
+
+Отдельный сценарий `claude-code` (`scripts/journey-claude-code.mjs`, рецепт и ловушки в `features/claude-code-sandbox.md`): агент конструктора на harness `acp-sandbox` с ACP-агентом `claude-acp`, Claude Code запускается **внутри VM LiteBox** сессии. Рецепт для людей: `docs/runbook-claude-code-sandbox.md`.
+
+```sh
+RUN="$(VERIFY_PORT=8795 VERIFY_FAKE_PORT=8796 VERIFY_LITEBOX_DISK_SIZE_GB=4 $S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$RUN" && $S/journey.sh --run "$RUN" --scenario claude-code; $S/cleanup.sh --run "$RUN"; }
+```
+
+- Порты 8795 и 8796, чтобы не мешать главному сценарию и пробной копии; правило «один прогон за раз» общее (кэш BoxLite один).
+- `VERIFY_LITEBOX_DISK_SIZE_GB=4` обязателен: launch передаёт его серверу как `LITEBOX_DISK_SIZE_GB`, без него `npm install -g @agentclientprotocol/claude-agent-acp@0.91.0` в VM падает с `ENOSPC` (диск образа 1,3 ГБ, пакет ~330 МБ). Версия пакета закреплена в `CC_PACKAGE`: npm ставит его при каждом старте VM, и новый релиз Claude Code не должен менять прогон.
+- Путь пользователя через консоль: окружение с npm-пакетом, агент в режиме YAML с блоком `_oma`, сессия с хранилищем. Учётные данные «переменная окружения» создаются по API (в консоли нет такой формы), это строка «внимание» `cc.vault_api_path`.
+- **Режим fake (по умолчанию).** Claude Code в VM ходит в `fake-model.mjs` хоста по `http://host.boxlite.internal:<VERIFY_FAKE_PORT>`, фиктивный ключ лежит в хранилище. Фейк ведёт ход `Write verify.txt` → `Read` → контрольный `Bash touch …` (должен быть отклонён: режима обхода разрешений нет) → `VERIFY_CC_DONE_<n>`. Второй ход той же сессии (`… turn=2`): `Bash ps -eo pid,ppid,args` → `VERIFY_CC_TURN2_<n> acp_processes=<k>`. Проверки `cc.*` в `summary.md`: события хода, карточки в консоли, `verify.txt` в выводах и на хосте, VM запущена сервером, user-agent `claude-cli/…` и sha256 фиктивного ключа из хранилища в журнале фейка; второй ход возобновил ACP-сессию (`[acp-init] mode=resume|load`, реплика первого хода в истории), в VM ровно один `claude-agent-acp`, на хосте среди потомков сервера его нет; остановка VM после архива. sha256 ключа печатается только в режиме fake.
+- **Режим real.** Включается только явно, тратит лимит и ни разу не запускался. Команда: `VERIFY_CC_MODE=real VERIFY_CC_SECRET_FILE=<файл с ключом или токеном claude setup-token, права 600> VERIFY_CC_SECRET_NAME=CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY $S/journey.sh --run "$RUN" --scenario claude-code`. Секрет читается только из этого файла (файлы в `~/.claude` сценарий отвергает), значение не печатается и уходит в хранилище; `ANTHROPIC_BASE_URL` агенту не задаётся. Сервер при этом остаётся в режиме fake: Pi-модель ему не нужна.
+- Подфункции сценария (`cc-*`) помечены в `features/claude-code-sandbox.md` строкой `<!-- scenario: claude-code -->`: главный сценарий их не считает, сценарий `claude-code` считает только их.
+
+**Статус сценария.** Прогон 2026-10-16 `20261016-041100` (порт 8795, fake, то же дерево и те же хэши, что у `20261016-041400`): «ПРОЙДЕН», 33 проверки, 0 провалов, одна строка «внимание» (`cc.vault_api_path`), подфункций сценария 11 из 12 (`cc-real-key` не запускался). Второй ход в той же сессии возобновил ACP-сессию (`mode=resume`), в VM во время второго хода один `claude-agent-acp`, на хосте его нет. Первый ход Claude Code с установкой пакета в новой VM занял около 30 с. Предыдущие прогоны того же дня нашли дефекты продукта и скрипта:
+- `20261016-024343`: во втором ходе в VM два `claude-agent-acp`, процесс первого хода не закрылся (BoxLite не доставляет сигнал, исправлено закрытием stdin в `spawnDuplexProcess`);
+- `20261016-011416`: ПРЕРВАН на launch: `VERIFY_PORT: unbound variable` (исправлено в `start_server`, см. Helpers);
+- `20261016-011625`: `session.error` «Could not extract text from user message — empty turn»: main-node отдавал харнессу пустой `userMessage` (исправлено, `apps/main-node/src/lib/node-managed-harness-user-message.ts`); <!-- unslop-ignore: цитата ошибки -->
+- `20261016-011901`: ход прошёл, но отклонённый Bash приходил без `is_error` и в консоли был «Готово» (исправлено в `AcpTranslator`), плюс неверные ожидания скрипта о форме событий API;
+- `20261016-012056`: doctor отказался вести экземпляр: код сервера менялся после launch (так и должно быть).
 
 ## Evidence
 
@@ -200,7 +226,7 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
   - окружение до и после настроек, агент, сессии, архивы;
   - полные журналы событий сессий: проба (`21-…`, сеть `21b-…`), проба настроек (`22-…`, `22b-…`), главная сессия (`41-…`);
   - поток событий главной сессии `41-session-stream.json` (что консоль получает вживую);
-  - текст карточки bash `45-tool-card-text.txt`, outputs, YAML агента, копия файла из VM;
+  - текст карточки bash `45-tool-card-text.txt`, текст ответа хода со страницы `46-turn-answer-text.txt`, outputs, YAML агента, копия файла из VM;
   - `fake-model-requests.jsonl`.
 - `logs/`:
   - `launch.txt`, `console-build.log`, `doctor-<время>.txt`;
@@ -216,7 +242,7 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
   - файл из VM лежит на хосте;
   - BoxLite записал старт и остановку VM;
   - процесс VM (`libkrun VM`, pid из лога BoxLite) — потомок нашего server-node.
-    Строки `creating box` в логе сервера нет: логгер litebox-sandbox на main-node — заглушка, потому что адаптер грузится в `components.ts:90` раньше `setRootLogger` (`modules/node-foundation.ts:98`), а `getLogger` вызывается при импорте (`litebox.ts:34`). В `summary.md` это строка «внимание» `*.server_log_box`.
+    В логе сервера есть строка `creating box (image=…, network=…)` от `litebox-sandbox` (`*.server_log_box`): логгер берётся в момент записи (`moduleLogger` в `litebox.ts`), а не при импорте.
 - **Где мок.** Мок только один — модель. Это внешний провайдер, и сервер ходит к нему через `ANTHROPIC_BASE_URL`, как в тестах репозитория (`apps/main-node/test/_helpers/openai-node-process.ts`). Песочница настоящая: LiteBox с микро-VM через `/dev/kvm`. Сетевая проба ходит на настоящий `https://example.com` (и с хоста для базы).
 - **Что фейк не проверяет:** доступ к api.anthropic.com, работу ключа и качество ответа. Это строка «не проверено» в `summary.md`. Проверить можно только в режиме `real`.
 
@@ -249,15 +275,19 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 | `scripts/launch.sh` | `RUN="$($S/launch.sh)"` | Сборка консоли, фейковая модель, сервер, проверка готовности; stdout — папка прогона |
 | `scripts/doctor.sh` | `$S/doctor.sh --run "$RUN"` | Можно ли вести экземпляр, включая сверку кода с моментом launch |
 | `scripts/seed-user.sh` | `$S/seed-user.sh --run "$RUN"` | Тестовая учётка и её рабочее пространство |
-| `scripts/journey.sh` | `$S/journey.sh --run "$RUN"` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск главного сценария |
-| `scripts/journey-env-to-agent.mjs` | через `journey.sh` | Сценарий Playwright, проверки и `summary.md` |
-| `scripts/fake-model.mjs` | запускает `launch.sh` (`node fake-model.mjs --port 8792 --log f.jsonl`) | Модель Anthropic Messages (SSE): bash с командой из промпта, затем `VERIFY_DONE_<nonce>` |
+| `scripts/journey.sh` | `$S/journey.sh --run "$RUN" [--scenario claude-code]` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск сценария (по умолчанию главного) |
+| `scripts/journey-env-to-agent.mjs` | через `journey.sh` | Главный сценарий Playwright, проверки и `summary.md` |
+| `scripts/journey-claude-code.mjs` | через `journey.sh --scenario claude-code` | Сценарий «Claude Code в VM»: окружение, хранилище, агент `acp-sandbox`/`claude-acp`, ход, `summary.md` |
+| `scripts/fake-model.mjs` | запускает `launch.sh` (`node fake-model.mjs --port 8792 --log f.jsonl`) | Модель Anthropic Messages (SSE): bash с командой из промпта, затем `VERIFY_DONE_<nonce>` (в ходе агента `VERIFY_AGENT_RUN` перед bash ещё текст, а ответ состоит из блока кода с `VERIFY_DONE_<nonce>` и строки после него); для маркера `VERIFY_CLAUDE_CODE` ход Claude Code (Write, Read, Bash, текст) |
 | `scripts/cleanup.sh` | `$S/cleanup.sh --run "$RUN" [--keep-state]` | Остановка по своим PID и уборка временных данных одного прогона |
 
 Переопределяемые переменные:
 
 - `VERIFY_PORT`, `VERIFY_FAKE_PORT`;
 - `VERIFY_STATE_ROOT`, `VERIFY_BOXLITE_HOME`, `VERIFY_EVIDENCE_ROOT`;
-- `VERIFY_MODEL_MODE`, `VERIFY_AGENT_MODEL`, `VERIFY_SANDBOX_IMAGE`;
+- `VERIFY_MODEL_MODE`, `VERIFY_AGENT_MODEL`, `VERIFY_SANDBOX_IMAGE`, `VERIFY_LITEBOX_DISK_SIZE_GB`, `VERIFY_LITEBOX_MEMORY_MIB`;
 - `VERIFY_CONSOLE_DIR`, `VERIFY_RUN_DIR`, `VERIFY_RUN_ID`, `VERIFY_START_TIMEOUT_S`;
-- сценарий: `VERIFY_KEEP_SESSION`, `VERIFY_HEADED`, `VERIFY_CHROMIUM`, `VERIFY_FIRST_TURN_TIMEOUT_MS`, `VERIFY_TURN_TIMEOUT_MS`.
+- сценарий: `VERIFY_KEEP_SESSION`, `VERIFY_HEADED`, `VERIFY_CHROMIUM`, `VERIFY_FIRST_TURN_TIMEOUT_MS`, `VERIFY_TURN_TIMEOUT_MS`;
+- сценарий `claude-code`: `VERIFY_CC_MODE` (`fake` или `real`), `VERIFY_CC_SECRET_FILE`, `VERIFY_CC_SECRET_NAME`.
+
+Значения `VERIFY_*` можно передавать в окружении `launch.sh` (`VERIFY_PORT=8795 $S/launch.sh`): до 2026-10-16 `start_server` снимал экспортированные переменные до чтения, и сервер падал с `VERIFY_PORT: unbound variable` (прогон `20261016-011416`).

@@ -45,6 +45,11 @@ test("в коде проверяются только строки с кирил
   assert.deepEqual(rules('const t = "Агент — готов";', "a.tsx"), [13]);
 });
 
+test("английские тексты OpenMA в platform/ не проверяются, русские проверяются", () => {
+  assert.deepEqual(rules("npm will overwrite or warn — both are safe.", "platform/packages/cli/README.md"), []);
+  assert.deepEqual(rules("Агент — готов.", "platform/packages/cli/README.md"), [13]);
+});
+
 test("эмодзи в заголовках и пунктах списка", () => {
   assert.deepEqual(rules("## 🚀 Запуск"), [18]);
   assert.deepEqual(rules("- ✅ готово"), [18]);

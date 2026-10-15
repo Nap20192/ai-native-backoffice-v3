@@ -37,8 +37,8 @@ grep -q 'better-auth.session_token' "$JAR" || vac_die "после sign-up нет
 
 USER_ID="$(jq -r '.user.id // empty' "$RUN_DIR/state/sign-up.json")"
 [ -n "$USER_ID" ] || vac_die "в ответе sign-up нет user.id"
-# Почту проверяем через Better Auth: /v1/oma/me на main-node отдаёт email "" —
-# buildMeRoutes подключён без loadUser (apps/main-node/src/modules/node-http.ts:444-475).
+# Почту проверяем через Better Auth (источник истины); /v1/oma/me берёт её через
+# loadUser в buildMeRoutes (apps/main-node/src/modules/node-http.ts, маршрут /oma/me).
 SESS_CODE="$(curl -sS -o "$RUN_DIR/state/get-session.json" -w '%{http_code}' -b "$JAR" -H "origin: $BASE_URL" "$BASE_URL/auth/get-session")"
 [ "$SESS_CODE" = "200" ] || vac_die "/auth/get-session вернул $SESS_CODE"
 [ "$(jq -r '.user.id' "$RUN_DIR/state/get-session.json")" = "$USER_ID" ] || vac_die "/auth/get-session: другой user.id"

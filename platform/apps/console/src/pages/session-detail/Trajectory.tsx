@@ -13,13 +13,14 @@ import { EMPTY_VALUE, formatDateTimeRu } from "../../components/session/format-r
  * Траектория на странице сессии.
  *
  * Три части:
- *   - `TrajectoryOutcomeChip`: значок «Итог: X» в шапке сессии. Скрыт, пока
- *     траектория грузится, при ошибке и пока агент ещё работает.
+ *   - `TrajectoryOutcomeChip`: значок «Итог: X». Скрыт, пока траектория
+ *     грузится, при ошибке и пока агент ещё работает.
  *   - `TrajectoryRewardChip`: парный значок с оценкой проверяющего. В
  *     подсказке id проверяющего и время расчёта.
- *   - `TrajectoryViewerModal`: окно с отформатированным JSON и кнопкой
- *     скачивания. Проекции Anthropic Messages, Inspect AI и OTel появятся
- *     позже.
+ *   - `TrajectoryViewerModal`: окно с обоими значками, отформатированным
+ *     JSON и кнопкой скачивания. Его открывает пункт «Траектория» в меню
+ *     «⋮» шапки сессии. Проекции Anthropic Messages, Inspect AI и OTel
+ *     появятся позже.
  *
  * Вынесено из SessionDetail, чтобы основная страница занималась потоком
  * событий и чатом.
@@ -139,9 +140,17 @@ export function TrajectoryViewerModal({
         <div className="text-sm text-ddc-text-muted">Траектория ещё не загружена.</div>
       )}
       {ready && (
-        <pre className="max-h-[60vh] overflow-auto rounded-xl bg-ddc-surface-muted p-3 font-mono text-xs whitespace-pre text-ddc-text">
-          {json}
-        </pre>
+        <>
+          {/* Итог и оценка стояли в шапке сессии. В шапке образца для них
+              места нет, поэтому они живут здесь, рядом с исходными данными. */}
+          <div className="mb-3 flex flex-wrap items-center gap-2 empty:hidden">
+            <TrajectoryOutcomeChip trajectory={trajectory} />
+            <TrajectoryRewardChip trajectory={trajectory} />
+          </div>
+          <pre className="max-h-[60vh] overflow-auto rounded-xl bg-ddc-surface-muted p-3 font-mono text-xs whitespace-pre text-ddc-text">
+            {json}
+          </pre>
+        </>
       )}
     </Modal>
   );

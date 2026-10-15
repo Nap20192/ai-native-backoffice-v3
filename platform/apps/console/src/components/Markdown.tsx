@@ -53,7 +53,9 @@ export function Markdown({ children }: { children: string }) {
             {children}
           </pre>
         ),
-        code: ({ className, children, ...props }) => {
+        // `node` это служебный проп react-markdown (AST-узел). В DOM он попадал
+        // как node="[object Object]", поэтому отделяем его от остальных props.
+        code: ({ className, children, node: _node, ...props }) => {
           const isInline = !className;
           if (isInline) {
             return (

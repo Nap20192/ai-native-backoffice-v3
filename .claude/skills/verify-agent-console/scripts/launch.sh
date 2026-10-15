@@ -10,6 +10,7 @@
 # Код 1: экземпляр не готов; всё, что этот вызов успел запустить, он сам останавливает
 #   (scripts/cleanup.sh для своей папки) и пишет «ПРЕРВАН на шаге launch» в summary.md.
 # Переменные: VERIFY_PORT (8791), VERIFY_FAKE_PORT (8792), VERIFY_MODEL_MODE (fake|real),
+#   VERIFY_LITEBOX_DISK_SIZE_GB / VERIFY_LITEBOX_MEMORY_MIB (диск и память VM, по умолчанию как в BoxLite),
 #   VERIFY_CONSOLE_DIR (готовая сборка консоли, тогда сборка пропускается), VERIFY_RUN_ID.
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -91,6 +92,8 @@ VERIFY_FAKE_PORT=$VERIFY_FAKE_PORT
 MODEL_MODE=$MODE
 AGENT_MODEL=$VERIFY_AGENT_MODEL
 SANDBOX_IMAGE=$VERIFY_SANDBOX_IMAGE
+LITEBOX_DISK_SIZE_GB=${VERIFY_LITEBOX_DISK_SIZE_GB:-}
+LITEBOX_MEMORY_MIB=${VERIFY_LITEBOX_MEMORY_MIB:-}
 DATA_DIR=$DATA_DIR
 DB_PATH=$DATA_DIR/oma.db
 AUTH_DB_PATH=$DATA_DIR/auth.db
@@ -160,19 +163,27 @@ start_server() {
     real_key="${real_key%\"}"; real_key="${real_key#\"}"; real_key="${real_key%\'}"; real_key="${real_key#\'}"
     real_base="${real_base%\"}"; real_base="${real_base#\"}"; real_base="${real_base%\'}"; real_base="${real_base#\'}"
   fi
+  # Значения VERIFY_* копируются до очистки окружения: если их передали снаружи
+  # (VERIFY_PORT=8795 launch.sh), они экспортированы и цикл ниже их снимет.
+  # Размер VM нужен сценарию Claude Code: agent CLI из npm весит ~330 МБ, а свободно в образе ~120 МБ.
+  local disk_gb="${VERIFY_LITEBOX_DISK_SIZE_GB:-}" memory_mib="${VERIFY_LITEBOX_MEMORY_MIB:-}"
+  local port="$VERIFY_PORT" host="$VERIFY_HOST" image="$VERIFY_SANDBOX_IMAGE"
+  local server_home="$VERIFY_SERVER_HOME" boxlite_home="$VERIFY_BOXLITE_HOME"
   # Чистое окружение: из оболочки остаются только PATH и локаль.
   local v
   for v in $(compgen -e); do
     case "$v" in PATH|LANG|LC_ALL|LC_CTYPE|TERM|USER|LOGNAME|SHELL) ;; *) unset "$v" 2>/dev/null || true ;; esac
   done
   set -a; . "$RUN_DIR/state/secrets.env"; set +a
-  export HOME="$VERIFY_SERVER_HOME" BOXLITE_HOME="$VERIFY_BOXLITE_HOME"
-  export HOST="$VERIFY_HOST" PORT="$VERIFY_PORT" PUBLIC_BASE_URL="$BASE_URL"
+  export HOME="$server_home" BOXLITE_HOME="$boxlite_home"
+  export HOST="$host" PORT="$port" PUBLIC_BASE_URL="$BASE_URL"
   export DATABASE_PATH="$DATA_DIR/oma.db" AUTH_DATABASE_PATH="$DATA_DIR/auth.db"
   export MEMORY_BLOB_DIR="$DATA_DIR/memory-blobs" FILES_BLOB_DIR="$DATA_DIR/files-blobs"
   export SANDBOX_WORKDIR="$DATA_DIR/sandboxes" SESSION_OUTPUTS_DIR="$DATA_DIR/session-outputs"
-  export CONSOLE_DIR="$CONSOLE_DIR" SANDBOX_PROVIDER=litebox SANDBOX_IMAGE="$VERIFY_SANDBOX_IMAGE"
+  export CONSOLE_DIR="$CONSOLE_DIR" SANDBOX_PROVIDER=litebox SANDBOX_IMAGE="$image"
   export DREAM_CURATOR_MODE=dedup LOG_LEVEL=info
+  [ -n "$disk_gb" ] && export LITEBOX_DISK_SIZE_GB="$disk_gb"
+  [ -n "$memory_mib" ] && export LITEBOX_MEMORY_MIB="$memory_mib"
   if [ "$MODE" = fake ]; then
     export ANTHROPIC_API_KEY=verify-local-fake-key ANTHROPIC_BASE_URL="$FAKE_URL"
   else

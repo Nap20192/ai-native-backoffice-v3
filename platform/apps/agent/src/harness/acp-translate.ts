@@ -412,10 +412,13 @@ export class AcpTranslator {
       typeof out === "string" ? out
       : out == null ? `(status: ${upd.status ?? "unknown"})`
       : JSON.stringify(out);
+    // A failed call (Claude Code: permission denied, command error) is an
+    // error result; otherwise the console shows it as successful.
     this.#runtime.broadcast({
       type: "agent.tool_result",
       tool_use_id: upd.toolCallId,
       content: text,
+      ...(upd.status === "failed" && { is_error: true }),
     });
   }
 }

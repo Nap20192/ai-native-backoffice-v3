@@ -1,0 +1,128 @@
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  buildEnvironmentSetupScript,
+  environmentPackageLists,
+  PACKAGE_MANAGER_HOSTS,
+  type SandboxEnvironmentPackages,
+} from "../src/index";
+
+const dirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+/** Runs the generated script with PATH limited to stub binaries that record
+ * their argv; `exits` makes a stub fail when its argv contains the key. */
+function run(packages: SandboxEnvironmentPackages, stubs: string[], exits: Record<string, number> = {}) {
+  const bin = mkdtempSync(join(tmpdir(), "oma-setup-stubs-"));
+  dirs.push(bin);
+  const log = join(bin, "calls.log");
+  writeFileSync(log, "");
+  for (const name of stubs) {
+    const failures = Object.entries(exits)
+      .filter(([key]) => key.startsWith(`${name} `))
+      .map(([key, code]) => `case "$*" in *"${key.slice(name.length + 1)}"*) exit ${code};; esac`)
+      .join("\n");
+    const path = join(bin, name);
+    writeFileSync(
+      path,
+      `#!/bin/sh\nprintf '%s' "${name}" >> '${log}'\nfor a in "$@"; do printf ' [%s]' "$a" >> '${log}'; done\necho >> '${log}'\n${failures}\nexit 0\n`,
+    );
+    chmodSync(path, 0o755);
+  }
+  const script = buildEnvironmentSetupScript(packages);
+  if (script === null) throw new Error("expected a script");
+  const result = spawnSync("/bin/sh", ["-c", script], { env: { PATH: bin }, encoding: "utf8" });
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    calls: readFileSync(log, "utf8").split("\n").filter(Boolean),
+  };
+}
+
+describe("buildEnvironmentSetupScript", () => {
+  it("returns null when nothing is configured", () => {
+    expect(buildEnvironmentSetupScript(undefined)).toBeNull();
+    expect(buildEnvironmentSetupScript({})).toBeNull();
+    expect(buildEnvironmentSetupScript({ apt: [], npm: ["  ", ""] })).toBeNull();
+    expect(environmentPackageLists({ npm: [" a "], apt: ["b"] })).toEqual([
+      { manager: "apt", names: ["b"] },
+      { manager: "npm", names: ["a"] },
+    ]);
+  });
+
+  it("installs apt then npm packages system-wide with every name passed literally", () => {
+    const tricky = "it's $(touch pwned) `x`";
+    const r = run({ npm: ["left-pad"], apt: ["jq", tricky] }, ["apt-get", "npm"]);
+    expect(r.status).toBe(0);
+    expect(r.calls).toEqual([
+      "apt-get [update] [-qq]",
+      `apt-get [install] [-y] [-qq] [--no-install-recommends] [jq] [${tricky}]`,
+      "npm [install] [-g] [--no-fund] [--no-audit] [--loglevel=error] [left-pad]",
+    ]);
+    expect(r.stdout).toContain("[oma-setup] apt: 2 package(s)");
+    expect(r.stdout.trimEnd().endsWith("[oma-setup] done")).toBe(true);
+  });
+
+  it("stops at the first failing manager with its exit code", () => {
+    const r = run({ apt: ["nope"], npm: ["left-pad"] }, ["apt-get", "npm"], { "apt-get install": 100 });
+    expect(r.status).toBe(100);
+    expect(r.stderr).toContain("[oma-setup] apt failed (exit 100)");
+    expect(r.calls.some((call) => call.startsWith("npm"))).toBe(false);
+    expect(r.stdout).not.toContain("[oma-setup] done");
+  });
+
+  it("does not install when the apt index update fails", () => {
+    const r = run({ apt: ["jq"] }, ["apt-get"], { "apt-get update": 100 });
+    expect(r.status).toBe(100);
+    expect(r.calls).toEqual(["apt-get [update] [-qq]"]);
+  });
+
+  it("names a missing toolchain instead of failing with command not found", () => {
+    const r = run({ npm: ["left-pad"] }, []);
+    expect(r.status).toBe(127);
+    expect(r.stderr).toContain("[oma-setup] npm not found in the sandbox image");
+    expect(r.stderr).toContain("[oma-setup] npm failed (exit 127)");
+  });
+
+  it("falls back to apk on Alpine images and to uv or pip for Python", () => {
+    expect(run({ apt: ["jq"] }, ["apk"]).calls).toEqual(["apk [add] [--no-cache] [jq]"]);
+    expect(run({ pip: ["requests"] }, ["uv", "python3"]).calls).toEqual([
+      "uv [pip] [install] [--system] [--break-system-packages] [requests]",
+    ]);
+    expect(run({ pip: ["requests"] }, ["python3"]).calls).toEqual([
+      "python3 [-m] [pip] [--version]",
+      "python3 [-m] [pip] [install] [--no-cache-dir] [--disable-pip-version-check] [-q] [requests]",
+    ]);
+    expect(run({ pip: ["requests"] }, []).stderr).toContain("python3 with pip (or uv) not found");
+  });
+
+  it("installs cargo, go and gem packages and stops a go loop at the first failure", () => {
+    const ok = run({ cargo: ["ripgrep"], go: ["a@latest"], gem: ["rake"] }, ["cargo", "go", "gem"]);
+    expect(ok.status).toBe(0);
+    expect(ok.calls).toEqual([
+      "cargo [install] [--quiet] [--root] [/usr/local] [ripgrep]",
+      "go [install] [a@latest]",
+      "gem [install] [--no-document] [rake]",
+    ]);
+    const failed = run({ go: ["bad@latest", "b@latest"] }, ["go"], { "go install bad": 1 });
+    expect(failed.status).toBe(1);
+    expect(failed.calls).toEqual(["go [install] [bad@latest]"]);
+  });
+});
+
+describe("PACKAGE_MANAGER_HOSTS", () => {
+  it("lists registry hosts for every package manager", () => {
+    for (const manager of ["apt", "cargo", "gem", "go", "npm", "pip"] as const) {
+      expect(PACKAGE_MANAGER_HOSTS[manager].length).toBeGreaterThan(0);
+    }
+    expect(PACKAGE_MANAGER_HOSTS.apt).toContain("deb.debian.org");
+    expect(PACKAGE_MANAGER_HOSTS.npm).toContain("registry.npmjs.org");
+  });
+});

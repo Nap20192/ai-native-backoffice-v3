@@ -166,6 +166,17 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
   );
 };
 
+function isJsonText(text: string): boolean {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type ToolOutputProps = ComponentProps<"div"> & {
   output: ToolPart["output"];
   errorText: ToolPart["errorText"];
@@ -181,14 +192,33 @@ export const ToolOutput = ({
     return null;
   }
 
+  // Текст ошибки без вывода: моноширинный блок в тоне ошибки с переносами
+  // строк, чтобы сообщение не слипалось в одну строку.
+  if (errorText && output === undefined) {
+    return (
+      <div
+        data-tool-output
+        className={cn(
+          "max-h-64 overflow-y-auto rounded-xl bg-ddc-tone-danger-bg px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap text-ddc-tone-danger-fg",
+          className,
+        )}
+        {...props}
+      >
+        {errorText}
+      </div>
+    );
+  }
+
   // String output that isn't structured JSON → inline mono preview, no
   // syntax-highlighter chrome. CodeBlock with language="json" was making
-  // every shell stdout look like a syntax-error.
+  // every shell stdout look like a syntax-error. JSON считаем только то, что
+  // действительно разбирается: вывод вида «[1/3] сборка» начинается с «[», но
+  // это обычный текст.
   if (typeof output === "string" && !errorText) {
-    const looksLikeJson = output.trimStart().startsWith("{") || output.trimStart().startsWith("[");
-    if (!looksLikeJson) {
+    if (!isJsonText(output)) {
       return (
         <div
+          data-tool-output
           className={cn(
             "max-h-64 overflow-y-auto rounded-xl border border-ddc-border bg-ddc-surface px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap text-ddc-text",
             className,
@@ -212,7 +242,7 @@ export const ToolOutput = ({
   }
 
   return (
-    <div className={cn("space-y-1", className)} {...props}>
+    <div data-tool-output className={cn("space-y-1", className)} {...props}>
       <div
         className={cn(
           "overflow-x-auto rounded-xl text-xs [&_table]:w-full",

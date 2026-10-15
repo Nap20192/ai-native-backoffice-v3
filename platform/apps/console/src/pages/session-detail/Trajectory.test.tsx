@@ -98,4 +98,29 @@ describe("TrajectoryViewerModal", () => {
     expect(closers.length).toBeGreaterThanOrEqual(1);
     for (const closer of closers) expect(closer).toBeEnabled();
   });
+
+  it("над JSON стоят итог и оценка траектории: в шапке сессии им места нет", () => {
+    render(
+      <TrajectoryViewerModal
+        open
+        onClose={() => {}}
+        sessionId="sess_1"
+        trajectory={trajectory({ outcome: "failure", reward: { raw_rewards: {}, final_reward: 1 } })}
+      />,
+    );
+
+    expect(screen.getByText("Итог: неудача")).toBeInTheDocument();
+    expect(screen.getByText("Оценка: пройдено")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Скачать JSON" })).toBeEnabled();
+  });
+
+  it("пока траектория грузится, чипов нет, а скачивание недоступно", () => {
+    render(
+      <TrajectoryViewerModal open onClose={() => {}} sessionId="sess_1" trajectory="loading" />,
+    );
+
+    expect(screen.getByText("Загрузка траектории…")).toBeInTheDocument();
+    expect(screen.queryByText(/Итог:/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Скачать JSON" })).toBeDisabled();
+  });
 });

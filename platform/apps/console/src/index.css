@@ -432,6 +432,9 @@ body,
     --shadow-md: none;
     --shadow-sm: none;
     --ddc-bg: #ffffff;
+    --ddc-shell: #ffffff;
+    --ddc-shell-glow-1: transparent;
+    --ddc-shell-glow-2: transparent;
     --ddc-surface: #ffffff;
     --ddc-surface-muted: #f5f5f5;
     --ddc-surface-sunken: #f5f5f5;

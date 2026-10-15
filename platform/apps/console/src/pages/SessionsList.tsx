@@ -855,18 +855,26 @@ export function SessionsList() {
             >
               Название <span className="font-normal text-ddc-text-muted">(необязательно)</span>
             </Label>
-            {/* autoComplete=off + an unrecognised name to defeat Chrome /
-                Safari email autofill — first text input in the dialog
-                got pre-filled with the user's saved email otherwise.
-                Spread register() first, then override name so the input
-                renders the autofill-defeating attribute while RHF still
-                tracks the field by its registered name internally. */}
-            <Input
-              id="session-title"
-              {...register("title")}
-              name="oma-session-title"
-              placeholder="Например, разбор заявки на отпуск"
-              autoComplete="off"
+            {/* autoComplete=off и нераспознаваемое имя поля не дают Chrome и
+                Safari подставить в первое текстовое поле сохранённую почту.
+                Поле ведёт Controller, а не register(): onChange у register
+                ищет поле по event.target.name, и подменённое имя терялось,
+                так что введённое название не доходило до формы. */}
+            <Controller
+              control={control}
+              name="title"
+              render={({ field }) => (
+                <Input
+                  id="session-title"
+                  ref={field.ref}
+                  name="oma-session-title"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                  placeholder="Например, разбор заявки на отпуск"
+                  autoComplete="off"
+                />
+              )}
             />
           </div>
 
@@ -1122,7 +1130,7 @@ export function SessionsList() {
                             <Input
                               id={`session-resource-${i}-file-mount`}
                               {...register(`resources.${i}.mount_path`)}
-                              placeholder="/mnt/session/uploads/<file_id> (по умолчанию)"
+                              placeholder="/mnt/session/uploads/<id файла> (по умолчанию)"
                             />
                           </div>
                         </div>

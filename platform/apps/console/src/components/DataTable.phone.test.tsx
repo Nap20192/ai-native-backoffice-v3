@@ -147,7 +147,7 @@ describe("DataTable на телефоне", () => {
 describe("DataTable: стили списка", () => {
   const styles = readFileSync(resolve(process.cwd(), "src/styles/console-list.css"), "utf8");
 
-  it("делает список карточкой DDC на нейтральном холсте", () => {
+  it("делает список карточкой DDC без градиента на самой карточке", () => {
     const rule = styles.match(/\.console-list-root\s*\{[^}]*\}/)?.[0] ?? "";
     expect(rule).toContain("border: 1px solid var(--ddc-border);");
     expect(rule).toContain("background: var(--ddc-surface);");

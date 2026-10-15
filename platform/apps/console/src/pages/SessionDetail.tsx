@@ -1,44 +1,33 @@
-import { useCrumbName } from "../lib/crumb-names";
-import { Input } from "@/components/ui/input";
-import { startTransition, useEffect, useMemo, useState, useRef } from "react";
-import { useParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
+import type { BetaEnvironment } from "@anthropic-ai/sdk/resources/beta/environments/environments";
+import type { BetaManagedAgentsSession } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
+import type { BetaManagedAgentsSessionThread } from "@anthropic-ai/sdk/resources/beta/sessions/threads/threads";
 import {
   ClockIcon as ScheduleIcon,
-  CornerDownRightIcon,
   ExternalLinkIcon,
-  FileJsonIcon,
-  FolderOpenIcon,
-  LinkIcon,
   Loader2Icon,
-  MessageSquareIcon,
-  PencilIcon,
-  SquareIcon,
+  PanelRightOpenIcon,
   XIcon,
 } from "lucide-react";
-import { ApiError } from "../lib/api";
+import { ApiError, useApi } from "../lib/api";
 import { useManagedApi } from "../lib/useManagedApi";
+import { useCrumbName } from "../lib/crumb-names";
 import { readManagedMetadataObject } from "../lib/managed-metadata";
+import { formatToolOutput } from "../lib/tool-output";
+import {
+  OptimisticUserMessages,
+  attachmentOnlyText,
+  createOptimisticUserEvent,
+  userMessageText,
+} from "../lib/optimistic-user-message";
 import { toast } from "sonner";
 import { Markdown } from "../components/Markdown";
-import { shortenId } from "../lib/format";
-import {
-  formatDateTimeRu,
-  formatDurationRu,
-  formatRelativeRu,
-  plural,
-} from "../components/session/format-ru";
-import { Badge, StatusPill } from "../components/Badge";
+import { EMPTY_VALUE, formatDateTimeRu, sessionErrorText } from "../components/session/format-ru";
 import { Button } from "@/components/ui/button";
-import { PlainButton } from "@/components/ui/plain-button";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
-import { AgentIcon, ClockIcon, DurationIcon, EnvIcon, VaultIcon } from "../components/icons";
-import { FilesPanel, ResourcePanel } from "./session-detail/Panels";
-import {
-  TrajectoryOutcomeChip,
-  TrajectoryRewardChip,
-  TrajectoryViewerModal,
-} from "./session-detail/Trajectory";
-import { TimelineView } from "../components/timeline/TimelineView";
+import { TrajectoryViewerModal } from "./session-detail/Trajectory";
 import type { Event } from "../lib/events";
 import {
   reduceManagedDeltaFrame,
@@ -49,8 +38,44 @@ import {
   type WireSessionEvent,
 } from "@openma/common/session-events/managed";
 import { ManagedSessionConversation } from "../components/session/ManagedSessionConversation";
-import type { Trajectory, TrajectoryOutcome } from "../lib/trajectory";
-import { rewardHeadline, outcomeToStatusTone } from "../lib/trajectory";
+import {
+  PRIMARY_THREAD_ID,
+  collectModelRequests,
+  collectOutcomes,
+  computeSessionTotals,
+  eventsOfThread,
+  type EventSelection,
+  type SelectionSource,
+} from "../lib/session-stats";
+import type { Trajectory } from "../lib/trajectory";
+import { SessionHeader } from "../components/session/SessionHeader";
+import {
+  DefineOutcomeDialog,
+  EditBudgetDialog,
+  ShortcutsDialog,
+  type BudgetParams,
+  type OutcomeParams,
+} from "../components/session/SessionDialogs";
+import { useSessionCost } from "../components/session/useSessionCost";
+import {
+  INSPECTOR_DEFAULT_WIDTH,
+  SessionInspector,
+  clampInspectorWidth,
+  parseInspectorTab,
+  readInspectorPrefs,
+  writeInspectorPrefs,
+  type InspectorPrefs,
+  type InspectorTab,
+} from "../components/session/inspector/SessionInspector";
+import { SessionPropertyRow, SessionTab } from "../components/session/inspector/SessionTab";
+import { ResourcesTab } from "../components/session/inspector/ResourcesTab";
+import { ThreadsTab } from "../components/session/inspector/ThreadsTab";
+import {
+  EventsTab,
+  copyEventsToClipboard,
+  downloadEventsFile,
+} from "../components/session/inspector/EventsTab";
+import { ToolsTab } from "../components/session/inspector/ToolsTab";
 // Console-specific renderers used only inside OpenMA UI host slots.
 import { Message, MessageContent } from "../components/ai-elements/message";
 import {
@@ -67,9 +92,6 @@ import {
 } from "../components/ai-elements/tool";
 import { CodeBlock } from "../components/ai-elements/code-block";
 import { SessionComposer } from "../components/session/SessionComposer";
-import { useI18n } from "../i18n";
-
-type View = "chat" | "timeline";
 
 /** A user.* event sitting in the server-side pending_events queue.
  *  Maintained client-side via system.user_message_pending /
@@ -102,10 +124,118 @@ function waitForStreamRetry(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Ширина, до которой инспектор встаёт нижним листом. */
+const NARROW_QUERY = "(max-width: 767px)";
+
+function readNarrow(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia(NARROW_QUERY).matches;
+}
+
+/** true на экране уже 768 px. Без `matchMedia` (тесты) считаем экран широким. */
+function useNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(readNarrow);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(NARROW_QUERY);
+    const sync = () => setNarrow(query.matches);
+    sync();
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
+  }, []);
+  return narrow;
+}
+
+/** Модель из снимка агента: старые записи хранили строку, новые объект. */
+function modelIdOf(agent: { model?: unknown } | null | undefined): string | null {
+  const model = agent?.model;
+  if (typeof model === "string") return model;
+  if (model && typeof model === "object" && typeof (model as { id?: unknown }).id === "string") {
+    return (model as { id: string }).id;
+  }
+  return null;
+}
+
+/** Строки «Источник» для вкладки «Сессия»: сессию запустил Linear или Slack. */
+function buildSourceRows(metadata: Record<string, string> | null | undefined): ReactNode {
+  const linear = readManagedMetadataObject(metadata, "linear") as
+    | { issueId?: string; issueIdentifier?: string; workspaceId?: string }
+    | null;
+  const slack = readManagedMetadataObject(metadata, "slack") as
+    | { channelId?: string; threadTs?: string; workspaceId?: string; eventKind?: string }
+    | null;
+  const hasLinear = Boolean(linear && (linear.issueId || linear.issueIdentifier));
+  const hasSlack = Boolean(slack && (slack.channelId || slack.threadTs));
+  if (!hasLinear && !hasSlack) return null;
+  return (
+    <>
+      {hasLinear && linear && (
+        <SessionPropertyRow label="Источник">
+          <span className="inline-flex flex-wrap items-center gap-x-1.5">
+            <span>Linear, задача</span>
+            <span className="font-mono">{linear.issueIdentifier ?? linear.issueId}</span>
+            {linear.workspaceId && (
+              <a
+                href="https://linear.app"
+                target="_blank"
+                rel="noreferrer"
+                className="link inline-flex items-center gap-1"
+              >
+                Открыть в Linear
+                <ExternalLinkIcon className="size-3" aria-hidden="true" />
+              </a>
+            )}
+          </span>
+        </SessionPropertyRow>
+      )}
+      {hasSlack && slack && (
+        <SessionPropertyRow label="Источник">
+          <span className="inline-flex flex-wrap items-center gap-x-1.5">
+            <span>Slack, канал</span>
+            {slack.channelId && slack.workspaceId ? (
+              <a
+                href={`slack://channel?team=${slack.workspaceId}&id=${slack.channelId}`}
+                className="link font-mono"
+                title="Открыть в приложении Slack"
+              >
+                {slack.channelId}
+              </a>
+            ) : (
+              <span className="font-mono">{slack.channelId ?? EMPTY_VALUE}</span>
+            )}
+            {slack.threadTs && (
+              <>
+                <span>тред</span>
+                <span className="font-mono">{slack.threadTs}</span>
+              </>
+            )}
+            {slack.eventKind && (
+              <span className="font-mono text-2xs tracking-wider text-ddc-text-muted uppercase">
+                {slack.eventKind}
+              </span>
+            )}
+          </span>
+        </SessionPropertyRow>
+      )}
+    </>
+  );
+}
+
+/** Поле ввода, в котором клавиши страницы (D, ?) не должны срабатывать. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+}
+
+
+type Dialog = "budget" | "outcome" | "shortcuts" | "archive" | null;
+
 export function SessionDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const managedApi = useManagedApi();
-  const { t } = useI18n();
+  const { api } = useApi();
   const [events, setEvents] = useState<Event[]>([]);
   /** In-flight assistant streams keyed by message_id. Each entry holds
    *  the deltas accumulated so far. Wiped on the matching agent.message
@@ -123,72 +253,33 @@ export function SessionDetail() {
    *  with the same id (toolCallId on the AI SDK side). The accumulated
    *  string is partial JSON — render as a code block, not Markdown. */
   const [toolInputStreams, setToolInputStreams] = useState<Map<string, { name?: string; partial: string }>>(new Map());
-  const [view, setView] = useState<View>("chat");
   const [sending, setSending] = useState(false);
-  // Optimistic outbox slot — what the user typed, between hitting Send
-  // and the server-side pending broadcast (system.user_message_pending)
-  // arriving over SSE. Without this, hitting Send clears the input
-  // field instantly and the user stares at a blank conversation for the
-  // 100-500ms POST → SSE roundtrip. With it, the message appears in the
-  // queued-state EventBubble immediately and is replaced by the server's
-  // pending row the moment SSE delivers it. Single slot is intentional
-  // (we never let two POSTs be in flight at once — Send is disabled
-  // while `sending`). Set to null when SSE confirms or POST settles.
-  const [localPending, setLocalPending] = useState<string | null>(null);
-  const [agentId, setAgentId] = useState("");
-  const [sessionMeta, setSessionMeta] = useState<{
-    title?: string | null;
-    environmentId?: string;
-    vaultIds?: string[];
-    vaults?: Array<{ id: string; name?: string }>;
-    createdAt?: string;
-    agentSnapshot?: { id?: string; name?: string; model?: string | { id: string }; description?: string | null; version?: number };
-    envSnapshot?: { id?: string; name?: string; description?: string | null };
-  }>({});
-  useCrumbName(id, sessionMeta.title?.trim());
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [savingTitle, setSavingTitle] = useState(false);
-  const [resourcePanel, setResourcePanel] = useState<
-    | { kind: "agent"; id: string }
-    | { kind: "environment"; id: string }
-    | { kind: "vault"; id: string }
-    | null
-  >(null);
-  const [showFiles, setShowFiles] = useState(false);
-  const [linear, setLinear] = useState<{
-    issueId?: string;
-    issueIdentifier?: string;
-    workspaceId?: string;
-  } | null>(null);
-  const [slack, setSlack] = useState<{
-    channelId?: string;
-    threadTs?: string;
-    workspaceId?: string;
-    eventKind?: string;
-    publicationId?: string;
-  } | null>(null);
+  // Реплика, которую пользователь только что отправил. Её кладём в events
+  // сразу, как локальное событие user.message: ход разговора строится из
+  // событий, и реплика остаётся в нём на своём месте всё время работы агента и
+  // после конца хода. Старый сервер не присылает user.message в потоке,
+  // поэтому без этого реплика появилась бы только после перезагрузки.
+  // Подтверждает её ответ на POST или user.message из потока (addEvent): запись
+  // забирают по id события или, пока он неизвестен, по тексту. Показанное
+  // событие остаётся прежним, чтобы не менялся id хода и ход не
+  // перерисовывался с нуля.
+  const optimistic = useRef(new OptimisticUserMessages());
+  /** Снимок сессии с сервера. Название, бюджет и архивация правятся на месте. */
+  const [session, setSession] = useState<BetaManagedAgentsSession | null>(null);
+  const [environment, setEnvironment] = useState<BetaEnvironment | null>(null);
+  const [vaults, setVaults] = useState<Array<{ id: string; name?: string }>>([]);
+  useCrumbName(id, session?.title?.trim());
   const [status, setStatus] = useState("idle");
-  /** Lazy-fetched Trajectory v1 envelope. Drives the outcome + reward
-   *  chips in the header strip and the Trajectory viewer modal. We don't
-   *  block initial render on this — chips render as `—` until it lands.
-   *  Sentinels mirror EvalRunDetail: "loading" while in flight, "error"
-   *  if the fetch failed (404 = trajectory not built yet, 5xx = sandbox
-   *  flaky); both keep the trigger from re-firing every render. */
+  /** Траектория грузится при первом открытии окна. Метки как в EvalRunDetail:
+   *  "loading" пока идёт запрос, "error" если запрос не удался (404, пока
+   *  траектория не построена, или 5xx), чтобы повторное открытие не
+   *  стреляло запросом на каждый показ. */
   const [trajectory, setTrajectory] = useState<Trajectory | "loading" | "error" | undefined>(undefined);
-  /** Sub-agent threads in this session. Primary is implicit at index 0
-   *  (label "Main"). Empty when the session has only the primary thread,
-   *  in which case the selector UI is hidden entirely. Refreshed on
-   *  `session.thread_created` events arriving over SSE.
-   *  parent_thread_id powers the tree view (coordinator → worker → sub-
-   *  worker); missing parents fall back to the primary root. */
-  const [threads, setThreads] = useState<
-    Array<{ id: string; agent_name?: string; parent_thread_id?: string | null }>
-  >([]);
-  /** Currently-active thread id. Defaults to 'sthr_primary'. Filters
-   *  the events array at render time. SSE-driven new threads don't
-   *  auto-switch — the operator stays on whatever they're watching. */
-  const [activeThreadId, setActiveThreadId] = useState<string>("sthr_primary");
+  /** Потоки сессии, включая основной. Обновляются на `session.thread_created`. */
+  const [threads, setThreads] = useState<BetaManagedAgentsSessionThread[]>([]);
+  /** Выбранный поток. Фильтрует ленту, вкладки «События» и «Инструменты».
+   *  Новые потоки из SSE не переключают выбор: оператор остаётся там, где смотрел. */
+  const [activeThreadId, setActiveThreadId] = useState<string>(PRIMARY_THREAD_ID);
   /** Server-mirrored pending queue, keyed by event_id. Populated from
    *  the initial GET /pending plus live system.user_message_pending /
    *  _promoted / _cancelled SSE frames. Pending entries render as a
@@ -198,11 +289,123 @@ export function SessionDetail() {
    *  place in the events array via the regular SSE broadcast. */
   const [pendingByEventId, setPendingByEventId] = useState<Map<string, PendingEntry>>(new Map());
   const [showTrajectory, setShowTrajectory] = useState(false);
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const [archiving, setArchiving] = useState(false);
   /** История событий загружена (первая выгрузка завершена). Пока нет, вместо
    *  пустого состояния показываем скелетон: «Отправьте сообщение» до конца
    *  загрузки вводило бы в заблуждение (правило 12 DDC). */
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const seenKeys = useRef(new Set<string>());
+
+  // ── Инспектор, выбор события и адрес ───────────────────────────────────
+  const narrow = useNarrowViewport();
+  const urlTab = searchParams.get("inspector");
+  const prefs = useRef<InspectorPrefs | null | undefined>(undefined);
+  if (prefs.current === undefined) prefs.current = readInspectorPrefs();
+  const [inspectorOpen, setInspectorOpen] = useState(
+    () => urlTab !== null || (prefs.current?.open ?? !narrow),
+  );
+  const [inspectorWidth, setInspectorWidth] = useState(
+    () => prefs.current?.width ?? INSPECTOR_DEFAULT_WIDTH,
+  );
+  /** Вкладка, на которой закрыли инспектор: открытие возвращает её. */
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(() => parseInspectorTab(urlTab));
+  const [selection, setSelection] = useState<EventSelection>(() => ({
+    eventId: searchParams.get("event"),
+    source: "url",
+    seq: 0,
+  }));
+  /** Время под курсором на графике стоимости: метка на мини-карте. */
+  const [cursorMs, setCursorMs] = useState<number | null>(null);
+  const cursorFrame = useRef<number | null>(null);
+  /** Курсор двигается чаще, чем рисует экран: обновляем не чаще кадра. */
+  const hoverTime = useCallback((ms: number | null) => {
+    if (cursorFrame.current !== null) cancelAnimationFrame(cursorFrame.current);
+    if (ms === null) {
+      cursorFrame.current = null;
+      setCursorMs(null);
+      return;
+    }
+    cursorFrame.current = requestAnimationFrame(() => {
+      cursorFrame.current = null;
+      setCursorMs(ms);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (cursorFrame.current !== null) cancelAnimationFrame(cursorFrame.current);
+    },
+    [],
+  );
+  const eventParam = searchParams.get("event");
+  const eventParamRef = useRef(eventParam);
+  eventParamRef.current = eventParam;
+
+  const updateParams = useCallback(
+    (mutate: (params: URLSearchParams) => void) => {
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          mutate(next);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const rememberPrefs = useCallback((patch: Partial<InspectorPrefs>) => {
+    const next: InspectorPrefs = {
+      ...(prefs.current?.open === undefined ? {} : { open: prefs.current.open }),
+      width: prefs.current?.width ?? INSPECTOR_DEFAULT_WIDTH,
+      ...patch,
+    };
+    prefs.current = next;
+    writeInspectorPrefs(next);
+  }, []);
+
+  const openInspector = useCallback(() => {
+    setInspectorOpen(true);
+    rememberPrefs({ open: true });
+    updateParams((params) => params.set("inspector", inspectorTab));
+  }, [inspectorTab, rememberPrefs, updateParams]);
+
+  const closeInspector = useCallback(() => {
+    setInspectorOpen(false);
+    rememberPrefs({ open: false });
+    updateParams((params) => params.delete("inspector"));
+  }, [rememberPrefs, updateParams]);
+
+  const changeTab = useCallback(
+    (tab: InspectorTab) => {
+      setInspectorTab(tab);
+      updateParams((params) => params.set("inspector", tab));
+    },
+    [updateParams],
+  );
+
+  const changeWidth = useCallback(
+    (width: number) => {
+      const next = clampInspectorWidth(width);
+      setInspectorWidth(next);
+      rememberPrefs({ width: next });
+    },
+    [rememberPrefs],
+  );
+
+  /** Единственный путь выбора события: лента, мини-карта и вкладки зовут его,
+   *  параметр `event` в адресе остаётся источником правды. */
+  const selectEvent = useCallback(
+    (eventId: string | null, source: SelectionSource) => {
+      setSelection((previous) => ({ eventId, source, seq: previous.seq + 1 }));
+      updateParams((params) => {
+        if (eventId) params.set("event", eventId);
+        else params.delete("event");
+      });
+    },
+    [updateParams],
+  );
 
   // Dedup key for SSE re-delivery + initial-fetch overlap. `id` is stamped
   // on every event by the server (sevt-* for tool_results / stream events;
@@ -215,6 +418,16 @@ export function SessionDetail() {
   const eventKey = (e: Event) =>
     (e as { id?: string }).id
     ?? `${e.type}:${JSON.stringify(e.content || e.tool_use_id || e.error || "").slice(0, 120)}`;
+
+  /** Подтверждение локальной реплики: берём у серверного события время
+   *  обработки, остальное остаётся как показано. */
+  const confirmLocalMessage = (localId: string, serverEvent: Event) => {
+    const processedAt = (serverEvent as { processed_at?: unknown }).processed_at;
+    if (typeof processedAt !== "string") return;
+    setEvents((prev) =>
+      prev.map((e) => (e.id === localId ? { ...e, processed_at: processedAt } : e)),
+    );
+  };
 
   const addEvent = (e: Record<string, unknown>) => {
     const ev = e as Event;
@@ -384,6 +597,16 @@ export function SessionDetail() {
     if (seenKeys.current.has(key)) return;
     seenKeys.current.add(key);
 
+    // user.message сервера, который мы уже показали локальной репликой:
+    // подтверждаем её, а второй копии в ход не добавляем.
+    if (ev.type === "user.message") {
+      const localId = optimistic.current.claimForEvent(ev.id, userMessageText(ev.content));
+      if (localId) {
+        confirmLocalMessage(localId, ev);
+        return;
+      }
+    }
+
     if (ev.type === "session.status_running") setStatus("running");
     if (ev.type === "session.status_idle") setStatus("idle");
     // session.error → idle: defense-in-depth for the catch-all status_idle
@@ -414,14 +637,17 @@ export function SessionDetail() {
         session_thread_id: string;
         event: Event;
       };
-      // Server claimed our optimistic outbox slot — drop the client-only
-      // mirror so we don't double-render the same user message (server
-      // entry has more metadata + a stable event_id; ours has neither).
+      // Сервер взял реплику в очередь: убираем локальную копию из хода, чтобы
+      // не показывать одну реплику дважды (очередь рисует её сама, пока она не
+      // перейдёт в ход событием user.message).
       const inner = p.event;
       const innerText =
         inner && (inner as { content?: Array<{ type?: string; text?: string }> }).content
           ?.find((c) => c.type === "text")?.text;
-      if (innerText) setLocalPending((cur) => (cur === innerText ? null : cur));
+      const localId = optimistic.current.claimForPending(p.event_id, innerText ?? "");
+      if (localId) {
+        setEvents((prev) => prev.filter((e) => e.id !== localId));
+      }
       if (p.event_id) {
         setPendingByEventId((prev) => {
           const next = new Map(prev);
@@ -478,48 +704,25 @@ export function SessionDetail() {
         return next;
       });
     }
-    // Live-update the thread selector when a sub-agent spawns. We don't
-    // auto-switch the operator's view — they stay on whatever they're
-    // watching; the new tab just appears alongside.
+    // Субагент запущен: список потоков перечитываем, чтобы вкладка «Потоки»
+    // получила имя, модель и статус. Выбор оператора не переключаем.
     if (ev.type === "session.thread_created") {
-      const tc = ev as {
-        session_thread_id?: string;
-        agent_name?: string;
-        parent_thread_id?: string | null;
-      };
-      if (tc.session_thread_id && tc.session_thread_id !== "sthr_primary") {
-        setThreads((prev) =>
-          prev.some((t) => t.id === tc.session_thread_id)
-            ? prev
-            : [
-                ...prev,
-                {
-                  id: tc.session_thread_id!,
-                  agent_name: tc.agent_name,
-                  // SessionDO emits thread_created with parent_thread_id;
-                  // older sessions (pre-Phase 1) may not — fall back to
-                  // primary so the tree stays well-formed.
-                  parent_thread_id: tc.parent_thread_id ?? "sthr_primary",
-                },
-              ],
-        );
-      }
+      refreshThreads();
     }
-    // Don't return — Timeline's bucketIntoTurns uses these as the close
-    // boundary of a turn. Conversation view's EventBubble switch silently
-    // skips unknown types so leaving them in `events` is harmless there.
-    // Previously this dropped every span.* and agent.thinking event before
-    // they reached `events` state, so Timeline saw none of model/wakeup/
-    // compaction/outcome spans (entire reason waterfall looked empty).
-    // Conversation view's EventBubble silently ignores unknown types via
-    // its switch — keeping the events here costs the chat view nothing
-    // and gives Timeline the full trajectory it needs.
 
-    // Tag streamed events with arrival time so the timeline has a usable ts
-    // even before the server-side stored copy round-trips.
+    // Время прихода нужно событиям потока, у которых своего времени ещё нет:
+    // по нему считаются возраст и активность до ответа сервера.
     if (!ev.ts) ev.ts = new Date().toISOString();
 
     setEvents((prev) => [...prev, ev]);
+  };
+
+  /** Список потоков с сервера: основной и субагенты. */
+  const refreshThreads = () => {
+    if (!id) return;
+    managedApi.sessions.threads.list(id, { limit: 100 })
+      .then((res) => setThreads(res.data ?? []))
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -539,61 +742,36 @@ export function SessionDetail() {
     setStreams(new Map());
     setThinkingStreams(new Map());
     setToolInputStreams(new Map());
-    setAgentId("");
-    setSessionMeta({});
-    setLinear(null);
-    setSlack(null);
-    setEditingTitle(false);
-    setTitleDraft("");
-    setSavingTitle(false);
+    setSession(null);
+    setEnvironment(null);
+    setVaults([]);
     setStatus("idle");
     setTrajectory(undefined);
     setThreads([]);
-    setActiveThreadId("sthr_primary");
+    setActiveThreadId(PRIMARY_THREAD_ID);
+    setSelection({ eventId: eventParamRef.current, source: "url", seq: 0 });
     setPendingByEventId(new Map());
-    setLocalPending(null);
+    optimistic.current.clear();
     setHistoryLoaded(false);
     const abort = new AbortController();
 
     // Load session info
     managedApi.sessions.retrieve(id)
       .then((s) => {
-        setAgentId(s.agent?.id || "");
+        if (abort.signal.aborted) return;
+        setSession(s);
         setStatus(s.status);
-        setSessionMeta({
-          title: s.title ?? null,
-          environmentId: s.environment_id,
-          vaultIds: s.vault_ids,
-          createdAt: s.created_at,
-          agentSnapshot: s.agent,
-        });
-        setTitleDraft(s.title ?? "");
-
-        const linearMeta = readManagedMetadataObject(s.metadata, "linear") as
-          | { issueId?: string; issueIdentifier?: string; workspaceId?: string }
-          | null;
-        setLinear(
-          linearMeta && (linearMeta.issueId || linearMeta.issueIdentifier)
-            ? linearMeta
-            : null,
-        );
-        const slackMeta = readManagedMetadataObject(s.metadata, "slack") as
-          | { channelId?: string; threadTs?: string; workspaceId?: string; eventKind?: string; publicationId?: string }
-          | null;
-        setSlack(
-          slackMeta && (slackMeta.channelId || slackMeta.threadTs)
-            ? slackMeta
-            : null,
-        );
 
         // Live-resolve env + vault names by id. Per the id-only ref decision
         // (memory: session-resource-refs), the session API does not pre-bake
         // display data — clients fetch resources on demand. Names appear a
-        // tick later than the badge frame; until then the badge falls back
+        // tick later than the chip frame; until then the chip falls back
         // to the short-id label.
         if (s.environment_id) {
           managedApi.environments.retrieve(s.environment_id)
-            .then((env) => setSessionMeta((prev) => ({ ...prev, envSnapshot: env })))
+            .then((env) => {
+              if (!abort.signal.aborted) setEnvironment(env);
+            })
             .catch(() => {});
         }
         if (s.vault_ids?.length) {
@@ -603,7 +781,9 @@ export function SessionDetail() {
                 .then((v) => ({ id: v.id, name: v.display_name }))
                 .catch(() => ({ id: vid })),
             ),
-          ).then((vaults) => setSessionMeta((prev) => ({ ...prev, vaults })));
+          ).then((list) => {
+            if (!abort.signal.aborted) setVaults(list);
+          });
         }
       })
       .catch(() => {});
@@ -675,22 +855,7 @@ export function SessionDetail() {
       }
     })();
 
-    // Threads list (primary + sub-agent). Primary is always present
-    // (seeded by SessionDO on /init). Filter to non-primary so the
-    // selector only renders when there's something to switch between
-    // — single-thread sessions get zero UI clutter.
-    managedApi.sessions.threads.list(id, { limit: 100 })
-      .then((res) => {
-        const subThreads = (res.data ?? [])
-          .filter((t) => t.id !== "sthr_primary")
-          .map((t) => ({
-            id: t.id,
-            parent_thread_id: t.parent_thread_id,
-            agent_name: "name" in t.agent ? t.agent.name : undefined,
-          }));
-        setThreads(subThreads);
-      })
-      .catch(() => setThreads([]));
+    refreshThreads();
 
     return () => { abort.abort(); };
   }, [id]);
@@ -699,14 +864,12 @@ export function SessionDetail() {
     const text = messageText.trim();
     if (!text && !files?.length) return;
     if (!id) return;
-    setLocalPending(
-      text ||
-        (files?.length
-          ? files.length === 1
-            ? "Изображение"
-            : `${files.length} ${plural(files.length, "изображение", "изображения", "изображений")}`
-          : ""),
-    );
+    const shownText = text || attachmentOnlyText(files?.length ?? 0);
+    const localId = optimistic.current.add(shownText);
+    setEvents((prev) => [
+      ...prev,
+      createOptimisticUserEvent(localId, shownText, new Date().toISOString()),
+    ]);
     setSending(true);
     try {
       // Upload attachments first so the user.message can reference them
@@ -749,25 +912,34 @@ export function SessionDetail() {
       if (!text && uploaded.length) {
         content.unshift({
           type: "text",
-          text: uploaded.length === 1 ? "Прикреплено изображение." : "Прикреплены изображения.",
+          text: attachmentOnlyText(uploaded.length),
         });
       }
 
-      await managedApi.sessions.events.send(id, {
+      const accepted = await managedApi.sessions.events.send(id, {
         events: [{ type: "user.message", content }],
       });
-      // POST resolved → server already inserted the row + broadcast
-      // system.user_message_pending. The outbox map will pick it up
-      // (and likely already has by the time await unblocks here).
-      // Clear our local slot so we don't double-render with the server
-      // entry — but only if the server's pending hasn't already cleared
-      // it via the system.user_message_pending handler.
-      setLocalPending((cur) => (cur === text ? null : cur));
+      // POST принят. Запоминаем id события на сервере: так user.message из
+      // потока, если сервер его пришлёт, подтвердит именно эту реплику.
+      const sent = accepted?.data?.find((e) => e.type === "user.message") as
+        | Event
+        | undefined;
+      if (sent && typeof sent.id === "string") {
+        if (seenKeys.current.has(eventKey(sent))) {
+          // Серверное событие уже пришло отдельной записью (другой текст):
+          // локальная копия лишняя.
+          if (optimistic.current.release(localId)) {
+            setEvents((prev) => prev.filter((e) => e.id !== localId));
+          }
+        } else if (optimistic.current.accept(localId, sent.id)) {
+          confirmLocalMessage(localId, sent);
+        }
+      }
     } catch {
-      // api() already toasted the error; clear the optimistic slot so
-      // the user doesn't keep seeing a "stuck" pending row that will
-      // never actually run.
-      setLocalPending(null);
+      // api() already toasted the error; убираем реплику, которая не ушла.
+      if (optimistic.current.release(localId)) {
+        setEvents((prev) => prev.filter((e) => e.id !== localId));
+      }
     }
     setSending(false);
   };
@@ -783,17 +955,37 @@ export function SessionDetail() {
     () => projectCanonicalChatTurns(events as WireSessionEvent[], { threadId: activeThreadId }),
     [activeThreadId, events],
   );
-  /** Stable filtered list for Timeline — avoid reallocating on every
-   *  SessionDetail render (SSE stream updates, keystrokes, etc.), which
-   *  would otherwise invalidate TimelineView's bucketIntoTurns memo. */
-  const timelineEvents = useMemo(
-    () =>
-      events.filter((e) => {
-        const tid = (e as { session_thread_id?: string }).session_thread_id ?? "sthr_primary";
-        return tid === activeThreadId;
-      }),
+  /** События выбранного потока для вкладок «События» и «Инструменты». События
+   *  без метки потока (старые и служебные) относятся к основному. */
+  const threadEvents = useMemo(
+    () => eventsOfThread(events, activeThreadId),
     [events, activeThreadId],
   );
+  const totals = useMemo(() => computeSessionTotals(events), [events]);
+  const modelRequests = useMemo(() => collectModelRequests(events), [events]);
+  const outcomes = useMemo(() => collectOutcomes(events), [events]);
+  const threadModelIds = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, modelIdOf(thread.agent)])),
+    [threads],
+  );
+  const cost = useSessionCost({
+    sessionId: id ?? "",
+    modelId: modelIdOf(session?.agent),
+    budget: session?.budget ?? null,
+    requests: modelRequests,
+    status,
+    threadModelIds,
+  });
+  const sourceRows = useMemo(() => buildSourceRows(session?.metadata), [session]);
+  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const agentName =
+    (activeThread?.agent as { name?: string } | undefined)?.name ?? session?.agent?.name ?? "Агент";
+  const agentTools =
+    (activeThread?.agent as { tools?: unknown[] } | undefined)?.tools ?? session?.agent?.tools;
+  const updatedMs = session ? Date.parse(session.updated_at) : Number.NaN;
+  const lastActivityMs = totals.lastEventMs ?? (Number.isFinite(updatedMs) ? updatedMs : null);
+  const threadsMuted = !threads.some((thread) => thread.id !== PRIMARY_THREAD_ID);
+
   const interrupt = async () => {
     if (!id) return;
     setInterrupting(true);
@@ -810,29 +1002,84 @@ export function SessionDetail() {
     setInterrupting(false);
   };
 
-  const saveTitle = async () => {
+  const rename = async (title: string) => {
     if (!id) return;
-    setSavingTitle(true);
+    const updated = await managedApi.sessions.update(id, { title });
+    setSession((previous) =>
+      previous ? { ...previous, title: updated?.title ?? (title || null) } : previous,
+    );
+  };
+
+  const saveBudget = async (budget: BudgetParams | null) => {
+    if (!id) return;
+    await managedApi.sessions.update(id, { budget });
+    setSession((previous) => (previous ? { ...previous, budget } : previous));
+  };
+
+  const defineOutcome = async (event: OutcomeParams) => {
+    if (!id) return;
+    await managedApi.sessions.events.send(id, { events: [event] });
+  };
+
+  const archive = async () => {
+    if (!id) return;
+    setArchiving(true);
     try {
-      const updated = await managedApi.sessions.update(id, { title: titleDraft.trim() });
-      setSessionMeta((prev) => ({
-        ...prev,
-        title: updated.title ?? (titleDraft.trim() || null),
-      }));
-      setEditingTitle(false);
-    } catch (e) {
-      console.error("rename session failed", e);
+      await managedApi.sessions.archive(id);
+      toast.success("Сессия архивирована");
+      navigate("/sessions");
+    } catch {
+      // Обращение к серверу уже показало ошибку.
     } finally {
-      setSavingTitle(false);
+      setArchiving(false);
+      setDialog(null);
     }
   };
+
+  const copyAllEvents = async () => {
+    try {
+      await copyEventsToClipboard(events);
+      toast.success("События скопированы");
+    } catch {
+      toast.error("Не удалось скопировать события");
+    }
+  };
+
+  const openTrajectory = () => {
+    setShowTrajectory(true);
+    if (!id || (trajectory !== undefined && trajectory !== "error")) return;
+    setTrajectory("loading");
+    api<Trajectory>(`/v1/sessions/${encodeURIComponent(id)}/trajectory`, { quiet: true })
+      .then(setTrajectory)
+      .catch(() => setTrajectory("error"));
+  };
+
+  // Клавиши страницы: D показывает и прячет инспектор, ? открывает список клавиш.
+  // Остальные клавиши обрабатывают лента и вкладки.
+  const toggleInspectorRef = useRef<() => void>(() => {});
+  toggleInspectorRef.current = inspectorOpen ? closeInspector : openInspector;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTypingTarget(event.target)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (event.key === "?") {
+        event.preventDefault();
+        setDialog("shortcuts");
+      } else if (event.key === "d" || event.key === "D" || event.code === "KeyD") {
+        event.preventDefault();
+        toggleInspectorRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const activePendingEntries = Array.from(pendingByEventId.values())
     .filter((entry) => entry.session_thread_id === activeThreadId)
     .sort((a, b) => a.pending_seq - b.pending_seq);
   const hasTransientActivity = (
-    (localPending !== null && activeThreadId === "sthr_primary")
-    || activePendingEntries.length > 0
+    activePendingEntries.length > 0
     || thinkingStreams.size > 0
     || toolInputStreams.size > 0
     || streams.size > 0
@@ -840,7 +1087,6 @@ export function SessionDetail() {
   );
   const transientActivity = (
     <SessionTransientActivity
-      localPending={activeThreadId === "sthr_primary" ? localPending : null}
       pendingEntries={activePendingEntries}
       running={status === "running"}
       streams={streams}
@@ -849,321 +1095,181 @@ export function SessionDetail() {
     />
   );
 
-  const trajectoryTitle =
-    trajectory === "loading"
-      ? "Загрузка траектории…"
-      : trajectory === "error"
-        ? "Траектория недоступна. Нажмите, чтобы посмотреть причину"
-        : "Показать исходную траекторию (Trajectory v1)";
+  const layout = narrow ? "sheet" : "side";
 
-  return (
-    <div className="page flex h-full min-h-0 flex-col gap-4">
-      {/* Шапка: название, чипы состава сессии и действия. Заголовок
-          страницы h1 24px bold, ряд чипов под ним, действия справа
-          (.head-row, правило 7 DDC). Хлебные крошки над страницей уже несут
-          путь и id сессии, поэтому ссылки «назад» здесь нет. */}
-      <div className="head-row mb-2 shrink-0">
-        <div className="head-main space-y-3">
-          {/* Название сессии редактируется на месте; пустое показывает
-              приглушённое «Сессия без названия», чтобы переименование было
-              заметно. */}
-          <div className="flex min-h-10 items-center gap-2">
-            {editingTitle ? (
-              <>
-                <Input
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  className="min-w-0 flex-1"
-                  placeholder={t.sessions.sessionTitle}
-                  aria-label={t.sessions.sessionTitle}
-                  autoFocus
-                  disabled={savingTitle}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void saveTitle();
-                    if (e.key === "Escape") {
-                      setEditingTitle(false);
-                      setTitleDraft(sessionMeta.title ?? "");
-                    }
-                  }}
-                />
-                <Button
-                  onClick={() => void saveTitle()}
-                  loading={savingTitle}
-                  loadingLabel={t.common.saving}
-                >
-                  {t.common.save}
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setEditingTitle(false);
-                    setTitleDraft(sessionMeta.title ?? "");
-                  }}
-                  disabled={savingTitle}
-                >
-                  {t.common.cancel}
-                </Button>
-              </>
-            ) : (
-              <>
-                <h1
-                  className="min-w-0 truncate text-2xl leading-8 font-bold tracking-tight text-ddc-heading"
-                  title={sessionMeta.title?.trim() || undefined}
-                >
-                  {sessionMeta.title?.trim() || (
-                    <span className="font-normal text-ddc-text-muted">{t.sessions.untitledSession}</span>
-                  )}
-                </h1>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => {
-                    setTitleDraft(sessionMeta.title ?? "");
-                    setEditingTitle(true);
-                  }}
-                  aria-label={t.sessions.editTitle}
-                  title={t.sessions.editTitle}
-                  className="text-ddc-icon-muted hover:text-ddc-text"
-                >
-                  <PencilIcon />
-                </Button>
-              </>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill status={status as "idle" | "running" | "terminated" | "error" | string} />
-            {/* Итог траектории показываем только после завершения: пока
-                сессия идёт, статус несёт StatusPill, двойной значок не нужен. */}
-            <TrajectoryOutcomeChip trajectory={trajectory} />
-            {/* Оценка проверяющего. Скрыта, пока проверка не прошла: нет
-                оценки не значит «ноль». */}
-            <TrajectoryRewardChip trajectory={trajectory} />
-            {/* Агент, окружение и хранилища показываем всегда, чтобы состав
-                сессии читался с первого взгляда. Если снимок не принёс имя,
-                подставляем короткий id. */}
-            {(sessionMeta.agentSnapshot?.id || agentId) && (
-              <Badge
-                icon={<AgentIcon />}
-                label={sessionMeta.agentSnapshot?.name || shortenId(sessionMeta.agentSnapshot?.id || agentId)}
-                title={`Агент: ${sessionMeta.agentSnapshot?.name || sessionMeta.agentSnapshot?.id || agentId}`}
-                onClick={() =>
-                  setResourcePanel({ kind: "agent", id: sessionMeta.agentSnapshot?.id || agentId })
-                }
-              />
-            )}
-            {sessionMeta.environmentId && (
-              <Badge
-                icon={<EnvIcon />}
-                label={sessionMeta.envSnapshot?.name || shortenId(sessionMeta.environmentId)}
-                title={`Окружение: ${sessionMeta.envSnapshot?.name || sessionMeta.environmentId}`}
-                onClick={() =>
-                  setResourcePanel({ kind: "environment", id: sessionMeta.environmentId! })
-                }
-              />
-            )}
-            {(sessionMeta.vaults ?? sessionMeta.vaultIds?.map((id) => ({ id, name: undefined })) ?? []).map((v) => (
-              <Badge
-                key={v.id}
-                icon={<VaultIcon />}
-                label={v.name || shortenId(v.id)}
-                title={`Хранилище секретов: ${v.name || v.id}`}
-                onClick={() => setResourcePanel({ kind: "vault", id: v.id })}
-              />
-            ))}
-            <SessionDurationBadge events={events} />
-            {sessionMeta.createdAt && <RelativeTimeBadge iso={sessionMeta.createdAt} />}
-          </div>
-        </div>
-        <div className="head-actions">
-          {/* Остановить показываем, пока сессия выполняется. Отправляет
-              user.interrupt для активного потока: сервер прерывает ход,
-              сбрасывает очередь и сообщает status_idle. Это выход из
-              «зависшего» состояния, когда поток оборвался без status_idle. */}
-          {status === "running" && view !== "chat" && (
-            <Button
-              variant="outline"
-              onClick={() => void interrupt()}
-              loading={interrupting}
-              loadingLabel="Остановка…"
-              title="Прервать текущий ход в этом потоке"
-            >
-              <SquareIcon />
-              Остановить
-            </Button>
-          )}
-          <Button
-            variant={showFiles ? "secondary" : "outline"}
-            onClick={() => setShowFiles((v) => !v)}
-            aria-pressed={showFiles}
-            aria-label="Файлы сессии"
-            title="Файлы, которые агент сохранил в /mnt/session/outputs/"
-          >
-            <FolderOpenIcon />
-            <span className="hidden sm:inline">Файлы</span>
-          </Button>
-          {/* Просмотр траектории доступен, когда ленивая загрузка завершилась.
-              При ошибке кнопка остаётся активной: причину покажет окно. */}
-          <Button
-            variant="outline"
-            onClick={() => setShowTrajectory(true)}
-            disabled={trajectory === undefined || trajectory === "loading"}
-            aria-label="Траектория"
-            title={trajectoryTitle}
-          >
-            <FileJsonIcon />
-            <span className="hidden sm:inline">Траектория</span>
-          </Button>
-        </div>
-      </div>
-
-      {/* Режим просмотра. Одна панель вкладок tabs (правило 5 DDC),
-          справа число событий на хронологии. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
-        <div role="tablist" aria-label="Режим просмотра" className="tabs">
-          <ViewTab label="Разговор" active={view === "chat"} onClick={() => setView("chat")} />
-          <ViewTab
-            label="Хронология"
-            active={view === "timeline"}
-            onClick={() => startTransition(() => setView("timeline"))}
+  const inspector = inspectorOpen && (
+    <SessionInspector
+      layout={layout}
+      tab={inspectorTab}
+      onTabChange={changeTab}
+      onClose={closeInspector}
+      width={inspectorWidth}
+      onWidthChange={changeWidth}
+      threadsMuted={threadsMuted}
+    >
+      {inspectorTab === "session" &&
+        (session ? (
+          <SessionTab
+            session={session}
+            environment={environment}
+            vaults={vaults}
+            status={status}
+            totals={totals}
+            outcomes={outcomes}
+            cost={cost}
+            sources={sourceRows}
+            onEditBudget={() => setDialog("budget")}
+            onHoverTime={hoverTime}
           />
-        </div>
-        {view === "timeline" && (
-          <span className="text-xs text-ddc-text-muted tabular-nums">
-            {events.length} {plural(events.length, "событие", "события", "событий")}
-          </span>
-        )}
-      </div>
-
-      {/* Потоки: только когда есть субагенты. Основной поток неявно стоит
-          первым, вкладки субагентов появляются по мере их запуска. Выбор
-          потока фильтрует и разговор, и хронологию. */}
-      {threads.length > 0 && (
-        <ThreadTree
-          threads={threads}
-          activeThreadId={activeThreadId}
-          onSelect={setActiveThreadId}
+        ) : (
+          <InspectorSkeleton />
+        ))}
+      {inspectorTab === "events" && (
+        <EventsTab
+          sessionId={id ?? ""}
+          events={threadEvents}
+          selection={selection}
+          onSelectEvent={selectEvent}
         />
       )}
-
-      {/* Контекст Linear (сессию запустил вебхук Linear) */}
-      {linear && (
-        <div className="callout shrink-0 flex-wrap items-center">
-          <LinkIcon className="size-4 flex-none" aria-hidden="true" />
-          <span className="font-medium">Linear</span>
-          <span className="text-ddc-text-muted">·</span>
-          <span>
-            задача{" "}
-            <span className="font-mono">{linear.issueIdentifier ?? linear.issueId}</span>
-          </span>
-          {linear.workspaceId && (
-            <a
-              href={`https://linear.app`}
-              target="_blank"
-              rel="noreferrer"
-              className="link ml-auto inline-flex items-center gap-1"
-            >
-              Открыть в Linear
-              <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
-            </a>
-          )}
-        </div>
+      {inspectorTab === "tools" && (
+        <ToolsTab
+          events={threadEvents}
+          agentTools={agentTools}
+          selection={selection}
+          onSelectEvent={selectEvent}
+        />
       )}
-
-      {/* Контекст Slack (сессию запустило событие Slack) */}
-      {slack && (
-        <div className="callout shrink-0 flex-wrap items-center">
-          <MessageSquareIcon className="size-4 flex-none" aria-hidden="true" />
-          <span className="font-medium">Slack</span>
-          <span className="text-ddc-text-muted">·</span>
-          <span>
-            {slack.channelId ? (
-              slack.workspaceId ? (
-                <a
-                  href={`slack://channel?team=${slack.workspaceId}&id=${slack.channelId}`}
-                  className="link font-mono"
-                  title="Открыть в приложении Slack"
-                >
-                  канал {slack.channelId}
-                </a>
-              ) : (
-                <>
-                  канал <span className="font-mono">{slack.channelId}</span>
-                </>
-              )
-            ) : (
-              "–"
-            )}
-            {slack.threadTs && (
-              <>
-                {" "}тред{" "}
-                <span className="font-mono">{slack.threadTs}</span>
-              </>
-            )}
-          </span>
-          {slack.eventKind && (
-            <span className="font-mono text-xs tracking-wider text-ddc-text-muted uppercase">
-              {slack.eventKind}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Рабочая область: разговор или хронология, справа выдвижная панель.
-          События фильтруются по выбранному потоку. События без метки потока
-          (старые и служебные) относятся к основному. Карточка относительная,
-          чтобы панели на узком экране ложились поверх неё. */}
-      <div className="card relative flex min-h-[24rem] min-w-0 flex-1 overflow-hidden">
-        <div className="flex min-w-0 flex-1 flex-col">
-          {view === "chat" ? (
-            <ManagedSessionConversation
-              afterTurns={transientActivity}
-              composer={<SessionComposer
-                interrupting={interrupting}
-                onError={(error) => toast.error(error.message)}
-                onStop={() => void interrupt()}
-                onSubmit={async ({ text, files }) => {
-                  const rawFiles = files
-                    .map((file) => file.file)
-                    .filter((file): file is File => file instanceof File);
-                  await send(text, rawFiles);
-                }}
-                running={status === "running"}
-                sending={sending}
-              />}
-              empty={
-                hasTransientActivity
-                  ? transientActivity
-                  : historyLoaded
-                    ? undefined
-                    : <SessionHistorySkeleton />
-              }
-              sessionId={id}
-              turns={canonicalTurns}
-            />
-          ) : (
-            <TimelineView
-              key={`${id ?? "session"}:${activeThreadId}`}
-              events={timelineEvents}
-              loading={!historyLoaded}
-            />
-          )}
-        </div>
-        {resourcePanel && (
-          <ResourcePanel
-            panel={resourcePanel}
-            onClose={() => setResourcePanel(null)}
+      {inspectorTab === "resources" && id && <ResourcesTab sessionId={id} />}
+      {inspectorTab === "thread" &&
+        (session ? (
+          <ThreadsTab
+            session={session}
+            threads={threads}
+            events={events}
+            activeThreadId={activeThreadId}
+            onSelectThread={setActiveThreadId}
+            priceForModel={cost.priceForModel}
           />
-        )}
-        {showFiles && id && (
-          <FilesPanel sessionId={id} onClose={() => setShowFiles(false)} />
-        )}
+        ) : (
+          <InspectorSkeleton />
+        ))}
+    </SessionInspector>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 px-6 pt-6 pb-3 md:px-8">
+        <SessionHeader
+          session={session}
+          environment={environment}
+          status={status}
+          totals={totals}
+          cost={cost}
+          lastActivityMs={lastActivityMs}
+          onRename={rename}
+          onInterrupt={() => void interrupt()}
+          onDefineOutcome={() => setDialog("outcome")}
+          onEditBudget={() => setDialog("budget")}
+          onArchive={() => setDialog("archive")}
+          onCopyEvents={() => void copyAllEvents()}
+          onDownloadEvents={() => {
+            if (id) downloadEventsFile(id, events);
+          }}
+          onShowTrajectory={openTrajectory}
+          onShowShortcuts={() => setDialog("shortcuts")}
+        />
       </div>
+
+      {/* Рабочая область: слева колонка разговора с поиском, мини-картой и
+          полем ввода, справа инспектор до низа окна. На узком экране
+          инспектор нижний лист поверх колонки. */}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col px-6 md:pr-6 md:pl-8">
+          <ManagedSessionConversation
+            afterTurns={transientActivity}
+            composer={<SessionComposer
+              interrupting={interrupting}
+              onError={(error) => toast.error(error.message)}
+              onStop={() => void interrupt()}
+              onSubmit={async ({ text, files }) => {
+                const rawFiles = files
+                  .map((file) => file.file)
+                  .filter((file): file is File => file instanceof File);
+                await send(text, rawFiles);
+              }}
+              running={status === "running"}
+              sending={sending}
+            />}
+            empty={
+              hasTransientActivity
+                ? transientActivity
+                : historyLoaded
+                  ? undefined
+                  : <SessionHistorySkeleton />
+            }
+            sessionId={id}
+            turns={canonicalTurns}
+            agentName={agentName}
+            running={status === "running"}
+            selection={selection}
+            onSelectEvent={selectEvent}
+            externalCursorMs={cursorMs}
+            toolbarTrailing={
+              inspectorOpen ? undefined : (
+                <Button variant="outline" size="xs" onClick={openInspector}>
+                  <PanelRightOpenIcon aria-hidden="true" />
+                  Инспектор
+                </Button>
+              )
+            }
+          />
+        </div>
+        {layout === "side" && inspector}
+      </div>
+      {layout === "sheet" && inspector}
+
+      <EditBudgetDialog
+        open={dialog === "budget"}
+        onClose={() => setDialog(null)}
+        budgetCents={cost.budgetCents}
+        spentMicros={cost.totalMicros}
+        onSave={saveBudget}
+      />
+      <DefineOutcomeDialog
+        open={dialog === "outcome"}
+        onClose={() => setDialog(null)}
+        onSubmit={defineOutcome}
+      />
+      <ShortcutsDialog open={dialog === "shortcuts"} onClose={() => setDialog(null)} />
+      <ConfirmDialog
+        open={dialog === "archive"}
+        title="Архивировать сессию?"
+        message="Сессия уйдёт в архив и пропадёт из списка активных."
+        confirmLabel="Архивировать"
+        busy={archiving}
+        onConfirm={() => void archive()}
+        onCancel={() => setDialog(null)}
+      />
       <TrajectoryViewerModal
         open={showTrajectory}
         onClose={() => setShowTrajectory(false)}
         sessionId={id ?? ""}
         trajectory={trajectory}
       />
+    </div>
+  );
+}
+
+/** Скелетон вкладки, пока сессия не пришла. */
+function InspectorSkeleton() {
+  return (
+    <div className="space-y-3 p-4" role="status" aria-busy="true">
+      <span className="sr-only">Загрузка сессии…</span>
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-5/6" />
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-4 w-3/4" />
     </div>
   );
 }
@@ -1191,167 +1297,13 @@ function SessionHistorySkeleton() {
   );
 }
 
-function ViewTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  // Вкладка DDC (.tab): выбранная читается через aria-selected и ложится на
-  // заливку brand-50, подчёркивания нет (правило 5).
-  return (
-    <PlainButton
-      type="button"
-      onClick={onClick}
-      role="tab"
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      className="tab"
-    >
-      {label}
-    </PlainButton>
-  );
-}
-
-/** Вкладка потока. Отступ слева растёт с глубиной, чтобы дерево субагентов
- *  читалось как стек вызовов: родитель выше своих потомков. */
-function ThreadTab({
-  label,
-  active,
-  onClick,
-  depth = 0,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  depth?: number;
-}) {
-  return (
-    <PlainButton
-      type="button"
-      onClick={onClick}
-      role="tab"
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      className="tab"
-      style={{ paddingLeft: `${0.75 + depth * 0.75}rem` }}
-    >
-      {/* Знак ветки для depth>0: поток порождён другим потоком, а не стоит
-          рядом с основным. */}
-      {depth > 0 && (
-        <CornerDownRightIcon className="size-3.5 text-ddc-icon-muted" aria-hidden="true" />
-      )}
-      <span>{label}</span>
-    </PlainButton>
-  );
-}
-
-/**
- * Дерево потоков с отступом по глубине. Корень sthr_primary называется
- * «Основной», дети идут по parent_thread_id обходом в глубину: родители
- * выше потомков.
- *
- * Сирот (parent_thread_id указывает на неизвестный поток: гонка при запуске
- * или устаревший снимок) переносим под sthr_primary, чтобы они остались
- * видимыми.
- */
-function ThreadTree({
-  threads,
-  activeThreadId,
-  onSelect,
-}: {
-  threads: Array<{ id: string; agent_name?: string; parent_thread_id?: string | null }>;
-  activeThreadId: string;
-  onSelect: (id: string) => void;
-}) {
-  const knownIds = new Set<string>(["sthr_primary", ...threads.map((t) => t.id)]);
-  const childrenOf = new Map<string, typeof threads>();
-  for (const t of threads) {
-    const parent =
-      t.parent_thread_id && knownIds.has(t.parent_thread_id)
-        ? t.parent_thread_id
-        : "sthr_primary";
-    const arr = childrenOf.get(parent) ?? [];
-    arr.push(t);
-    childrenOf.set(parent, arr);
-  }
-  const flat: Array<{ id: string; label: string; depth: number }> = [
-    { id: "sthr_primary", label: "Основной", depth: 0 },
-  ];
-  const walk = (parentId: string, depth: number) => {
-    const kids = childrenOf.get(parentId) ?? [];
-    for (const k of kids) {
-      flat.push({ id: k.id, label: k.agent_name ?? k.id.slice(0, 12), depth });
-      walk(k.id, depth + 1);
-    }
-  };
-  walk("sthr_primary", 1);
-  const maxDepth = flat.reduce((m, n) => Math.max(m, n.depth), 0);
-  // Неглубокое дерево (один слой работников под основным) остаётся
-  // горизонтальной панелью с прокруткой; глубокое встаёт столбцом, иначе
-  // отступы не прочитать.
-  const isFlat = maxDepth <= 1;
-  return (
-    <div
-      role="tablist"
-      aria-label="Потоки"
-      className={
-        isFlat
-          ? "tabs shrink-0"
-          : "tabs max-h-44 shrink-0 flex-col items-stretch gap-0 overflow-y-auto"
-      }
-    >
-      {flat.map((n) => (
-        <ThreadTab
-          key={n.id}
-          label={n.label}
-          depth={isFlat ? 0 : n.depth}
-          active={activeThreadId === n.id}
-          onClick={() => onSelect(n.id)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function SessionDurationBadge({ events }: { events: Event[] }) {
-  if (events.length === 0) return null;
-  let first = Infinity;
-  let last = -Infinity;
-  for (const e of events) {
-    const ts = (e as { processed_at?: string }).processed_at;
-    if (typeof ts !== "string") continue;
-    const t = new Date(ts).getTime();
-    if (!Number.isFinite(t)) continue;
-    if (t < first) first = t;
-    if (t > last) last = t;
-  }
-  if (!Number.isFinite(first) || last <= first) return null;
-  return (
-    <Badge
-      icon={<DurationIcon />}
-      label={formatDurationRu(last - first)}
-      title="Время от первого до последнего события"
-    />
-  );
-}
-
-function RelativeTimeBadge({ iso }: { iso: string }) {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return null;
-  return (
-    <Badge
-      icon={<ClockIcon />}
-      label={formatRelativeRu(Date.now() - t)}
-      title={`Создана ${formatDateTimeRu(iso)}`}
-    />
-  );
-}
-
 function SessionTransientActivity({
-  localPending,
   pendingEntries,
   running,
   streams,
   thinkingStreams,
   toolInputStreams,
 }: {
-  localPending: string | null;
   pendingEntries: PendingEntry[];
   running: boolean;
   streams: ReadonlyMap<string, string>;
@@ -1360,12 +1312,6 @@ function SessionTransientActivity({
 }) {
   return (
     <div className="chat-turn-frame mx-auto w-full max-w-3xl min-w-0 space-y-4">
-      {localPending ? (
-        <EventRender
-          event={{ type: "user.message", content: [{ type: "text", text: localPending }] } as Event}
-          livePending
-        />
-      ) : null}
       {pendingEntries.map((entry) => (
         <EventRender
           event={entry.event}
@@ -1598,18 +1544,14 @@ function EventRender({
           : undefined;
       const baseName = event.name ?? "инструмент";
       const title = mcpServerName ? `${baseName} (MCP · ${mcpServerName})` : baseName;
-      // Result text — Tool's <ToolOutput> takes the raw value and will
-      // either CodeBlock-stringify an object or render a string in a
-      // CodeBlock. We pre-stringify content arrays since they're an
-      // OMA-specific shape, not a JSON-friendly object.
+      // Result text: content-блоки склеиваем в текст (formatToolOutput),
+      // а не показываем JSON-массивом.
       const rawContent = pairedResult
         ? (pairedResult as { content?: unknown }).content
         : undefined;
       const output: unknown = rawContent === undefined
         ? undefined
-        : typeof rawContent === "string"
-          ? rawContent
-          : JSON.stringify(rawContent, null, 2);
+        : formatToolOutput(rawContent);
       // is_error is set by the agent runtime when a tool call failed
       // (bash non-zero exit + stderr surfaced, mcp tool returned an
       // error envelope, _finalizeStaleTurns injected an abort placeholder
@@ -1652,9 +1594,7 @@ function EventRender({
       const rawContent = (event as { content?: unknown }).content;
       const output: unknown = rawContent === undefined
         ? undefined
-        : typeof rawContent === "string"
-          ? rawContent
-          : JSON.stringify(rawContent, null, 2);
+        : formatToolOutput(rawContent);
       return (
         <Tool>
           <ToolHeader
@@ -1672,7 +1612,7 @@ function EventRender({
     case "session.error":
       return (
         <div className="callout-danger max-w-2xl flex-col items-stretch gap-1.5" role="alert">
-          <div>Ошибка: {event.error}</div>
+          <div>Ошибка: {sessionErrorText(event.error)}</div>
           {modelErrorCause && (
             <div>
               <span className="font-medium">Причина</span>
@@ -1697,3 +1637,4 @@ function EventRender({
       return null;
   }
 }
+

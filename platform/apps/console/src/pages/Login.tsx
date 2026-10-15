@@ -387,7 +387,7 @@ export function Login() {
   const isOtpMode = mode === "verify-signup" || mode === "verify-login" || mode === "reset-otp";
 
   const titles: Record<Mode, string> = {
-    chooser: branding.loginTitle ?? `Вход в ${branding.productName}`,
+    chooser: branding.loginTitle ?? "Вход в консоль агентов",
     login: "Вход по почте",
     signup: "Создание учётной записи",
     "otp-login": "Вход по коду из письма",
@@ -400,7 +400,7 @@ export function Login() {
   const subtitles: Record<Mode, string> = {
     chooser: branding.loginSubtitle ?? "",
     login: "Введите почту и пароль",
-    signup: `Начните работу с ${branding.productName}`,
+    signup: "Регистрация",
     "otp-login": "Отправим 6-значный код на вашу почту",
     "verify-signup": `Мы отправили код на ${email}`,
     "verify-login": `Мы отправили код на ${email}`,
@@ -426,7 +426,7 @@ export function Login() {
     <ModernLoginShell>
       <div className="flex flex-col gap-8">
         <header>
-          <div className="mb-8 flex lg:hidden">
+          <div className="mb-8 flex empty:hidden lg:hidden">
             <Logo size="lg" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-ddc-heading">
@@ -710,7 +710,7 @@ export function Login() {
           )}
           {mode === "login" && (
             <>
-              <span>Впервые в {branding.productName}?</span>
+              <span>Впервые здесь?</span>
               <Button
                 type="button"
                 variant="link"

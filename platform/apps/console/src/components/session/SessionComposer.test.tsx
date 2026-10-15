@@ -20,6 +20,90 @@ describe("<SessionComposer />", () => {
       .toBeNull();
   });
 
+  it("пишет «Сообщение агенту» в подсказке и оставляет подпись «Сообщение» для экранного чтения", () => {
+    render(
+      <SessionComposer
+        interrupting={false}
+        onError={vi.fn()}
+        onStop={vi.fn()}
+        onSubmit={vi.fn()}
+        running={false}
+        sending={false}
+      />,
+    );
+
+    const field = screen.getByRole("textbox", { name: "Сообщение" });
+    expect(field).toHaveAttribute("placeholder", "Сообщение агенту");
+    expect(field).toHaveAttribute("rows", "1");
+  });
+
+  it("держит «+», поле и кнопку отправки в одной строке", () => {
+    render(
+      <SessionComposer
+        interrupting={false}
+        onError={vi.fn()}
+        onStop={vi.fn()}
+        onSubmit={vi.fn()}
+        running={false}
+        sending={false}
+      />,
+    );
+
+    const field = screen.getByRole("textbox", { name: "Сообщение" });
+    const attach = screen.getByRole("button", { name: "Добавить изображение" });
+    const action = screen.getByRole("button", { name: "Отправить сообщение" });
+    expect(attach.parentElement).toBe(field.parentElement);
+    expect(action.parentElement).toBe(field.parentElement);
+    const order = Array.from(field.parentElement!.children);
+    expect(order.indexOf(attach)).toBeLessThan(order.indexOf(field));
+    expect(order.indexOf(field)).toBeLessThan(order.indexOf(action));
+  });
+
+  it("рисует кнопку отправки и остановки круглой", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <SessionComposer
+        interrupting={false}
+        onError={vi.fn()}
+        onStop={vi.fn()}
+        onSubmit={vi.fn()}
+        running={false}
+        sending={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Отправить сообщение" })).toHaveClass("rounded-full");
+    await user.type(screen.getByRole("textbox", { name: "Сообщение" }), "a");
+    await user.clear(screen.getByRole("textbox", { name: "Сообщение" }));
+
+    rerender(
+      <SessionComposer
+        interrupting={false}
+        onError={vi.fn()}
+        onStop={vi.fn()}
+        onSubmit={vi.fn()}
+        running
+        sending={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Остановить ответ" })).toHaveClass("rounded-full");
+  });
+
+  it("не даёт отправить пустое поле: кнопка неактивна", () => {
+    render(
+      <SessionComposer
+        interrupting={false}
+        onError={vi.fn()}
+        onStop={vi.fn()}
+        onSubmit={vi.fn()}
+        running={false}
+        sending={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Отправить сообщение" })).toBeDisabled();
+  });
+
   it("submits an idle draft from the single primary action", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();

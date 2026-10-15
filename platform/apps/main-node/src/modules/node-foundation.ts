@@ -267,11 +267,13 @@ export async function createNodeFoundation(
   async function buildSandbox(
     sessionId: string,
     workdir: string,
+    environment?: import("@open-managed-agents/sandbox").SandboxEnvironmentSpec,
   ): Promise<import("@open-managed-agents/sandbox").SandboxExecutor> {
     return components.sandbox(
       {
         sessionId,
         workdir,
+        ...(environment && { environment }),
         memoryRoot: memoryBlobLocalDir ?? "",
         memoryWorkspace: {
           getText: (key) => memoryBlobs.getText(key),

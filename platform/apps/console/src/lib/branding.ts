@@ -22,7 +22,7 @@ export interface Branding {
 }
 
 export const DEFAULT_BRANDING: Branding = {
-  productName: "openma",
+  productName: "Консоль агентов",
   logoUrl: null,
   logoDarkUrl: null,
   faviconUrl: null,

@@ -19,4 +19,20 @@ describe("console page surfaces", () => {
     expect(slots).toEqual(["intro", "kpis", "activity"]);
     expect(within(layout).getByRole("button", { name: /Agents/i })).toHaveTextContent("12");
   });
+  it("переносит длинную подпись KPI вместо обрезки многоточием", () => {
+    render(
+      <>
+        <KpiCard label="Хранилища секретов" value={3} onClick={() => undefined} />
+        <KpiCard compact label="Карточки моделей" value={6} onClick={() => undefined} />
+      </>,
+    );
+
+    for (const name of ["Хранилища секретов", "Карточки моделей"]) {
+      const label = screen.getByText(name);
+      expect(label, name).toHaveClass("kpi-label");
+      expect(label, name).toHaveClass("break-words");
+      expect(label, name).not.toHaveClass("truncate");
+      expect(label, name).not.toHaveAttribute("title");
+    }
+  });
 });

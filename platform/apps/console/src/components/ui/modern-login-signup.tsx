@@ -34,7 +34,7 @@ const HIGHLIGHTS = [
  * Оболочка входа в стиле портала DDC (раздел 4: `min-h-screen grid
  * lg:grid-cols-2`). Слева от lg панель бренда на `brand-700`, справа колонка
  * формы с отступами `p-6 md:p-12` и шириной `max-w-sm`. На телефоне панели
- * нет, знак стоит над заголовком формы.
+ * нет, знак, если развёртывание его задало, стоит над заголовком формы.
  *
  * Только оформление: состояние и вызовы провайдеров остаются на странице.
  * Панель сама по себе ничего не объявляет читалке, поэтому знак в ней скрыт
@@ -53,8 +53,8 @@ export function ModernLoginShell({ children, className }: ModernLoginShellProps)
         className="relative hidden flex-col justify-center overflow-hidden bg-brand-700 px-12 py-32 text-ddc-on-primary lg:flex"
       >
         <div className="absolute inset-x-12 top-12 mx-auto flex max-w-xl items-center gap-3">
-          <div aria-hidden="true" className="flex-none">
-            <Logo size="lg" tone="current" className="text-ddc-on-primary brightness-0 invert" />
+          <div aria-hidden="true" className="flex-none empty:hidden">
+            <Logo size="lg" className="brightness-0 invert" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-lg font-bold tracking-tight">{branding.productName}</p>

@@ -29,7 +29,7 @@ const ACME = {
 };
 
 beforeEach(() => {
-  document.head.innerHTML = '<title>Open Managed Agents</title><link rel="icon" href="/logo.svg" />';
+  document.head.innerHTML = '<title>Консоль агентов</title><link rel="icon" href="/logo.svg" />';
   resetBrandingForTests();
 });
 afterEach(() => resetBrandingForTests());
@@ -46,7 +46,7 @@ describe("console branding", () => {
     expect(b.faviconUrl).toBeNull();
     expect(b.stylesheetUrl).toBe("/branding/theme.css");
     expect(parseBranding(null)).toEqual(DEFAULT_BRANDING);
-    expect(parseBranding({}).productName).toBe("openma");
+    expect(parseBranding({}).productName).toBe("Консоль агентов");
   });
 
   it("reads server-injected settings without a request", async () => {
@@ -73,11 +73,12 @@ describe("console branding", () => {
 
   it("keeps the defaults when the deployment has no branding", async () => {
     await loadBranding((async () => Response.json({ error: "not found" }, { status: 404 })) as never);
-    expect(document.title).toBe("Open Managed Agents");
+    expect(document.title).toBe("Консоль агентов");
     render(<ProductName />);
-    expect(screen.getByTestId("product")).toHaveTextContent("openma");
-    render(<Logo />);
-    expect(screen.getByRole("img", { name: "openma" }).tagName.toLowerCase()).toBe("svg");
+    expect(screen.getByTestId("product")).toHaveTextContent("Консоль агентов");
+    expect(DEFAULT_BRANDING.productName).toBe("Консоль агентов");
+    const { container } = render(<Logo />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("brands the logo and the sign-in page", () => {
@@ -96,7 +97,7 @@ describe("console branding", () => {
     expect(logos[1]).toHaveClass("hidden", "dark:block");
   });
 
-  it("uses the product name when no login copy is set", () => {
+  it("keeps the plain sign-in title when only the product name is set", () => {
     resetBrandingForTests(parseBranding({ product_name: "Acme Agents" }));
     render(
       <MemoryRouter initialEntries={["/login"]}>
@@ -105,7 +106,9 @@ describe("console branding", () => {
         </I18nProvider>
       </MemoryRouter>,
     );
-    expect(screen.getByRole("heading", { name: "Вход в Acme Agents" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Acme Agents" }).tagName.toLowerCase()).toBe("svg");
+    expect(screen.getByRole("heading", { name: "Вход в консоль агентов" })).toBeInTheDocument();
+    // Без своего логотипа знак не рисуется, а название остаётся текстом на панели.
+    expect(screen.queryByRole("img", { name: "Acme Agents" })).toBeNull();
+    expect(screen.getByText("Acme Agents")).toBeInTheDocument();
   });
 });

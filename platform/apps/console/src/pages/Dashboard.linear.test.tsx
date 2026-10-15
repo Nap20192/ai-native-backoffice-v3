@@ -49,7 +49,7 @@ describe("Dashboard Linear density", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Начало работы с openma" }),
+      screen.getByRole("heading", { name: "Начало работы" }),
     ).toBeInTheDocument();
     const primary = screen.getByTestId("dashboard-primary-kpis");
     expect(within(primary).getByRole("button", { name: "Агенты: 1" })).toBeInTheDocument();

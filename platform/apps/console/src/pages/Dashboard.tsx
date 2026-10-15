@@ -16,7 +16,6 @@ import { NAV_ICONS } from "../components/nav-icons";
 import { PageHeader } from "../components/PageHeader";
 import { Skeleton } from "../components/Skeleton";
 import { useI18n } from "../i18n";
-import { useBranding } from "../lib/branding";
 import { useApiQuery } from "../lib/useApiQuery";
 import { formatDate } from "./ru-format";
 import type { BetaManagedAgentsSession } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
@@ -93,7 +92,6 @@ function CopyBlock({
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const branding = useBranding();
   const [copied, setCopied] = useState<string | null>(null);
   const { t } = useI18n();
   const statsQuery = useApiQuery<Stats>("/v1/oma/stats");
@@ -137,7 +135,7 @@ export function Dashboard() {
       intro={
         <PageHeader
           className="mb-0"
-          title={`Начало работы с ${branding.productName}`}
+          title="Начало работы"
           description={t.dashboard.handPlatformToAgent}
         />
       }

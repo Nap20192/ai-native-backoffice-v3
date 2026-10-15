@@ -112,9 +112,7 @@ export function KpiCard({ label, value, onClick, icon: Icon, loading, compact }:
         aria-busy={loading || undefined}
         onClick={onClick}
       >
-        <span className="kpi-label min-w-0 truncate" title={label}>
-          {label}
-        </span>
+        <span className="kpi-label min-w-0 break-words">{label}</span>
         <span className="flex-none">{valueNode}</span>
       </PlainButton>
     );
@@ -135,9 +133,7 @@ export function KpiCard({ label, value, onClick, icon: Icon, loading, compact }:
       )}
       <span className="mt-auto block min-w-0">
         {valueNode}
-        <span className="kpi-label block truncate" title={label}>
-          {label}
-        </span>
+        <span className="kpi-label block break-words">{label}</span>
       </span>
     </PlainButton>
   );

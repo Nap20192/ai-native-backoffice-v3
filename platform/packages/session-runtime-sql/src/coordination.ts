@@ -234,6 +234,19 @@ function timestamp(value: string, name: string): number {
   return milliseconds;
 }
 
+/** `column = ? AND ` for each defined value, ready to prefix a WHERE clause. */
+function optionalEquals(
+  filters: ReadonlyArray<readonly [column: string, value: string | null | undefined]>,
+): { sql: string; params: string[] } {
+  const present = filters.filter(
+    (filter): filter is readonly [string, string] => filter[1] != null,
+  );
+  return {
+    sql: present.map(([column]) => `${column} = ? AND `).join(""),
+    params: present.map(([, value]) => value),
+  };
+}
+
 function safeInteger(value: number | string, name: string): number {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error(`Invalid ${name}`);
@@ -470,13 +483,18 @@ export class SqlSessionExecutionStore
     id: string;
     revision: number | string;
   } | null> {
+    // Optional filters are composed, not written as `? IS NULL OR ...`:
+    // PostgreSQL cannot infer the type of a placeholder used only with
+    // IS NULL and rejects the statement (42P18).
+    const filters = optionalEquals([
+      ["candidate.workspace_id", input.workspaceId],
+      ["candidate.session_id", input.sessionId],
+      ["candidate.lane_id", input.laneId],
+    ]);
     return this.sql.prepare(`
       SELECT candidate.workspace_id, candidate.session_id, candidate.id, candidate.revision
         FROM managed_session_executions AS candidate
-       WHERE (? IS NULL OR candidate.workspace_id = ?)
-         AND (? IS NULL OR candidate.session_id = ?)
-         AND (? IS NULL OR candidate.lane_id = ?)
-         AND (candidate.state = 'queued' OR (candidate.state = 'running'
+       WHERE ${filters.sql}(candidate.state = 'queued' OR (candidate.state = 'running'
            AND candidate.lease_expires_at_ms <= ? AND candidate.owner_id <> ?))
          AND candidate.attempt_count < candidate.max_attempts
          AND candidate.deadline_at_ms > ?
@@ -499,9 +517,7 @@ export class SqlSessionExecutionStore
        ORDER BY candidate.admitted_at_ms ASC, candidate.id ASC
        LIMIT 1
     `).bind(
-      input.workspaceId ?? null, input.workspaceId ?? null,
-      input.sessionId ?? null, input.sessionId ?? null,
-      input.laneId ?? null, input.laneId ?? null,
+      ...filters.params,
       claimedAt, input.ownerId, claimedAt,
       ...(serial ? [claimedAt] : []),
     ).first<{
@@ -756,20 +772,19 @@ export class SqlSessionExecutionStore
     requestedAt: string;
   }): Promise<{ type: "requested" | "idle" }> {
     const requestedAt = timestamp(input.requestedAt, "interrupt request");
+    const lane = optionalEquals([["lane_id", input.laneId]]);
     const queued = this.sql.prepare(`
       UPDATE managed_session_executions
          SET state = 'cancelled', settled_at_ms = ?,
              interrupt_requested_at_ms = COALESCE(interrupt_requested_at_ms, ?),
              failure = 'interrupted before execution', revision = revision + 1
-       WHERE workspace_id = ? AND session_id = ? AND state = 'queued'
-         AND (? IS NULL OR lane_id = ?)
+       WHERE ${lane.sql}workspace_id = ? AND session_id = ? AND state = 'queued'
     `).bind(
       requestedAt,
       requestedAt,
+      ...lane.params,
       input.workspaceId,
       input.sessionId,
-      input.laneId ?? null,
-      input.laneId ?? null,
     );
     const expired = this.sql.prepare(`
       UPDATE managed_session_executions
@@ -777,32 +792,28 @@ export class SqlSessionExecutionStore
              interrupt_requested_at_ms = COALESCE(interrupt_requested_at_ms, ?),
              failure = 'interrupted after owner lease expired',
              revision = revision + 1
-       WHERE workspace_id = ? AND session_id = ? AND state = 'running'
+       WHERE ${lane.sql}workspace_id = ? AND session_id = ? AND state = 'running'
          AND lease_expires_at_ms <= ?
-         AND (? IS NULL OR lane_id = ?)
     `).bind(
       requestedAt,
       requestedAt,
+      ...lane.params,
       input.workspaceId,
       input.sessionId,
       requestedAt,
-      input.laneId ?? null,
-      input.laneId ?? null,
     );
     const active = this.sql.prepare(`
       UPDATE managed_session_executions
          SET interrupt_requested_at_ms = COALESCE(interrupt_requested_at_ms, ?),
              revision = revision + 1
-       WHERE workspace_id = ? AND session_id = ? AND state = 'running'
+       WHERE ${lane.sql}workspace_id = ? AND session_id = ? AND state = 'running'
          AND lease_expires_at_ms > ?
-         AND (? IS NULL OR lane_id = ?)
     `).bind(
       requestedAt,
+      ...lane.params,
       input.workspaceId,
       input.sessionId,
       requestedAt,
-      input.laneId ?? null,
-      input.laneId ?? null,
     );
     const results = await this.sql.batch([queued, expired, active]);
     return results.reduce((total, result) => total + result.meta.changes, 0) === 0

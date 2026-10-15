@@ -163,6 +163,12 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     return value;
   };
   const flag = (key: string): boolean => env[key] === "1";
+  // `.env` templates leave keys present but blank (`ANTHROPIC_API_KEY=`).
+  // Blank means "not configured", never an empty credential.
+  const optional = (key: string): string | undefined => {
+    const value = env[key];
+    return value === undefined || value.trim() === "" ? undefined : value;
+  };
 
   let processMode: NodeProcessMode = "standalone";
   attempt(undefined, () => {
@@ -266,8 +272,8 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     memoryQueue,
     realtime,
     model: {
-      apiKey: env.ANTHROPIC_API_KEY,
-      baseUrl: env.ANTHROPIC_BASE_URL,
+      apiKey: optional("ANTHROPIC_API_KEY"),
+      baseUrl: optional("ANTHROPIC_BASE_URL"),
       customHeaders: parseCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS),
     },
     dreamCurator: env.DREAM_CURATOR_MODE === "dedup" ? "dedup" : "model",

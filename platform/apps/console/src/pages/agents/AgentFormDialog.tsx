@@ -875,8 +875,7 @@ function ToolsTab({ form, setForm }: { form: FormState; setForm: FormSetter }) {
       <div className="rounded-xl bg-ddc-surface-muted p-4">
         <div className="text-sm font-medium text-ddc-heading">Политика по умолчанию</div>
         <p className="mt-1 mb-4 text-xs leading-4 text-ddc-text-muted">
-          Действует для каждого инструмента ниже со значением{" "}
-          <span className="font-mono">default</span>.
+          Действует для каждого инструмента ниже, у которого выбрано «По умолчанию».
         </p>
         <div className="flex flex-wrap items-center gap-4">
           <Label className="flex items-center gap-2 text-sm leading-5">
@@ -912,9 +911,9 @@ function ToolsTab({ form, setForm }: { form: FormState; setForm: FormSetter }) {
       <div>
         <div className="text-sm font-medium text-ddc-heading">Исключения по инструментам</div>
         <p className="mt-1 mb-3 text-xs leading-4 text-ddc-text-muted">
-          В списке каждой строки показано действующее значение. Выберите{" "}
-          <span className="font-mono">default</span>, чтобы наследовать политику выше, или
-          конкретное значение, чтобы её переопределить. Режим «Всегда спрашивать» создаёт
+          В списке каждой строки показано действующее значение. Выберите «По умолчанию»,
+          чтобы наследовать политику выше, или конкретное значение, чтобы её переопределить.
+          Режим «Всегда спрашивать» создаёт
           событие <span className="font-mono">user.tool_confirmation</span>, которое клиент
           должен подтвердить перед каждым вызовом.
         </p>
@@ -1089,7 +1088,7 @@ function SkillsTab({
           <div>
             <div className="text-sm font-medium text-ddc-heading">Закреплённые версии навыков</div>
             <p className="mt-1 text-xs leading-4 text-ddc-text-muted">
-              Пустое поле означает последнюю версию (<span className="font-mono">latest</span>).
+              Пустое поле означает последнюю версию.
             </p>
           </div>
           {form.skills.map((skill, index) => (
@@ -1114,7 +1113,7 @@ function SkillsTab({
                   setForm({ ...form, skills });
                 }}
                 className="w-32 flex-none"
-                placeholder="latest"
+                placeholder="последняя"
                 aria-label={`Версия навыка ${skill.skill_id}`}
               />
             </div>
@@ -1293,7 +1292,7 @@ function AgentsTab({
                   }
                   setForm({ ...form, callableAgents });
                 }}
-                placeholder="latest"
+                placeholder="последняя"
               />
             </Field>
             <Button

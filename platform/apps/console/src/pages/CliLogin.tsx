@@ -7,7 +7,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Logo } from "../components/Logo";
-import { useBranding } from "../lib/branding";
 
 // Browser-side handler for `oma auth login`. The CLI opens this URL with
 // callback + state in the query string, the user authenticates (cookie
@@ -80,7 +79,6 @@ function encodeTokensParam(tokens: MintedToken[]): string {
 
 export function CliLogin() {
   const { api } = useApi();
-  const branding = useBranding();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const callback = params.get("callback") ?? "";
   const state = params.get("state") ?? "";
@@ -222,7 +220,7 @@ export function CliLogin() {
           <Logo size="md" />
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-ddc-heading">Авторизация CLI</h1>
-            <div className="text-xs text-muted">Клиент командной строки {branding.productName}</div>
+            <div className="text-xs text-muted">Клиент командной строки</div>
           </div>
         </div>
 

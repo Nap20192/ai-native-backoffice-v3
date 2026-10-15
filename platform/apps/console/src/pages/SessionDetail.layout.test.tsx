@@ -325,6 +325,26 @@ describe("SessionDetail: шапка", () => {
   });
 });
 
+describe("SessionDetail: загрузка", () => {
+  it("пока сессия и история не пришли, в шапке и в ленте стоят скелетоны", async () => {
+    api.sessions.retrieve.mockReturnValue(new Promise(() => {}));
+    api.sessions.events.list.mockReturnValue(new Promise(() => {}));
+    openPage();
+
+    const loading = await screen.findAllByRole("status");
+    const texts = loading.map((node) => node.textContent);
+    expect(texts.filter((text) => text?.includes("Загрузка сессии…")).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  });
+
+  it("после загрузки истории скелетон ленты уходит", async () => {
+    openPage();
+    await pageReady();
+
+    await waitFor(() => expect(screen.queryAllByText("Загрузка сессии…")).toHaveLength(0));
+  });
+});
+
 describe("SessionDetail: инспектор", () => {
   it("на десктопе открыт на вкладке «Сессия»", async () => {
     openPage();

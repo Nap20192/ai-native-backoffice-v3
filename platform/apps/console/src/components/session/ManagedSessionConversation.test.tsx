@@ -686,6 +686,24 @@ describe("ManagedSessionConversation: клавиши", () => {
     expect(props.onSelectEvent).toHaveBeenLastCalledWith("u1", "transcript");
   });
 
+  it("переход клавишами выбирает вызов, но не раскрывает его; клик и → раскрывают", () => {
+    const { container, rerender } = setup({ selection: { eventId: "r1", source: "transcript", seq: 1 } });
+    const button = () =>
+      within(container.querySelector<HTMLElement>('[data-event-id="t1"]')!).getByRole("button", { name: /bash/ });
+
+    press("j");
+    rerender({ selection: { eventId: "t1", source: "transcript", seq: 2 } });
+    expect(container.querySelector('[data-event-id="t1"]')).toHaveAttribute("data-selected", "true");
+    expect(button()).toHaveAttribute("aria-expanded", "false");
+
+    press("ArrowRight");
+    expect(button()).toHaveAttribute("aria-expanded", "true");
+
+    // Следующий выбор того же вызова мышью раскрывает его, как обычно.
+    rerender({ selection: { eventId: "t1", source: "transcript", seq: 3 } });
+    expect(button()).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("результат вызова считается этим же вызовом при переходе", () => {
     const { props } = setup({ selection: { eventId: "t1r", source: "events", seq: 1 } });
 

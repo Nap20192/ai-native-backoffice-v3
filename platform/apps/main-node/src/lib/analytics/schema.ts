@@ -58,7 +58,7 @@ export const ANALYTICS_MIGRATIONS = [
   PRIMARY KEY (workspace_id, card_id)
 )`,
   ] },
-'] as const;
+] as const;
 const ready = new WeakMap<SqlClient, Promise<void>>();
 export function ensureAnalyticsSchema(sql: SqlClient): Promise<void> {
   const cached = ready.get(sql);

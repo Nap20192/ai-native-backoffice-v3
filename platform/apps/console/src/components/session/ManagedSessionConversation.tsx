@@ -328,6 +328,15 @@ export function ManagedSessionConversation({
     selection.source !== "minimap" &&
     collapsedSeq !== selection.seq;
 
+  // Переход клавишами J, K, ↑ и ↓ только выбирает событие: раскрывает вызов
+  // клавиша → или клик. Иначе каждый шаг по ленте раскрывал бы очередной вызов.
+  const collapseNextSelection = useRef(false);
+  useLayoutEffect(() => {
+    if (!collapseNextSelection.current || selectedEventId === null) return;
+    collapseNextSelection.current = false;
+    setCollapsedSeq(selection.seq);
+  }, [selection.seq, selectedEventId]);
+
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<MinimapZoom>(1);
 
@@ -501,6 +510,7 @@ export function ManagedSessionConversation({
       }
       event.preventDefault();
       const target = m.sequence[next]!;
+      collapseNextSelection.current = true;
       onSelectRef.current(target, "transcript");
       scrollToEvent(target, "nearest");
     };

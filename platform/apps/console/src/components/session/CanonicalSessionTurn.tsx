@@ -466,7 +466,8 @@ function RequestCard({
   onSelectEvent(eventId: string | null): void;
 }) {
   const usage = block.request?.usage ?? null;
-  const showHead = block.thinking || usage !== null;
+  const failed = block.request?.isError === true;
+  const showHead = block.thinking || failed || usage !== null;
 
   return (
     <div
@@ -486,7 +487,7 @@ function RequestCard({
       }}
     >
       {showHead ? (
-        <div className="flex min-w-0 items-center justify-between gap-2 text-xs leading-5" data-search-skip>
+        <div className="flex min-w-0 items-center gap-2 text-xs leading-5" data-search-skip>
           {block.thinking ? (
             <PlainButton
               className="rounded text-left text-ddc-text-muted hover:text-ddc-text"
@@ -498,13 +499,17 @@ function RequestCard({
             >
               {block.thoughtMs !== null ? `Думал ${formatShortDurationRu(block.thoughtMs)}` : "Думал"}
             </PlainButton>
-          ) : (
-            <span />
-          )}
+          ) : null}
+          {failed ? (
+            <Badge variant="destructive">
+              <CircleXIcon aria-hidden="true" />
+              Ошибка запроса
+            </Badge>
+          ) : null}
           {usage ? (
             <span
               className={cn(
-                "flex flex-none items-center gap-2 tabular-nums text-ddc-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-data-[selected=true]:opacity-100",
+                "ml-auto flex flex-none items-center gap-2 tabular-nums text-ddc-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-data-[selected=true]:opacity-100",
               )}
               data-session-usage
             >

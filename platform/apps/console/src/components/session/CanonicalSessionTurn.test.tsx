@@ -261,6 +261,17 @@ describe("CanonicalSessionTurn: метка агента и «Думал»", () =
     expect(usage).toHaveTextContent("↓ 275");
   });
 
+  it("запрос к модели с ошибкой помечен красной плашкой «Ошибка запроса»", () => {
+    const events = helloWorldEvents().map((event) =>
+      event.type === "span.model_request_end" && event.id === "r2e" ? { ...event, is_error: true } : event,
+    );
+    const { container } = setup(events);
+
+    const badge = within(block(container, "r2")!).getByText("Ошибка запроса");
+    expect(badge.className).toContain("ddc-tone-danger");
+    expect(within(block(container, "r1")!).queryByText("Ошибка запроса")).not.toBeInTheDocument();
+  });
+
   it("карточка без данных об использовании не показывает токены", () => {
     const { container } = setup(helloWorldEvents());
 

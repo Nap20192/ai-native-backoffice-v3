@@ -9,7 +9,7 @@
 - Главные файлы: `dco-portal/docs/DESIGN-RULES.md` (правила), `dco-portal/client/tailwind.config.js` (шкалы), `dco-portal/client/src/styles/index.css` (все общие классы; другого CSS в `client/src` нет, проверено `find client -name "*.css"`), `dco-portal/client/src/lib/tone.ts` (тона), `dco-portal/client/src/lib/motion.ts` (движение).
 - Все размеры в пикселях при корневом шрифте 16px. Пометка «вычислено» значит: число получено сложением классов или скриптом, а не записано в исходнике.
 - Значения цветов Tailwind (rose, amber, emerald, sky) прочитаны командой `node -e 'require("./node_modules/tailwindcss/colors")'` в корне портала.
-- Готовые токены для Tailwind v4: `platform/apps/console/src/styles/ddc-tokens.css` (раздел 6). Файл нигде не подключён.
+- Готовые токены для Tailwind v4: `platform/apps/console/src/styles/ddc-tokens.css` (раздел 6). Подключён в `platform/apps/console/src/index.css` (`@import "./styles/ddc-tokens.css"`).
 
 ## 1. Принципы и 16 правил
 
@@ -138,8 +138,8 @@
 
 Источники: `tailwind.config.js` (`fontFamily`, `fontSize`), `index.css`, компоненты. Размеры по умолчанию Tailwind 3 прочитаны из `defaultTheme`.
 
-- **Шрифт:** `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`. Только системный, без веб-шрифтов. `-webkit-font-smoothing: antialiased` (`index.css`, `html`).
-- **Моноширинный:** `font-mono` только для кода, cron, IP, технических идентификаторов (раздел 14). Свой стек не задан, берётся стандартный Tailwind.
+- **Шрифт.** `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`. Только системный, без веб-шрифтов. `-webkit-font-smoothing: antialiased` (`index.css`, `html`).
+- **Моноширинный.** `font-mono` только для кода, cron, IP, технических идентификаторов (раздел 14). Свой стек не задан, берётся стандартный Tailwind.
 
 | Токен | Размер / строка | Где |
 |---|---|---|
@@ -541,7 +541,7 @@ SkeletonText  space-y-2, строки h-3, последняя w-2/3
 
 - Причина второй строкой в `role="alert"`, по умолчанию «Проверьте соединение и попробуйте ещё раз.»
 - Кнопка «Повторить» с `RefreshCw`, во время повтора `Loader2 animate-spin`, `disabled`, `aria-busy`. Кнопка не исчезает, чтобы фокус не падал на body.
-- **Расхождение:** у кнопки класс `btn-secondary`, а такого класса нет ни в `index.css`, ни в собранном `client/dist/assets/*.css` (проверено `grep`). При переносе ставить `btn-outline`. Как кнопка выглядит в портале сейчас, не проверял.
+- **Расхождение.** У кнопки класс `btn-secondary`, а такого класса нет ни в `index.css`, ни в собранном `client/dist/assets/*.css` (проверено `grep`). При переносе ставить `btn-outline`. Как кнопка выглядит в портале сейчас, не проверял.
 
 ### Шапка страницы
 
@@ -699,11 +699,11 @@ h1        flex items-center gap-2 text-2xl font-bold tracking-tight text-ink-900
 - Даты: в таблице `dd.MM.yyyy`, в заголовке `d MMMM yyyy`, время `HH:mm` (раздел 14).
 - Устойчивые подписи: «Отмена», «Сохранить», «Удалить», «Подтвердить», «Закрыть», «Повторить», «Сбросить поиск»; ссылки назад «К заданиям», «К задачам», «К группам»; удаление «Удалить …?» и «Действие нельзя отменить.» (разделы 7, 11, `ConfirmDialog.tsx`, `LoadError.tsx`).
 - Эмодзи в интерфейсе запрещены (раздел 2).
-- **Расхождение:** правило 2 называет раздел с иконкой `Gauge` «Дашборд», а в `Sidebar.tsx` пункт `/dashboard` подписан «Сводка».
+- **Расхождение.** Правило 2 называет раздел с иконкой `Gauge` «Дашборд», а в `Sidebar.tsx` пункт `/dashboard` подписан «Сводка».
 
 ## 6. Перенос на Tailwind v4
 
-Готовый файл: `platform/apps/console/src/styles/ddc-tokens.css` (новый, нигде не подключён). Блок ниже совпадает с файлом.
+Готовый файл: `platform/apps/console/src/styles/ddc-tokens.css`, подключён в `src/index.css`; утилита `ddc-app-shell` стоит на корне оболочки (`components/ConsoleShell.tsx`). Блок ниже совпадает с файлом.
 
 ### Что в файле
 
@@ -1199,5 +1199,5 @@ h1        flex items-center gap-2 text-2xl font-bold tracking-tight text-ink-900
 - Свежесть `client/dist` относительно исходников.
 - Где используются `brand-900`, `brand-950` и `shadow-soft`, кроме названных мест.
 - Как выглядит кнопка `LoadError` с несуществующим классом.
-- Вид `ddc-tokens.css` в живом приложении: файл нигде не подключён.
+- Вид `ddc-tokens.css` в живом приложении: файл подключён, но тонировку фона `ddc-app-shell` в светлой и тёмной теме глазами в браузере не сверяли.
 - Корпоративный стандарт, из которого взяты ступени `brand`: его нет в репозитории.

@@ -1,3 +1,5 @@
+import { useContext, type ComponentProps } from "react";
+import { PlainButton } from "@/components/ui/plain-button";
 import { Table, TableHead, TableCell } from "@/components/ui/table";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -11,6 +13,7 @@ import python from "highlight.js/lib/languages/python";
 import typescript from "highlight.js/lib/languages/typescript";
 import javascript from "highlight.js/lib/languages/javascript";
 import plaintext from "highlight.js/lib/languages/plaintext";
+import { keepOutputUrl, OutputLinkContext, outputFileFromHref } from "../lib/output-links";
 
 /**
  * Hand-rolled syntax highlighting registry. Replaces rehype-highlight,
@@ -43,11 +46,39 @@ const lowlight = createLowlight({
 
 const jsxRuntime = { Fragment, jsx, jsxs } as Parameters<typeof toJsxRuntime>[1];
 
+/**
+ * Ссылка в тексте. Ссылка агента на свой файл (/mnt/session/outputs/…) на
+ * странице сессии открывает окно просмотра файла: в консоли такого адреса
+ * нет. Остальные ссылки рисуются как обычно.
+ */
+function MarkdownLink({ href, children, node: _node, ...props }: ComponentProps<"a"> & { node?: unknown }) {
+  const openOutput = useContext(OutputLinkContext);
+  const filename = outputFileFromHref(href);
+  if (openOutput && filename) {
+    return (
+      <PlainButton
+        onClick={() => openOutput(filename)}
+        title={`Открыть ${filename}`}
+        className="cursor-pointer text-left text-ddc-link underline underline-offset-2 hover:text-ddc-link-hover"
+      >
+        {children}
+      </PlainButton>
+    );
+  }
+  return (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  );
+}
+
 export function Markdown({ children }: { children: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={keepOutputUrl}
       components={{
+        a: MarkdownLink,
         pre: ({ children }) => (
           <pre className="my-2 overflow-x-auto rounded-xl border border-ddc-border bg-ddc-surface-muted p-3 text-sm">
             {children}

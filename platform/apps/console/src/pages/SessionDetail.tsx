@@ -71,6 +71,8 @@ import {
 } from "../components/session/inspector/SessionInspector";
 import { SessionPropertyRow, SessionTab } from "../components/session/inspector/SessionTab";
 import { ResourcesTab } from "../components/session/inspector/ResourcesTab";
+import { useOutputFileViewer } from "../components/session/inspector/useOutputFileViewer";
+import { OutputLinkContext } from "../lib/output-links";
 import { ThreadsTab } from "../components/session/inspector/ThreadsTab";
 import {
   EventsTab,
@@ -224,6 +226,8 @@ type Dialog = "outcome" | "shortcuts" | "archive" | null;
 
 export function SessionDetail() {
   const { id } = useParams();
+  // Окно файлов агента: ссылка на файл в ответе агента открывает просмотр.
+  const outputViewer = useOutputFileViewer(id ?? "");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const managedApi = useManagedApi();
@@ -1274,18 +1278,20 @@ export function SessionDetail() {
           справа инспектор до низа окна. В разговоре колонка несёт поиск,
           мини-карту, ленту и поле ввода, в трейсе целиком водопад. На узком
           экране инспектор нижний лист поверх колонки. */}
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col px-6 md:pr-6 md:pl-8">
-          <SessionViewTabs
-            view={view}
-            onViewChange={changeView}
-            trailing={view === "trace" && !inspectorOpen ? inspectorButton : undefined}
-          >
-            {view === "trace" ? traceView : conversationView}
-          </SessionViewTabs>
+      <OutputLinkContext.Provider value={id ? outputViewer.openByName : null}>
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col px-6 md:pr-6 md:pl-8">
+            <SessionViewTabs
+              view={view}
+              onViewChange={changeView}
+              trailing={view === "trace" && !inspectorOpen ? inspectorButton : undefined}
+            >
+              {view === "trace" ? traceView : conversationView}
+            </SessionViewTabs>
+          </div>
+          {layout === "side" && inspector}
         </div>
-        {layout === "side" && inspector}
-      </div>
+      </OutputLinkContext.Provider>
 
       <DefineOutcomeDialog
         open={dialog === "outcome"}
@@ -1302,6 +1308,7 @@ export function SessionDetail() {
         onConfirm={() => void archive()}
         onCancel={() => setDialog(null)}
       />
+      {outputViewer.dialog}
     </div>
   );
 }

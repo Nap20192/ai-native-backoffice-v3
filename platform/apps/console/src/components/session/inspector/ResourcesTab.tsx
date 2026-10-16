@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BetaManagedAgentsSessionResource } from "@anthropic-ai/sdk/resources/beta/sessions/resources";
-import { ChevronDownIcon, DatabaseIcon, FileIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, DatabaseIcon, DownloadIcon, FileIcon, PlusIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { PlainButton } from "@/components/ui/plain-button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApi } from "../../../lib/api";
 import { useManagedApi } from "../../../lib/useManagedApi";
@@ -19,20 +20,19 @@ import { GitHubIcon } from "../../icons";
 import { LoadError } from "../../LoadError";
 import { Skeleton } from "../../Skeleton";
 import { EMPTY_VALUE, formatBytesRu } from "../format-ru";
+import type { OutputFile } from "./OutputFileDialog";
+import { useOutputFileViewer } from "./useOutputFileViewer";
 
 /**
  * Вкладка «Ресурсы»: то, что подключено к сессии (файлы, репозитории,
  * хранилища памяти), и файлы, которые агент сохранил в
  * /mnt/session/outputs/. После создания сессии добавить можно только файл.
+ * Файл агента открывается в окне просмотра и скачивается запросом консоли:
+ * обычная ссылка не передаёт anthropic-beta, и сервер отвечает 400.
  */
 
 export interface ResourcesTabProps {
   sessionId: string;
-}
-
-interface OutputFile {
-  filename: string;
-  size_bytes: number;
 }
 
 interface ResourceRow {
@@ -40,8 +40,8 @@ interface ResourceRow {
   path: string;
   size: string;
   icon: ReactNode;
-  /** Выходной файл: строку можно скачать. */
-  download?: { href: string; filename: string };
+  /** Файл агента: строка открывает просмотр, рядом кнопка «Скачать». */
+  output?: OutputFile;
 }
 
 type LoadState =
@@ -66,6 +66,7 @@ function resourceIcon(resource: BetaManagedAgentsSessionResource): ReactNode {
 export function ResourcesTab({ sessionId }: ResourcesTabProps) {
   const managedApi = useManagedApi();
   const { api } = useApi();
+  const viewer = useOutputFileViewer(sessionId);
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [query, setQuery] = useState("");
   const [retrying, setRetrying] = useState(false);
@@ -113,13 +114,11 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
         path: `${OUTPUT_DIR}${file.filename}`,
         size: formatBytesRu(file.size_bytes),
         icon: <FileIcon className={ICON_CLASS} />,
-        download: {
-          href: `/v1/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(file.filename)}`,
-          filename: file.filename,
-        },
+        output: file,
       })),
     ];
-  }, [state, sessionId]);
+  }, [state]);
+
 
   const needle = query.trim().toLowerCase();
   const visible = needle ? rows.filter((row) => row.path.toLowerCase().includes(needle)) : rows;
@@ -231,15 +230,26 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
                 <TableCell className="min-w-0 px-3 py-1">
                   <span className="flex min-w-0 items-center gap-1.5">
                     {row.icon}
-                    {row.download ? (
-                      <a
-                        href={row.download.href}
-                        download={row.download.filename}
-                        title={row.path}
-                        className="min-w-0 truncate font-mono text-ddc-link after:absolute after:inset-0 after:content-[''] hover:text-ddc-link-hover hover:underline"
-                      >
-                        {row.path}
-                      </a>
+                    {row.output ? (
+                      <>
+                        <PlainButton
+                          onClick={() => row.output && viewer.open(row.output)}
+                          title={row.path}
+                          className="min-w-0 flex-1 truncate text-left font-mono text-ddc-link after:absolute after:inset-0 after:content-[''] hover:text-ddc-link-hover hover:underline focus-visible:underline focus-visible:outline-none"
+                        >
+                          {row.path}
+                        </PlainButton>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Скачать ${row.output.filename}`}
+                          title="Скачать"
+                          className="relative z-10 size-6 flex-none text-ddc-icon-muted hover:text-ddc-link"
+                          onClick={() => row.output && void viewer.download(row.output.filename)}
+                        >
+                          <DownloadIcon aria-hidden="true" />
+                        </Button>
+                      </>
                     ) : (
                       <span className="min-w-0 truncate font-mono" title={row.path}>
                         {row.path}
@@ -255,6 +265,7 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
           </TableBody>
         </Table>
       )}
+      {viewer.dialog}
     </div>
   );
 }

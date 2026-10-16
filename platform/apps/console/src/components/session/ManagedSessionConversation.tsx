@@ -6,9 +6,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type ReactNode,
 } from "react";
 import { ArrowDownIcon } from "lucide-react";
+import { useStickToBottomContext } from "use-stick-to-bottom";
 import { AgentChatView, type AgentChatViewSlots } from "@openma/common/chat-ui";
 import type { CanonicalChatTurn } from "@openma/common/session-events/managed";
 import { Button } from "@/components/ui/button";
@@ -45,6 +47,9 @@ export interface ManagedSessionConversationProps {
   toolbarTrailing?: ReactNode;
   /** Метка времени на мини-карте при наведении на график стоимости. */
   externalCursorMs?: number | null;
+  /** Слой поверх ленты и поля ввода под поиском и мини-картой: на узком
+   *  экране там встаёт инспектор нижним листом. */
+  overlay?: ReactNode;
 }
 
 /* ---------- Поиск по разговору ---------- */
@@ -221,7 +226,8 @@ function buildModel(turns: readonly CanonicalChatTurn[]): ConversationModel {
 /* ---------- Кнопка «Вниз» ---------- */
 
 /** Круглая кнопка 32 px по центру над полем ввода, пока лента прокручена
- *  вверх. Положение и скругление задаёт общая оболочка чата. */
+ *  вверх. Положение задаём сами: классы оболочки лежат в node_modules, и
+ *  Tailwind консоли их не собирает. */
 export function JumpToBottomButton({
   onClick,
   className,
@@ -234,7 +240,7 @@ export function JumpToBottomButton({
   return (
     <Button
       aria-label="Вниз"
-      className={cn(className, "rounded-full")}
+      className={cn(className, "absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full")}
       onClick={onClick}
       size="icon-xs"
       title="Вниз"
@@ -251,6 +257,30 @@ const renderScrollButton: NonNullable<AgentChatViewSlots["renderScrollButton"]> 
   className,
   icon,
 }) => <JumpToBottomButton className={className} icon={icon} onClick={onClick} />;
+
+/* ---------- Прилипание к низу ---------- */
+
+/**
+ * Отдаёт ленте `stopScroll` общей оболочки. Пока лента прилипает к низу,
+ * раскрытие вызова после выбора снаружи возвращает её вниз, и блок уходит
+ * из вида. Длинная лента идёт через виртуальный список без StickToBottom:
+ * тогда контекста нет и ссылка пустая.
+ */
+function StickToBottomBridge({ stopRef }: { stopRef: MutableRefObject<(() => void) | null> }) {
+  let stop: (() => void) | null;
+  try {
+    stop = useStickToBottomContext().stopScroll;
+  } catch {
+    stop = null;
+  }
+  useLayoutEffect(() => {
+    stopRef.current = stop;
+    return () => {
+      stopRef.current = null;
+    };
+  });
+  return null;
+}
 
 /* ---------- Разговор ---------- */
 
@@ -292,6 +322,7 @@ export function ManagedSessionConversation({
   onSelectEvent,
   toolbarTrailing,
   externalCursorMs,
+  overlay,
 }: ManagedSessionConversationProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -340,26 +371,55 @@ export function ManagedSessionConversation({
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<MinimapZoom>(1);
 
+  // Любая прокрутка ленты к блоку сначала снимает прилипание к низу.
+  const stopStickRef = useRef<(() => void) | null>(null);
+  const pendingScroll = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (pendingScroll.current !== null) cancelAnimationFrame(pendingScroll.current);
+    },
+    [],
+  );
+
   const scrollToEvent = useCallback(
-    (eventId: string, align: ScrollLogicalPosition) => {
-      const column = columnRef.current;
-      const useId = model.toolUseOf.get(eventId);
-      const blockId = model.blockOfEvent.get(eventId);
-      const target =
-        (useId ? findByAttribute(column, "data-event-id", useId) : null) ??
-        findByAttribute(column, "data-block-id", blockId ?? eventId);
+    (eventId: string, align: ScrollLogicalPosition, afterResize = false) => {
+      const find = () => {
+        const column = columnRef.current;
+        const useId = model.toolUseOf.get(eventId);
+        const blockId = model.blockOfEvent.get(eventId);
+        return (
+          (useId ? findByAttribute(column, "data-event-id", useId) : null) ??
+          findByAttribute(column, "data-block-id", blockId ?? eventId)
+        );
+      };
+      const target = find();
       if (!target) return false;
-      target.scrollIntoView({ block: align, behavior: "smooth" });
+      stopStickRef.current?.();
+      if (pendingScroll.current !== null) cancelAnimationFrame(pendingScroll.current);
+      const run = () => {
+        pendingScroll.current = null;
+        (target.isConnected ? target : find())?.scrollIntoView({ block: align, behavior: "smooth" });
+      };
+      if (!afterResize) {
+        run();
+        return true;
+      }
+      // Выбор снаружи раскрывает или сворачивает вызов, высота ленты меняется.
+      // Оболочка ловит это в ResizeObserver и сама ставит scrollTop, а это
+      // обрывает плавную прокрутку. Ждём два кадра: наблюдатель отработал.
+      pendingScroll.current = requestAnimationFrame(() => {
+        pendingScroll.current = requestAnimationFrame(run);
+      });
       return true;
     },
     [model],
   );
 
   const jumpToBlock = useCallback((blockId: string) => {
-    findByAttribute(columnRef.current, "data-block-id", blockId)?.scrollIntoView({
-      block: "center",
-      behavior: "smooth",
-    });
+    const target = findByAttribute(columnRef.current, "data-block-id", blockId);
+    if (!target) return;
+    stopStickRef.current?.();
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
   }, []);
 
   // Выбор снаружи прокручивает ленту к событию. Выбор в самой ленте не
@@ -377,7 +437,7 @@ export function ManagedSessionConversation({
       scrolledKey.current = key;
       return;
     }
-    if (scrollToEvent(selectedEventId, "center")) scrolledKey.current = key;
+    if (scrollToEvent(selectedEventId, "center", true)) scrolledKey.current = key;
   }, [selection.seq, selection.source, selectedEventId, scrollToEvent]);
 
   /* --- поиск --- */
@@ -451,7 +511,10 @@ export function ManagedSessionConversation({
     const range = info ? rangeFor(info, match.start, match.length) : null;
     const anchor = range?.startContainer.parentElement ?? findByAttribute(columnRef.current, "data-block-id", match.blockId);
     if (!anchor) return;
-    const scroll = () => anchor.scrollIntoView({ block: "center", behavior: "smooth" });
+    const scroll = () => {
+      stopStickRef.current?.();
+      anchor.scrollIntoView({ block: "center", behavior: "smooth" });
+    };
     const clamp = anchor.closest<HTMLElement>('[data-session-clamp][data-clamp-state="collapsed"]');
     if (clamp) {
       // Свёрнутый текст сначала раскрываем, потом прокручиваем уже по новой вёрстке.
@@ -528,6 +591,9 @@ export function ManagedSessionConversation({
       ) {
         return;
       }
+      // Лист инспектора на узком экране стоит внутри корня ленты, но клавиши в
+      // нём принадлежат инспектору, как на десктопе, где он вне корня.
+      if (target?.closest("[data-session-overlay]")) return;
       // Открытое окно или меню само ловит Esc и стрелки.
       if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return;
 
@@ -586,7 +652,7 @@ export function ManagedSessionConversation({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-session-conversation ref={rootRef}>
-      <div className="shrink-0 space-y-2 px-4 pt-2 pb-2">
+      <div className="shrink-0 space-y-2 px-4 pt-2 pb-2" data-session-toolbar>
         <TranscriptToolbar
           currentMatch={current}
           inputRef={searchInputRef}
@@ -615,52 +681,60 @@ export function ManagedSessionConversation({
           />
         ) : null}
       </div>
-      <AgentChatView
-        className="flex-1 min-h-0"
-        phase="active"
-        renderTurn={({ turn }) => {
-          const source = sourceTurns.get(turn.id);
-          if (!source) return null;
-          const ownsEvent = selectedEventId !== null && model.turnOfEvent.get(selectedEventId) === turn.id;
-          const owns = (blockId: string | null) =>
-            blockId !== null && model.turnOfBlock.get(blockId) === turn.id ? blockId : null;
-          return (
-            <MemoTurn
-              agentName={agentName}
-              blocks={model.blocksByTurn.get(turn.id) ?? EMPTY_BLOCKS}
-              expandSelected={ownsEvent && expandSelected}
-              hoveredBlockId={owns(hoveredBlockId)}
-              onJumpToBlock={jumpToBlock}
-              onSelectEvent={selectFromTranscript}
-              selectedBlockId={owns(ringBlockId)}
-              selectedEventId={ownsEvent ? selectedEventId : null}
-              sessionId={sessionId}
-              turn={source}
-            />
-          );
-        }}
-        sessionId={sessionId}
-        slots={{
-          composer,
-          beforeComposer,
-          conversationContentAfter: afterTurns,
-          renderScrollButton,
-          wrapConversationContent: (children) => (
-            <div
-              className="mx-auto flex w-full max-w-[752px] min-w-0 flex-col gap-8 [--chat-message-padding-inline:16px]"
-              data-session-column
-              ref={columnRef}
-            >
-              {children}
-            </div>
-          ),
-          empty: empty ?? (
-            <p className="text-sm text-ddc-text-muted">Отправьте сообщение, чтобы начать сессию.</p>
-          ),
-        }}
-        surface="console"
-        turns={projectedTurns}
-      />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <AgentChatView
+          className="flex-1 min-h-0"
+          phase="active"
+          renderTurn={({ turn }) => {
+            const source = sourceTurns.get(turn.id);
+            if (!source) return null;
+            const ownsEvent = selectedEventId !== null && model.turnOfEvent.get(selectedEventId) === turn.id;
+            const owns = (blockId: string | null) =>
+              blockId !== null && model.turnOfBlock.get(blockId) === turn.id ? blockId : null;
+            return (
+              <MemoTurn
+                agentName={agentName}
+                blocks={model.blocksByTurn.get(turn.id) ?? EMPTY_BLOCKS}
+                expandSelected={ownsEvent && expandSelected}
+                hoveredBlockId={owns(hoveredBlockId)}
+                onJumpToBlock={jumpToBlock}
+                onSelectEvent={selectFromTranscript}
+                selectedBlockId={owns(ringBlockId)}
+                selectedEventId={ownsEvent ? selectedEventId : null}
+                sessionId={sessionId}
+                turn={source}
+              />
+            );
+          }}
+          sessionId={sessionId}
+          slots={{
+            composer,
+            beforeComposer,
+            conversationContentAfter: afterTurns,
+            renderScrollButton,
+            wrapConversationContent: (children) => (
+              <div
+                className="mx-auto flex w-full max-w-[752px] min-w-0 flex-col gap-8 [--chat-message-padding-inline:16px]"
+                data-session-column
+                ref={columnRef}
+              >
+                <StickToBottomBridge stopRef={stopStickRef} />
+                {children}
+              </div>
+            ),
+            empty: empty ?? (
+              <p className="text-sm text-ddc-text-muted">Отправьте сообщение, чтобы начать сессию.</p>
+            ),
+          }}
+          surface="console"
+          turns={projectedTurns}
+        />
+        {overlay ? (
+          <div className="absolute inset-0 z-30 flex min-h-0 flex-col" data-session-overlay>
+            {overlay}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

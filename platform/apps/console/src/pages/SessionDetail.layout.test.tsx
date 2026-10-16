@@ -57,7 +57,8 @@ vi.mock("../components/session/ManagedSessionConversation", () => ({
         data-turns={props.turns?.length ?? 0}
         data-cursor={props.externalCursorMs ?? ""}
       >
-        {props.toolbarTrailing}
+        <div data-session-toolbar>{props.toolbarTrailing}</div>
+        {props.overlay ? <div data-testid="conversation-overlay">{props.overlay}</div> : null}
         {props.empty}
         {props.composer}
       </div>
@@ -337,6 +338,19 @@ describe("SessionDetail: загрузка", () => {
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 
+  it("пока история грузится, «События» и «Инструменты» показывают скелетон, а не пустой список", async () => {
+    api.sessions.events.list.mockReturnValue(new Promise(() => {}));
+    openPage("/sessions/sesn_1?inspector=events");
+
+    const panel = await screen.findByRole("tabpanel");
+    expect(within(panel).getByRole("status")).toHaveTextContent("Загрузка сессии…");
+    expect(screen.queryByTestId("events-tab")).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
+    expect(within(screen.getByRole("tabpanel")).getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByTestId("tools-tab")).toBeNull();
+  });
+
   it("после загрузки истории скелетон ленты уходит", async () => {
     openPage();
     await pageReady();
@@ -496,6 +510,25 @@ describe("SessionDetail: инспектор", () => {
       "data-layout",
       "sheet",
     );
+  });
+
+  it("нижний лист встаёт на место ленты под поиском и мини-картой", async () => {
+    state.narrow = true;
+    openPage();
+    await pageReady();
+
+    await userEvent.click(screen.getByRole("button", { name: "Инспектор" }));
+
+    const sheet = await screen.findByRole("complementary", { name: "Инспектор сессии" });
+    expect(within(screen.getByTestId("conversation-overlay")).getByRole("complementary")).toBe(sheet);
+  });
+
+  it("на широком экране инспектор стоит справа, а не поверх ленты", async () => {
+    openPage();
+    await pageReady();
+
+    expect(await screen.findByRole("complementary", { name: "Инспектор сессии" })).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-overlay")).toBeNull();
   });
 
   it("«Потоки» приглушены, пока других потоков нет", async () => {

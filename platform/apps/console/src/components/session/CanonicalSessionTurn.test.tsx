@@ -585,6 +585,54 @@ describe("CanonicalSessionTurn: раскрытый вызов", () => {
     expect(row.querySelector("[data-tool-new]")).toHaveTextContent("стало");
   });
 
+  it("write с полем filePath, как его пишет наш харнесс: путь, подсветка, путь в строке вызова", () => {
+    const { container } = setup(
+      [
+        { type: "user.message", id: "u1", content: text("создай"), processed_at: at(0) },
+        { type: "span.model_request_start", id: "r1", processed_at: at(1) },
+        {
+          type: "agent.tool_use",
+          id: "w1",
+          name: "write",
+          input: { content: "print(\"Hello, World!\")", filePath: "/workspace/hello.py" },
+          processed_at: at(2),
+        },
+        { type: "agent.tool_result", id: "w1r", tool_use_id: "w1", content: text("/workspace/hello.py"), processed_at: at(3) },
+        {
+          type: "agent.tool_use",
+          id: "e1",
+          name: "edit",
+          input: { filePath: "/w/a.txt", oldString: "было", newString: "стало" },
+          processed_at: at(4),
+        },
+        { type: "agent.tool_result", id: "e1r", tool_use_id: "e1", content: text("ok"), processed_at: at(5) },
+      ],
+      { selectedEventId: "w1", selectedBlockId: "r1" },
+    );
+
+    const write = callRow(container, "w1")!;
+    expect(write.querySelector("[data-tool-path]")).toHaveTextContent("/workspace/hello.py");
+    expect(write.querySelector("code.hljs")).not.toBeNull();
+    expect(within(write).getAllByRole("button")[0]).toHaveTextContent("/workspace/hello.py");
+  });
+
+  it("edit с полями oldString и newString показывает старый и новый текст", () => {
+    const { container } = setup(
+      [
+        { type: "user.message", id: "u1", content: text("правь"), processed_at: at(0) },
+        { type: "span.model_request_start", id: "r1", processed_at: at(1) },
+        { type: "agent.tool_use", id: "e1", name: "edit", input: { filePath: "/w/a.txt", oldString: "было", newString: "стало" }, processed_at: at(2) },
+        { type: "agent.tool_result", id: "e1r", tool_use_id: "e1", content: text("ok"), processed_at: at(3) },
+      ],
+      { selectedEventId: "e1", selectedBlockId: "r1" },
+    );
+
+    const row = callRow(container, "e1")!;
+    expect(row.querySelector("[data-tool-path]")).toHaveTextContent("/w/a.txt");
+    expect(row.querySelector("[data-tool-old]")).toHaveTextContent("было");
+    expect(row.querySelector("[data-tool-new]")).toHaveTextContent("стало");
+  });
+
   it("другие инструменты: ввод с копированием и красный блок ошибки", () => {
     const { container } = setup(
       [

@@ -128,53 +128,55 @@ export function ThreadsTab({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Table aria-label="Потоки" className="text-xs">
-        <TableHeader>
-          <TableRow>
-            <TableHead className={HEAD_CLASS}>Поток</TableHead>
-            <TableHead className={HEAD_CLASS}>Статус</TableHead>
-            <TableHead className={cn(HEAD_CLASS, "text-right")}>Контекст</TableHead>
-            <TableHead className={cn(HEAD_CLASS, "text-right")}>Стоимость</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {views.map((view) => {
-            const viewStats = stats.get(view.id)!;
-            const isSelected = view.id === selected.id;
-            return (
-              <TableRow
-                key={view.id}
-                aria-selected={isSelected}
-                data-state={isSelected ? "selected" : undefined}
-                onClick={() => onSelectThread(view.id)}
-                className="h-8 cursor-pointer"
-              >
-                <TableCell className="min-w-0 px-3 py-1">
-                  <span className="block max-w-40 truncate" title={view.name}>
-                    {view.name}
-                  </span>
-                </TableCell>
-                <TableCell className="px-3 py-1">
-                  <StatusPill status={view.status} />
-                </TableCell>
-                <TableCell className="px-3 py-1 text-right tabular-nums">
-                  {viewStats.contextTokens === null ? EMPTY_VALUE : formatTokensRu(viewStats.contextTokens)}
-                </TableCell>
-                <TableCell className="px-3 py-1 text-right tabular-nums">
-                  {formatUsdMicrosRu(costOf(viewStats, view.modelId, priceForModel))}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+      <div className="min-h-0 flex-1 overflow-y-auto" data-threads-list>
+        <Table aria-label="Потоки" className="text-xs">
+          <TableHeader>
+            <TableRow>
+              <TableHead className={HEAD_CLASS}>Поток</TableHead>
+              <TableHead className={HEAD_CLASS}>Статус</TableHead>
+              <TableHead className={cn(HEAD_CLASS, "text-right")}>Контекст</TableHead>
+              <TableHead className={cn(HEAD_CLASS, "text-right")}>Стоимость</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {views.map((view) => {
+              const viewStats = stats.get(view.id)!;
+              const isSelected = view.id === selected.id;
+              return (
+                <TableRow
+                  key={view.id}
+                  aria-selected={isSelected}
+                  data-state={isSelected ? "selected" : undefined}
+                  onClick={() => onSelectThread(view.id)}
+                  className="h-8 cursor-pointer"
+                >
+                  <TableCell className="min-w-0 px-3 py-1">
+                    <span className="block max-w-40 truncate" title={view.name}>
+                      {view.name}
+                    </span>
+                  </TableCell>
+                  <TableCell className="px-3 py-1">
+                    <StatusPill status={view.status} />
+                  </TableCell>
+                  <TableCell className="px-3 py-1 text-right tabular-nums">
+                    {viewStats.contextTokens === null ? EMPTY_VALUE : formatTokensRu(viewStats.contextTokens)}
+                  </TableCell>
+                  <TableCell className="px-3 py-1 text-right tabular-nums">
+                    {formatUsdMicrosRu(costOf(viewStats, view.modelId, priceForModel))}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
 
       <section
         aria-labelledby="threads-tab-detail"
-        className="mt-3 min-h-0 flex-1 space-y-4 overflow-y-auto border-t border-ddc-divider p-4"
+        className="h-1/2 min-h-0 shrink-0 space-y-4 overflow-y-auto border-t border-ddc-divider p-4"
       >
         <h3 id="threads-tab-detail" className="text-sm font-semibold text-ddc-heading">
-          Поток {selected.name}
+          <span className="font-normal text-ddc-text-muted">Поток</span> {selected.name}
         </h3>
 
         <div className="space-y-1">

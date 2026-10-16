@@ -131,28 +131,29 @@ async function hiddenScrollHeight() {
     return extra;
   }).catch(() => 0);
 }
-// Скриншот шага: ширина 1280, высота окна на время снимка растягивается на скрытую
-// прокрутку (до MAX_SHOT_HEIGHT). Два подряд одинаковых скриншота шагов (sha256) — провал
-// evidence.screens_distinct: значит, страница не перерисовалась и снимок ничего не доказывает.
+// Скриншот шага: ширина окна (1280, на шаге узкого экрана 390), высота окна на время снимка
+// растягивается на скрытую прокрутку (до MAX_SHOT_HEIGHT). Два подряд одинаковых скриншота шагов
+// (sha256) дают провал evidence.screens_distinct: страница не перерисовалась, и снимок ничего не доказывает.
 async function shot(name) {
   const file = `screens/${String(++shotN).padStart(2, "0")}-${name}.png`;
+  const view = page.viewportSize() ?? VIEW;
   const extra = await hiddenScrollHeight();
   const tall = extra > 4;
   if (tall) {
-    await page.setViewportSize({ width: VIEW.width, height: Math.min(VIEW.height + extra, MAX_SHOT_HEIGHT) });
+    await page.setViewportSize({ width: view.width, height: Math.min(view.height + extra, MAX_SHOT_HEIGHT) });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
   let buffer;
   try {
     buffer = await page.screenshot({ path: join(EV, file), fullPage: true });
   } finally {
-    if (tall) await page.setViewportSize(VIEW);
+    if (tall) await page.setViewportSize(view);
   }
   const sha = createHash("sha256").update(buffer).digest("hex");
   const isStep = !/^(fail-|abort$)/.test(name);
   if (isStep && lastStepShot?.sha === sha) duplicateShots.push(`${lastStepShot.file} = ${file}`);
   if (isStep) lastStepShot = { file, sha };
-  screens.push({ file, sha, tall: tall ? Math.min(VIEW.height + extra, MAX_SHOT_HEIGHT) : 0 });
+  screens.push({ file, sha, tall: tall ? Math.min(view.height + extra, MAX_SHOT_HEIGHT) : 0 });
   return file;
 }
 async function aria(name) {
@@ -345,6 +346,29 @@ const occurrences = (haystack, needle) => (needle ? haystack.split(needle).lengt
 function durationLabels(text) {
   return [...String(text ?? "").matchAll(/(Работал|Работает|Думал)\s+(?:(\d+)\s*мин\s*)?(\d+)\s*с(?![а-яё])/g)]
     .map((m) => ({ label: m[0], seconds: Number(m[2] ?? 0) * 60 + Number(m[3]) }));
+}
+// Токены так, как их пишет шапка сессии (formatTokensRu в apps/console/src/components/session/format-ru.ts):
+// «20», «1,2 тыс.», «3 млн».
+function tokensRu(n) {
+  const abs = Math.abs(n);
+  if (abs < 1000) return `${n < 0 ? "-" : ""}${Math.round(abs)}`;
+  const units = [[1e3, "тыс."], [1e6, "млн"], [1e9, "млрд"]];
+  let i = abs >= 1e9 ? 2 : abs >= 1e6 ? 1 : 0;
+  let value = Math.round((abs / units[i][0]) * 10) / 10;
+  if (value >= 1000 && i < units.length - 1) {
+    i += 1;
+    value = Math.round((abs / units[i][0]) * 10) / 10;
+  }
+  return `${n < 0 ? "-" : ""}${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")} ${units[i][1]}`;
+}
+// Короткая длительность строки вызова (formatShortDurationRu): «119 мс», «6,8 с», «3 мин 5 с» -> секунды.
+function shortDurationSeconds(label) {
+  const text = squash(label).replace(",", ".");
+  const ms = text.match(/^(\d+)\s*мс$/);
+  if (ms) return Number(ms[1]) / 1000;
+  const parts = text.match(/^(?:(\d+)\s*ч\s*)?(?:(\d+)\s*мин\s*)?(?:([\d.]+)\s*с)?$/);
+  if (!parts || !(parts[1] || parts[2] || parts[3])) return null;
+  return Number(parts[1] ?? 0) * 3600 + Number(parts[2] ?? 0) * 60 + Number(parts[3] ?? 0);
 }
 // Ждать конца анимаций внутри scope (CSS-переходы раскрытия): конечные анимации из
 // getAnimations, не дольше 3 с, затем высота scope не меняется два замера подряд.
@@ -1122,11 +1146,14 @@ async function stepCreateSession() {
     assert(working === 0, `до отправки в разговоре «Агент работает…» (${working} шт.)`);
     return `api/40-session-created.json; ${sessionNewShot}`;
   });
-  await check("session.header_ui", "в шапке сессии видны агент и окружение", async () => {
-    const agentBadge = page.locator(`[title="Агент: ${names.agent}"], [title="Агент: ${ids.agent}"]`);
-    const envBadge = page.locator(`[title="Окружение: ${names.env}"], [title="Окружение: ${ids.environment}"]`);
-    assert((await agentBadge.count()) > 0, "нет бейджа агента");
-    assert((await envBadge.count()) > 0, "нет бейджа окружения");
+  // Чипы шапки это ссылки на агента и окружение с их именами (AgentChip, EnvironmentChip
+  // в pages/session-detail/Panels.tsx); до переделки страницы 2026-10-16 это были бейджи с title.
+  await check("session.header_ui", "в шапке сессии видны агент и окружение: чипы-ссылки с именами", async () => {
+    const header = page.getByRole("main").locator("header", { has: page.getByRole("heading", { level: 1 }) }).first();
+    const agentChip = header.locator(`a[href="/agents/${ids.agent}"]`, { hasText: names.agent });
+    const envChip = header.locator(`a[href="/environments/${ids.environment}"]`, { hasText: names.env });
+    assert((await agentChip.count()) > 0, `в шапке нет ссылки /agents/${ids.agent} с именем ${names.agent}`);
+    assert((await envChip.count()) > 0, `в шапке нет ссылки /environments/${ids.environment} с именем ${names.env}`);
     return "screens: session-new";
   });
 }
@@ -1207,9 +1234,16 @@ async function stepAgentTurn() {
   // Фейковая модель в ходе 1 пишет текст перед tool_use, поэтому сообщений в ходе два.
   // Блок процесса раскрывается переходом height 220 мс (.reasoning-collapse-inner, overflow
   // hidden): без ожидания снимок и clippedLine видят наполовину раскрытый блок (прогон 20261016-023057).
+  // С переделки страницы 2026-10-16 блока «Работал N с» нет: каждый запрос к модели стоит своей
+  // карточкой, и раскрывать нечего. Тогда страница не меняется, и отдельный снимок совпал бы
+  // с turn-done (evidence.screens_distinct): openProcess сообщает, раскрыл ли он блок.
+  let processOpened = false;
   const openProcess = async () => {
     const trigger = article.locator("[data-chat-reasoning-trigger]").first();
-    if ((await trigger.count()) && (await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+    if ((await trigger.count()) && (await trigger.getAttribute("aria-expanded")) !== "true") {
+      await trigger.click();
+      processOpened = true;
+    }
     await settleAnimations(article);
   };
   await check("run.answer_full", "ответ хода виден целиком: [data-session-turn-answer] содержит весь итоговый agent.message, первое сообщение хода видно целиком, тексты не повторяются", async () => {
@@ -1258,7 +1292,7 @@ async function stepAgentTurn() {
     // innerText не видит overflow: проверяем, что строки на экране не срезаны.
     const clipped = await clippedLine(article, [...leadLines, ...markdownLines(finalText)]);
     assert(!clipped, `текст хода на экране срезан: ${clipped}`);
-    return `${await shot("turn-answer-full")}, api/46-turn-answer-text.txt; сообщений в ходе ${messages.length}, первое ${lead?.length ?? 0} символов, итоговое ${finalText.length}`;
+    return `${processOpened ? await shot("turn-answer-full") : screens.at(-1).file}, api/46-turn-answer-text.txt; сообщений в ходе ${messages.length}, первое ${lead?.length ?? 0} символов, итоговое ${finalText.length}`;
   });
   // «Работал N с»: библиотека считает секунды по turn.startedAt/endedAt
   // (agentUITurnElapsedSeconds, @openma/common dist/agent-ui/presentation.js:68), без них 0.
@@ -1286,46 +1320,288 @@ async function stepAgentTurn() {
   });
   cover("session-answer");
 
-  await check("run.ui_tool_card", "в разговоре раскрывается карточка bash с выводом команды", async () => {
-    const reasoning = article.locator("[data-chat-reasoning-trigger]").first();
-    if ((await reasoning.count()) && (await reasoning.getAttribute("aria-expanded")) !== "true") await reasoning.click();
-    // «Использован 1 инструмент, 2 вызова» (bash дважды) или «Использовано 2 инструмента».
-    const group = article.getByRole("button", { name: /^Использован[о]? \d+ инструмент/ }).first();
-    if (await group.count()) await group.click();
-    const trigger = article.locator('[data-slot="collapsible-trigger"]', { hasText: "bash" }).first();
-    await trigger.waitFor({ timeout: 15_000 });
-    if ((await trigger.getAttribute("data-state")) !== "open") await trigger.click();
-    await article.locator('[data-slot="collapsible-content"]', { hasText: `VERIFY_OK_${nonce}` }).first().waitFor({ timeout: 15_000 });
+  // ---- Страница сессии как в консоли Claude (docs/plans/session-page.md, образец docs/cma-console/03-sessions.md):
+  // шапка с токенами, инспектор с пятью вкладками, выбор события, общий для ленты и «Событий»,
+  // мини-карта, поиск по разговору, узкий экран. Id событий и сумма токенов берутся из журнала API.
+  const pageEvents = await listEvents(ids.session);
+  const pageEventsFile = saveJson("47-session-page-events", pageEvents);
+  const turnUser = runTurn.userMessage ?? null;
+  const turnToolUse = runTurn.pair?.toolUse ?? runTurn.toolUses?.[0] ?? null;
+  const inspector = page.getByRole("complementary", { name: "Инспектор сессии" });
+  const inspectorTab = (name) => inspector.getByRole("tablist", { name: "Вкладки инспектора" }).getByRole("tab", { name, exact: true });
+  const eventsTable = inspector.getByRole("table", { name: "События" });
+  const eventRow = (id) => eventsTable.locator(`[role="row"][data-event-id="${id}"]`);
+  const selectedEvent = inspector.getByRole("region", { name: "Выбранное событие" });
+  const urlParam = (name) => new URL(page.url()).searchParams.get(name);
+  // JSON выбранного события рисует Shiki асинхронно: ждём строку "id": "<id>".
+  const selectedJson = async (id) => {
+    await selectedEvent.waitFor({ timeout: 10_000 });
+    let text = "";
+    for (let i = 0; i < 40; i++) {
+      text = await selectedEvent.innerText();
+      if (text.includes(`"id": "${id}"`)) break;
+      await sleep(250);
+    }
+    return text;
+  };
+  const waitSelectedRow = async (id) => {
+    for (let i = 0; i < 40 && (await eventRow(id).getAttribute("aria-selected").catch(() => null)) !== "true"; i++) await sleep(250);
+    return eventRow(id).getAttribute("aria-selected").catch(() => null);
+  };
+
+  const usageSum = pageEvents.filter((e) => e.type === "span.model_request_end").reduce((sum, e) => {
+    const u = e.model_usage ?? {};
+    return {
+      requests: sum.requests + 1,
+      input: sum.input + (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+      output: sum.output + (u.output_tokens ?? 0),
+    };
+  }, { requests: 0, input: 0, output: 0 });
+  await check("session.ui_header_tokens", "шапка показывает токены «вход / выход», равные сумме model_usage всех span.model_request_end из GET /events (вход вместе с чтением и записью кэша)", async () => {
+    assert(usageSum.requests > 0, "в журнале сессии нет span.model_request_end");
+    // В fake два запроса к модели: сумма отличается от последнего запроса.
+    if (FAKE) assert(usageSum.requests >= 2, `запросов к модели ${usageSum.requests}, ожидалось 2 (tool_use и итоговый текст)`);
+    const expected = `${tokensRu(usageSum.input)} / ${tokensRu(usageSum.output)}`;
+    const chip = page.getByRole("main").locator('header [data-session-chip="tokens"]').first();
+    await chip.waitFor({ timeout: 15_000 });
+    let shown = "";
+    for (let i = 0; i < 30; i++) {
+      shown = squash(await chip.innerText());
+      if (shown === expected) break;
+      await sleep(500);
+    }
+    assert(shown === expected,
+      `в шапке «${shown}», по журналу ${expected} (запросов ${usageSum.requests}, вход ${usageSum.input}, выход ${usageSum.output}; ${pageEventsFile}). ` +
+      "Сумму считает computeSessionTotals (apps/console/src/lib/session-stats.ts), чип рисует SessionHeader (components/session/SessionHeader.tsx, data-session-chip=\"tokens\")");
+    return `${expected}; запросов к модели ${usageSum.requests}; ${pageEventsFile}`;
+  });
+  cover("session-header-usage");
+
+  await check("session.ui_inspector", "инспектор справа: закрывается крестиком, открывается кнопкой «Инспектор», в адресе inspector=, ширина 360..720 px, 5 вкладок: Сессия, События, Инструменты, Ресурсы, Потоки", async () => {
+    await inspector.waitFor({ timeout: 15_000 });
+    await inspector.getByRole("button", { name: "Закрыть инспектор" }).click();
+    await inspector.waitFor({ state: "detached", timeout: 10_000 });
+    assert(urlParam("inspector") === null, `инспектор закрыт, а в адресе inspector=${urlParam("inspector")}`);
+    const closedShot = await shot("session-inspector-closed");
+    await page.getByRole("button", { name: "Инспектор", exact: true }).click();
+    await inspector.waitFor({ timeout: 10_000 });
+    const tabs = (await inspector.getByRole("tablist", { name: "Вкладки инспектора" }).getByRole("tab").allInnerTexts()).map(squash);
+    const want = ["Сессия", "События", "Инструменты", "Ресурсы", "Потоки"];
+    assert(JSON.stringify(tabs) === JSON.stringify(want), `вкладки ${JSON.stringify(tabs)}, ожидались ${JSON.stringify(want)}`);
+    assert(urlParam("inspector"), `после открытия в адресе нет inspector=: ${page.url()}`);
+    const box = await inspector.boundingBox();
+    assert(box && box.width >= 360 && box.width <= 720, `ширина инспектора ${box?.width} px, ожидалось 360..720`);
+    return `${closedShot}, ${await shot("session-inspector")}; ширина ${Math.round(box.width)} px`;
+  });
+  cover("session-inspector");
+
+  // Клик по строке вызова в ленте (ToolRow в components/session/CanonicalSessionTurn.tsx) раскрывает вызов,
+  // ставит ?event=<id agent.tool_use> и выделяет ту же строку на вкладке «События» (раздел 7 docs/plans/session-page.md).
+  const toolRow = article.locator(`[data-tool-call][data-event-id="${turnToolUse?.id}"]`);
+  await check("run.ui_tool_card", "в разговоре строка вызова bash раскрывается кликом: блок команды и вывод с маркером", async () => {
+    assert(turnToolUse?.id, "в журнале нет agent.tool_use bash этого хода");
+    // «События» открыты до клика: выбор из ленты должен выделить строку там (session.ui_select_sync).
+    await inspectorTab("События").click();
+    await eventsTable.waitFor({ timeout: 15_000 });
+    await toolRow.waitFor({ timeout: 15_000 });
+    assert((await toolRow.getAttribute("data-open")) !== "true", "вызов раскрыт до клика: выбор остался от прошлого шага");
+    await toolRow.locator("button[aria-expanded]").first().click();
+    await toolRow.locator("[data-tool-details] [data-tool-output]", { hasText: `VERIFY_OK_${nonce}` }).waitFor({ timeout: 15_000 });
+    const command = squash(await toolRow.locator("[data-tool-command]").first().innerText());
+    assert(command.includes(`VERIFY_OK_${nonce}`), `в блоке команды нет маркера: «${command.slice(0, 160)}»`);
     return shot("turn-tool-card");
   });
   cover("session-tool-card");
-  await check("run.ui_tool_output_text", "вывод bash в карточке показан текстом: kernel= на своей строке, без JSON-обёртки content-блоков и литералов \\n", async () => {
-    const content = article.locator('[data-slot="collapsible-content"]', { hasText: `VERIFY_OK_${nonce}` }).last();
+  await check("session.ui_select_sync", "клик по строке вызова в разговоре ставит ?event=<id agent.tool_use> и выделяет эту строку на вкладке «События» с её JSON", async () => {
+    const id = turnToolUse?.id;
+    assert(id, "в журнале нет agent.tool_use bash этого хода");
+    assert(urlParam("event") === id, `в адресе event=${urlParam("event")}, ожидался ${id}`);
+    const selected = await waitSelectedRow(id);
+    assert(selected === "true", `строка [data-event-id="${id}"] на вкладке «События»: aria-selected=${selected}`);
+    const rows = await eventsTable.locator('[role="row"][aria-selected="true"]').count();
+    assert(rows === 1, `выделено строк: ${rows}, ожидалась одна`);
+    const json = await selectedJson(id);
+    assert(json.includes(`"id": "${id}"`), `JSON выбранного события без "id": "${id}": «${squash(json).slice(0, 200)}»`);
+    return `${screens.at(-1).file}; event=${id}`;
+  });
+  cover("session-select-sync");
+  await check("run.ui_tool_output_text", "вывод bash в раскрытом вызове показан текстом: kernel= на своей строке, без JSON-обёртки content-блоков и литералов \\n", async () => {
+    const content = toolRow.locator("[data-tool-output]").first();
     const text = await content.innerText();
     writeFileSync(join(EV, "api", "45-tool-card-text.txt"), text);
     const problems = [];
+    if (!text.includes(`VERIFY_OK_${nonce}`)) problems.push(`нет VERIFY_OK_${nonce}`);
     if (/"type":\s*"text"/.test(text)) problems.push("виден JSON-массив content-блоков (\"type\": \"text\")");
     if (text.includes("\\n")) problems.push("литералы \\n вместо переносов");
     if (text.includes("\\u001b")) problems.push("литералы \\u001b (ANSI)");
     if (!text.split("\n").some((line) => line.trim().startsWith("kernel="))) problems.push("kernel= не на отдельной строке");
-    assert(problems.length === 0, `${problems.join("; ")} (api/45-tool-card-text.txt). Текст для карточки готовит formatToolOutput (lib/tool-output.ts, вызов в renderTool из managedTurnSlots, components/session/CanonicalSessionTurn.tsx), JSON карточка рисует только если текст разбирается JSON.parse (isJsonText в components/ai-elements/tool.tsx)`);
+    assert(problems.length === 0, `${problems.join("; ")} (api/45-tool-card-text.txt). Текст вывода готовит formatToolOutput (lib/tool-output.ts), блок рисует ToolDetails (components/session/CanonicalSessionTurn.tsx, data-tool-output)`);
     return "api/45-tool-card-text.txt";
   });
-  await check("run.ui_timeline", "на вкладке «Хронология» есть строка bash", async () => {
-    await page.getByRole("tab", { name: "Хронология" }).click();
-    await page.locator('[title^="bash · "]').first().waitFor({ timeout: 15_000 });
-    const file = await shot("timeline");
-    await page.getByRole("tab", { name: "Разговор" }).click();
-    return file;
+  await check("run.ui_tool_duration", "длительность в строке вызова bash совпадает с журналом (agent.tool_use → agent.tool_result) и не 0", async () => {
+    const result = runTurn.pair?.toolResult;
+    const actual = (Date.parse(result?.processed_at ?? "") - Date.parse(turnToolUse?.processed_at ?? "")) / 1000;
+    assert(Number.isFinite(actual), `нет processed_at у agent.tool_use или agent.tool_result: ${turnToolUse?.processed_at}, ${result?.processed_at}`);
+    const labels = (await toolRow.locator("button[aria-expanded] [data-search-skip]").allInnerTexts()).map(squash).filter(Boolean);
+    const label = labels.find((l) => shortDurationSeconds(l) !== null) ?? null;
+    const shown = label === null ? null : shortDurationSeconds(label);
+    assert(shown !== null, `в строке вызова нет длительности; подписи: ${JSON.stringify(labels)}`);
+    // Подпись округлена до 0,1 с (до секунды после минуты); время событий живого потока может
+    // отличаться от журнала на десятки миллисекунд.
+    const tolerance = actual >= 60 ? 1 : 0.25;
+    assert(shown > 0 && Math.abs(shown - actual) <= tolerance, `в строке «${label}» (${shown} с), по журналу ${actual.toFixed(3)} с`);
+    return `«${label}», по журналу ${actual.toFixed(3)} с`;
   });
-  cover("session-timeline");
+
+  await check("session.ui_events", "вкладка «События»: строки user.message и agent.tool_use хода с маркером (id из GET /events), выбор строки показывает JSON события с тем же id", async () => {
+    assert(turnUser?.id && turnToolUse?.id, `в журнале нет user.message или agent.tool_use хода: ${turnUser?.id}, ${turnToolUse?.id}`);
+    await inspectorTab("События").click();
+    await eventsTable.waitFor({ timeout: 15_000 });
+    assert(urlParam("inspector") === "events", `в адресе inspector=${urlParam("inspector")}, ожидалось events`);
+    const seen = [];
+    for (const [event, type, marker] of [[turnUser, "user.message", `nonce=${nonce}`], [turnToolUse, "agent.tool_use", `VERIFY_OK_${nonce}`]]) {
+      const row = eventRow(event.id);
+      await row.waitFor({ timeout: 15_000 }).catch(() => {});
+      const total = await eventsTable.locator('[role="row"][data-event-id]').count();
+      assert((await row.count()) === 1, `нет строки [data-event-id="${event.id}"] (${type}); строк событий ${total}`);
+      const cellType = squash(await row.getByRole("cell").first().innerText());
+      assert(cellType === type, `в строке ${event.id} тип «${cellType}», ожидался ${type}`);
+      await row.click();
+      assert(urlParam("event") === event.id, `после клика по строке в адресе event=${urlParam("event")}, ожидался ${event.id}`);
+      const json = await selectedJson(event.id);
+      assert(json.includes(`"id": "${event.id}"`), `JSON выбранного события без "id": "${event.id}": «${squash(json).slice(0, 200)}»`);
+      assert(squash(json).includes(`Событие ${type}`), `заголовок панели не «Событие ${type}»: «${squash(json).slice(0, 80)}»`);
+      assert(json.includes(`"type": "${type}"`) && json.includes(marker), `в JSON ${type} нет "type": "${type}" или маркера ${marker}`);
+      assert((await row.getAttribute("aria-selected")) === "true", `строка ${event.id} не выделена после клика`);
+      seen.push(`${type} ${event.id}`);
+    }
+    return `${await shot("session-inspector-events")}; ${seen.join(", ")}`;
+  });
+  cover("session-inspector-events");
+
+  await check("session.ui_tools", "вкладка «Инструменты»: строка bash с 1 вызовом и 0 ошибок, как в журнале (agent.tool_use bash и agent.tool_result без is_error)", async () => {
+    const apiBash = pageEvents.filter((e) => e.type === "agent.tool_use" && e.name === "bash");
+    const apiFailed = pageEvents.filter((e) => e.type === "agent.tool_result" && e.is_error === true && apiBash.some((u) => u.id === e.tool_use_id));
+    if (FAKE) assert(apiBash.length === 1 && apiFailed.length === 0, `по журналу bash вызван ${apiBash.length} раз, ошибок ${apiFailed.length}; ожидался 1 вызов без ошибки`);
+    await inspectorTab("Инструменты").click();
+    const table = inspector.getByRole("table", { name: "Инструменты" });
+    await table.waitFor({ timeout: 15_000 });
+    const rows = await table.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => [...tr.cells].map((td) => td.innerText.trim())));
+    const bash = rows.find((cells) => cells[0] === "bash");
+    assert(bash, `нет строки bash; строки: ${JSON.stringify(rows)}`);
+    assert(bash[2] === String(apiBash.length) && bash[3] === String(apiFailed.length),
+      `bash: вызовов «${bash[2]}», ошибок «${bash[3]}»; по журналу ${apiBash.length} и ${apiFailed.length}. Таблицу считает computeToolStats (lib/session-stats.ts), рисует ToolsTab`);
+    return `${await shot("session-inspector-tools")}; bash ${JSON.stringify(bash)}`;
+  });
+  cover("session-inspector-tools");
+
+  await check("session.ui_minimap", "мини-карта «Карта хода»: отрезок реплики пользователя и по отрезку на каждый запрос к модели (span.model_request_start), наведение показывает карточку с именем агента", async () => {
+    const minimap = page.getByRole("group", { name: "Карта хода" });
+    await minimap.waitFor({ timeout: 10_000 });
+    const segments = await minimap.locator("[data-minimap-segment]").evaluateAll((els) => els.map((el) => {
+      const box = el.getBoundingClientRect();
+      return { kind: el.dataset.kind, width: box.width, height: box.height, label: el.getAttribute("aria-label") };
+    }));
+    const starts = pageEvents.filter((e) => e.type === "span.model_request_start").length;
+    const requests = segments.filter((s) => s.kind === "request" || s.kind === "error");
+    const users = segments.filter((s) => s.kind === "user");
+    assert(users.length >= 1, `нет отрезка реплики пользователя; отрезки: ${JSON.stringify(segments)}`);
+    assert(requests.length === starts, `отрезков запросов ${requests.length}, в журнале span.model_request_start ${starts}`);
+    const hidden = segments.filter((s) => s.width < 1 || s.height < 1);
+    assert(hidden.length === 0, `невидимые отрезки: ${JSON.stringify(hidden)}`);
+    await minimap.locator('[data-minimap-segment][data-kind="request"]').first().hover();
+    const card = page.getByTestId("minimap-card");
+    await card.waitFor({ timeout: 5_000 });
+    const cardText = squash(await card.innerText());
+    assert(cardText.includes(names.agent), `карточка отрезка без имени агента ${names.agent}: «${cardText}»`);
+    const file = await shot("session-minimap-hover");
+    await page.mouse.move(0, 0);
+    return `${file}; отрезков ${segments.length}: реплик ${users.length}, запросов ${requests.length}`;
+  });
+  cover("session-minimap");
+
+  await check("session.ui_search", `поиск «Найти в разговоре» находит маркер хода ${nonce}: счётчик 1/N (N ≥ 2: реплика и ответ), подсветка совпадений, метки на мини-карте`, async () => {
+    const search = page.getByRole("searchbox", { name: "Найти в разговоре" });
+    await search.fill(nonce);
+    const counter = page.getByTestId("match-counter");
+    await counter.waitFor({ timeout: 10_000 });
+    let counted = "";
+    for (let i = 0; i < 20; i++) {
+      counted = squash(await counter.innerText());
+      if (/^1\/\d+$/.test(counted)) break;
+      await sleep(250);
+    }
+    const total = Number(counted.match(/^1\/(\d+)$/)?.[1] ?? 0);
+    assert(total >= 2, `счётчик совпадений «${counted}», ожидалось 1/N при N ≥ 2`);
+    const ranges = await page.evaluate(() => {
+      const all = globalThis.CSS?.highlights?.get("session-search");
+      return all ? [...all].map((range) => range.toString()) : null;
+    });
+    assert(ranges && ranges.length >= 1, "нет подсветки совпадений (CSS.highlights «session-search»)");
+    assert(ranges.every((text) => text.toLowerCase() === nonce), `подсвечено не то: ${JSON.stringify(ranges.slice(0, 5))}`);
+    const marks = await page.locator("[data-session-minimap] [data-minimap-match]").count();
+    assert(marks >= 1, "на мини-карте нет меток совпадений");
+    const file = await shot("session-search");
+    await search.fill("");
+    return `${file}; совпадений ${total}, подсвечено ${ranges.length}, меток на мини-карте ${marks}`;
+  });
+  cover("session-search");
+
   const filename = `verify-${nonce}.txt`;
-  await check("run.ui_files", `в панели «Файлы сессии» есть ${filename}`, async () => {
-    await page.getByRole("button", { name: "Файлы сессии" }).click();
-    await page.getByRole("complementary", { name: "Файлы сессии" }).getByRole("link", { name: filename }).waitFor({ timeout: 15_000 });
+  await check("run.ui_files", `на вкладке «Ресурсы» инспектора есть выходной файл /mnt/session/outputs/${filename} со ссылкой на скачивание`, async () => {
+    await inspectorTab("Ресурсы").click();
+    const link = inspector.getByRole("link", { name: `/mnt/session/outputs/${filename}` });
+    await link.waitFor({ timeout: 15_000 });
+    const href = await link.getAttribute("href");
+    assert(href?.endsWith(`/outputs/${encodeURIComponent(filename)}`), `ссылка ведёт на ${href}`);
     return shot("session-files");
   });
   cover("session-files");
+
+  // 390 px: оболочка консоли прокручивает main, поэтому проверяются и документ, и main.
+  // Прокрутка вправо до упора должна остаться на нуле.
+  await check("session.ui_mobile_390", "на 390 px у страницы сессии нет горизонтальной прокрутки (документ и main): с закрытым инспектором и с нижним листом «События»", async () => {
+    const results = [];
+    try {
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (const [label, query] of [["инспектор закрыт", ""], ["лист «События»", "?inspector=events"]]) {
+        await page.goto(`${BASE}/sessions/${ids.session}${query}`);
+        await page.locator("article[data-turn-id] [data-session-turn-prompt]", { hasText: `nonce=${nonce}` }).first().waitFor({ timeout: 30_000 });
+        if (!query && (await inspector.count())) await inspector.getByRole("button", { name: "Закрыть инспектор" }).click();
+        if (query) await eventsTable.waitFor({ timeout: 15_000 });
+        await settleAnimations(page.locator("body"));
+        const m = await page.evaluate(() => {
+          const doc = document.scrollingElement ?? document.documentElement;
+          const main = document.querySelector("main");
+          window.scrollTo(10_000, window.scrollY);
+          if (main) main.scrollLeft = 10_000;
+          const width = window.innerWidth;
+          // Подсказка для разбора: самые правые элементы за краем экрана вне своих прокруток.
+          const scrolls = (el) => { const x = getComputedStyle(el).overflowX; return x === "auto" || x === "scroll" || x === "hidden" || x === "clip"; };
+          const outside = [...document.querySelectorAll("body *")].filter((el) => {
+            const box = el.getBoundingClientRect();
+            if (box.width < 1 || box.right <= width + 1) return false;
+            for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (p !== main && scrolls(p)) return false;
+            return true;
+          }).slice(0, 3).map((el) => `${el.tagName.toLowerCase()}.${String(el.className).split(" ").slice(0, 2).join(".")} right=${Math.round(el.getBoundingClientRect().right)}`);
+          return {
+            docExtra: doc.scrollWidth - doc.clientWidth,
+            mainExtra: main ? main.scrollWidth - main.clientWidth : 0,
+            scrollX: window.scrollX,
+            mainScrollLeft: main ? main.scrollLeft : 0,
+            outside,
+          };
+        });
+        results.push({ label, ...m, shot: await shot(`session-390-${query ? "events" : "page"}`) });
+      }
+    } finally {
+      await page.setViewportSize(VIEW);
+    }
+    const bad = results.filter((r) => r.docExtra > 0 || r.mainExtra > 0 || r.scrollX > 0 || r.mainScrollLeft > 0);
+    assert(bad.length === 0, bad.map((r) => `${r.label}: документ шире на ${r.docExtra} px, main на ${r.mainExtra} px, scrollX=${r.scrollX}, main.scrollLeft=${r.mainScrollLeft}; за краем: ${r.outside.join("; ") || "нет"}`).join(" | "));
+    return results.map((r) => `${r.label}: ${r.shot}`).join(", ");
+  });
+  cover("session-mobile");
   await check("run.ui_prompt_after_reload", "после перезагрузки страницы реплика пользователя видна в ходе (история из GET /events)", async () => {
     await page.reload();
     await page.locator("article[data-turn-id] [data-session-turn-prompt]", { hasText: `nonce=${nonce}` }).first().waitFor({ timeout: 30_000 });

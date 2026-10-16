@@ -23,7 +23,9 @@ describe("ToolsTab", () => {
     expect(screen.getByRole("img", { name: "Статусы вызовов" }).tagName.toLowerCase()).toBe("svg");
     const summary = screen.getByRole("region", { name: "Сводка" });
     expect(within(summary).getByText("6 (35 %)" )).toBeInTheDocument();
-    expect(within(summary).getByText("11 (65 %)" )).toBeInTheDocument();
+    // Как в образце: процент только у ошибок, выполненные идут числом.
+    expect(within(summary).getByText("11")).toBeInTheDocument();
+    expect(within(summary).queryByText("11 (65 %)")).not.toBeInTheDocument();
     for (const text of ["Отклонено", "Прервано", "Выполнено", "Время в инструментах", "Всего", "Выполнение", "Ожидание вас", "Длительность"]) expect(within(summary).getByText(text)).toBeInTheDocument();
     expect(within(summary).getAllByText("нет")).toHaveLength(2);
   });
@@ -39,9 +41,12 @@ describe("ToolsTab", () => {
     const select = vi.fn();
     render(<ToolsTab {...props} onSelectEvent={select} selection={{ ...props.selection, eventId: "bash0" }} />);
     fireEvent.click(screen.getByText("bash"));
-    expect(screen.getByText("Инструмент bash")).toBeInTheDocument();
+    const detail = screen.getByRole("region", { name: "Инструмент bash" });
+    expect(within(detail).getByText("Инструмент")).toHaveClass("text-ddc-text-muted");
+    expect(within(detail).getAllByText("bash")[0]).toHaveClass("font-mono");
     const calls = screen.getByRole("table", { name: "Вызовы bash" });
     for (const name of ["Время", "Ввод", "Статус", "Длительность"]) expect(within(calls).getByRole("columnheader", { name })).toBeInTheDocument();
+    expect(within(calls).getByRole("columnheader", { name: "Длительность" })).toHaveClass("text-right");
     expect(within(calls).getAllByRole("row")).toHaveLength(7);
     expect(within(calls).getAllByText("выполнен")).toHaveLength(6);
     const row = within(calls).getAllByRole("row")[1];

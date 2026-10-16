@@ -170,6 +170,15 @@ describe("ThreadsTab: таблица потоков", () => {
 });
 
 describe("ThreadsTab: деталь потока", () => {
+  it("деталь стоит снизу на половину высоты, как в «Событиях» и «Инструментах», над ней прокручивается список", () => {
+    renderTab();
+
+    const detail = screen.getByRole("region", { name: "Поток Исследователь" });
+    expect(detail).toHaveClass("h-1/2", "shrink-0");
+    expect(screen.getByRole("table", { name: "Потоки" }).closest("[data-threads-list]")).toHaveClass("flex-1", "overflow-y-auto");
+    expect(within(detail).getByText("Поток", { exact: true })).toHaveClass("text-ddc-text-muted");
+  });
+
   it("заголовок с именем, подробности, контекст и использование выбранного потока", () => {
     renderTab();
 

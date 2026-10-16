@@ -170,6 +170,14 @@ describe("SessionHeader: название и статус", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(session.id);
   });
 
+  it("рамка наведения выходит за заголовок на отступ и не режет текст многоточием", () => {
+    renderHeader({ session: { ...session, title: null } });
+
+    // -mx-2 расширяет кнопку на 1rem, max-w-full обрезал бы последние символы ID.
+    expect(titleButton()).toHaveClass("-mx-2", "max-w-[calc(100%+1rem)]");
+    expect(titleButton()).not.toHaveClass("max-w-full");
+  });
+
   it("клик превращает заголовок в поле с кнопками «Сохранить» и «Отмена»", async () => {
     renderHeader();
 
@@ -268,6 +276,16 @@ describe("SessionHeader: чипы", () => {
     expect(groups[1]).toHaveTextContent("14 ч 2 мин");
     expect(groups[1]).toHaveTextContent("411,1 тыс. / 20,1 тыс.");
     expect(groups[2]).toHaveTextContent("$0,89 / $5,00");
+  });
+
+  it("каждый чип расхода помечен data-session-chip: по метке его находит проверка скилла", () => {
+    const { container } = renderHeader();
+
+    const chip = (name: string) => container.querySelector(`[data-session-chip="${name}"]`);
+    expect(chip("duration")).toHaveTextContent("14 ч 2 мин");
+    expect(chip("tokens")).toHaveTextContent(/^411,1 тыс\. \/ 20,1 тыс\.$/);
+    expect(chip("cost")).toHaveTextContent("$0,89 / $5,00");
+    expect(chip("activity")).not.toBeNull();
   });
 
   it("длительность считает от создания до последней активности", () => {

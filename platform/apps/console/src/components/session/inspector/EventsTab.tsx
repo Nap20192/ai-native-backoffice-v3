@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy, Download, X } from "lucide-react";
 import { CodeBlock } from "../../ai-elements/code-block";
+import { Button } from "../../ui/button";
+import { Checkbox } from "../../ui/checkbox";
+import { Input } from "../../ui/input";
+import { Label } from "../../ui/label";
+import { PlainButton } from "../../ui/plain-button";
 import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover";
 import {
   buildEventIndex, eventFamily, eventJson, eventPreview, eventTimeMs, eventTypesPresent,
@@ -30,6 +35,20 @@ export function downloadEventsFile(sessionId: string, events: readonly SessionEv
     link.download = `events-${sessionId}.json`;
     link.click();
   } finally { URL.revokeObjectURL(url); }
+}
+
+/**
+ * Прокручивает список так, чтобы строка стояла под липкой шапкой целиком.
+ * scrollIntoView здесь не годится: в Chrome он обрывает плавную прокрутку
+ * ленты к тому же событию, которая начинается в этом же кадре.
+ */
+function revealRow(list: HTMLElement, row: HTMLElement) {
+  const box = list.getBoundingClientRect();
+  const rect = row.getBoundingClientRect();
+  const head = list.querySelector<HTMLElement>("[data-events-head]")?.getBoundingClientRect().height ?? 0;
+  const top = box.top + head;
+  if (rect.top < top) list.scrollTop -= top - rect.top;
+  else if (rect.bottom > box.bottom) list.scrollTop += rect.bottom - box.bottom;
 }
 
 const columns = "grid grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)_4rem] items-center gap-2 px-2";
@@ -82,10 +101,13 @@ export function EventsTab({ sessionId, events, selection, onSelectEvent }: Event
   const label = filter.mode === "all" ? "Все события" : filter.mode === "transcript" ? "События разговора" : "Типы событий";
   const types = eventTypesPresent(events).filter(type => type.toLowerCase().includes(query.toLowerCase()));
 
+  // Строку держим в видимой части списка при любом выборе: панель JSON
+  // открывается под списком и сжимает его, выбранная строка иначе уходит вниз.
   useEffect(() => {
-    if (!selection.eventId || selection.source === "events") return;
-    const row = [...(listRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(el => el.dataset.eventId === selection.eventId);
-    row?.scrollIntoView?.({ block: "nearest" });
+    const list = listRef.current;
+    if (!selection.eventId || !list) return;
+    const row = [...list.querySelectorAll<HTMLElement>("[data-event-id]")].find(el => el.dataset.eventId === selection.eventId);
+    if (row) revealRow(list, row);
   }, [selection.eventId, selection.source, selection.seq, filter, events]);
 
   function toggleType(type: string) {
@@ -109,21 +131,64 @@ export function EventsTab({ sessionId, events, selection, onSelectEvent }: Event
     </div>;
   }
 
+  const typeChecked = (type: string) =>
+    filter.mode !== "all" && (filter.mode === "transcript" ? TRANSCRIPT_EVENT_TYPES : filter.types).has(type);
+
   return <div className="flex h-full min-h-0 flex-col bg-ddc-surface font-sans text-xs text-ddc-text">
     <div className="flex h-10 shrink-0 items-center justify-between gap-2 px-2">
       <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-        <PopoverTrigger asChild><button type="button" className="flex h-7 items-center gap-1 rounded-md border border-ddc-border px-2">{label}<ChevronDown size={12} /></button></PopoverTrigger>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="xs">
+            {label}
+            <ChevronDown aria-hidden="true" className="size-3" />
+          </Button>
+        </PopoverTrigger>
         <PopoverContent align="start" className="w-72 gap-0 p-1 text-xs" onOpenAutoFocus={event => event.preventDefault()}>
-          <input type="search" aria-label="Поиск типов событий" placeholder="Поиск" className="mb-1 h-7 w-full border-b border-ddc-divider bg-ddc-surface px-2 outline-none" value={query} onChange={event => setQuery(event.target.value)} />
-          <button type="button" className="h-7 px-2 text-left hover:bg-ddc-surface-muted" onClick={() => { setFilter({ mode: "all" }); setMenuOpen(false); }}>Все события</button>
-          <label className="flex h-7 items-center gap-2 px-2"><input type="checkbox" checked={filter.mode === "transcript"} onChange={() => { setFilter(filter.mode === "transcript" ? { mode: "all" } : { mode: "transcript" }); setMenuOpen(false); }} />События разговора</label>
+          <Input
+            type="search"
+            aria-label="Поиск типов событий"
+            placeholder="Поиск"
+            className="mb-1 h-8 rounded-lg border-0 border-b border-ddc-divider px-2 text-xs focus-visible:ring-0"
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+          />
+          <PlainButton
+            className="flex h-8 w-full items-center rounded-lg px-2 text-left hover:bg-ddc-surface-muted"
+            onClick={() => { setFilter({ mode: "all" }); setMenuOpen(false); }}
+          >
+            Все события
+          </PlainButton>
+          <Label className="flex h-8 items-center gap-2 rounded-lg px-2 text-xs font-normal hover:bg-ddc-surface-muted">
+            <Checkbox
+              checked={filter.mode === "transcript"}
+              onCheckedChange={() => { setFilter(filter.mode === "transcript" ? { mode: "all" } : { mode: "transcript" }); setMenuOpen(false); }}
+            />
+            События разговора
+          </Label>
           <div className="border-t border-ddc-divider px-2 py-2 text-ddc-text-muted">Типы событий</div>
-          <div className="max-h-64 overflow-y-auto">{types.map(type => <label key={type} className="flex h-7 items-center gap-2 px-2 font-mono"><input type="checkbox" checked={filter.mode !== "all" && (filter.mode === "transcript" ? TRANSCRIPT_EVENT_TYPES : filter.types).has(type)} onChange={() => toggleType(type)} />{type}</label>)}</div>
+          <div className="max-h-64 overflow-y-auto">
+            {types.map(type => (
+              <Label key={type} className="flex h-8 items-center gap-2 rounded-lg px-2 font-mono text-xs font-normal hover:bg-ddc-surface-muted">
+                <Checkbox checked={typeChecked(type)} onCheckedChange={() => toggleType(type)} />
+                {type}
+              </Label>
+            ))}
+          </div>
         </PopoverContent>
       </Popover>
       <div className="flex gap-1">
-        <button type="button" className="flex h-7 items-center gap-1 rounded-md border border-ddc-border px-1.5" onClick={async () => { try { await copyEventsToClipboard(filtered); setCopyError(false); } catch { setCopyError(true); } }}><Copy size={12} />Копировать</button>
-        <button type="button" className="flex h-7 items-center gap-1 rounded-md border border-ddc-border px-1.5" onClick={() => downloadEventsFile(sessionId, filtered)}><Download size={12} />Скачать</button>
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={async () => { try { await copyEventsToClipboard(filtered); setCopyError(false); } catch { setCopyError(true); } }}
+        >
+          <Copy aria-hidden="true" className="size-3" />
+          Копировать
+        </Button>
+        <Button variant="ghost" size="xs" onClick={() => downloadEventsFile(sessionId, filtered)}>
+          <Download aria-hidden="true" className="size-3" />
+          Скачать
+        </Button>
       </div>
     </div>
     {copyError && <div role="alert" className="px-2 text-ddc-danger-text">Не удалось скопировать события</div>}
@@ -138,12 +203,12 @@ export function EventsTab({ sessionId, events, selection, onSelectEvent }: Event
         const next = i < 0 ? event.key === "ArrowDown" ? 0 : filtered.length - 1 : Math.max(0, Math.min(filtered.length - 1, i + (event.key === "ArrowDown" ? 1 : -1)));
         onSelectEvent(filtered[next].id ?? null, "events");
       }}>
-      <div role="row" className={`${columns} sticky top-0 z-10 h-6 border-b border-ddc-divider bg-ddc-surface text-ddc-label`}><span role="columnheader">Событие</span><span role="columnheader">Кратко</span><span role="columnheader" className="text-right">Время</span></div>
+      <div role="row" data-events-head className={`${columns} sticky top-0 z-10 h-6 border-b border-ddc-divider bg-ddc-surface text-ddc-label`}><span role="columnheader">Событие</span><span role="columnheader">Кратко</span><span role="columnheader" className="text-right">Время</span></div>
       {groups.map((group, i) => group.kind === "single" ? visibleIds.has(group.event) && renderRow(group.event, i) : group.events.some(e => visibleIds.has(e)) && <div key={`${group.id}-${i}`} role="rowgroup" aria-label={`Запрос ${group.id}`} className="mx-1 my-1 rounded-lg border border-ddc-border py-1">{group.events.filter(e => visibleIds.has(e)).map(renderRow)}</div>)}
       {!filtered.length && <div className="p-3 text-ddc-text-muted">Нет событий</div>}
     </div>
     {selection.eventId && <section aria-label="Выбранное событие" className="flex h-1/2 min-h-0 shrink-0 flex-col border-t border-ddc-divider">
-      <div className="flex min-h-8 items-center gap-2 px-2"><span className="min-w-0 flex-1 truncate">Событие <span className="font-mono">{selected?.type ?? ""}</span></span><span className="max-w-28 truncate font-mono text-ddc-text-muted" title={selection.eventId}>{selection.eventId.length > 16 ? `${selection.eventId.slice(0, 7)}…${selection.eventId.slice(-7)}` : selection.eventId}</span><button type="button" aria-label="Закрыть событие" onClick={() => onSelectEvent(null, "events")}><X size={14} /></button></div>
+      <div className="flex min-h-8 items-center gap-2 px-2"><span className="min-w-0 flex-1 truncate">Событие <span className="font-mono">{selected?.type ?? ""}</span></span><span className="max-w-28 truncate font-mono text-ddc-text-muted" title={selection.eventId}>{selection.eventId.length > 16 ? `${selection.eventId.slice(0, 7)}…${selection.eventId.slice(-7)}` : selection.eventId}</span><Button variant="ghost" size="icon-xs" aria-label="Закрыть событие" title="Закрыть событие" onClick={() => onSelectEvent(null, "events")}><X aria-hidden="true" className="size-3.5" /></Button></div>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         {selected ? <><div className="mb-2 text-ddc-text-muted">{eventTimeMs(selected) === null ? EMPTY_VALUE : formatEventDateTimeRu(eventTimeMs(selected)!)}</div><EventJsonCode event={selected} /></> : <div className="text-ddc-text-muted">Событие недоступно в этом потоке</div>}
       </div>

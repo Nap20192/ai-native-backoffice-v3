@@ -419,13 +419,24 @@ export function SessionDetail() {
     (e as { id?: string }).id
     ?? `${e.type}:${JSON.stringify(e.content || e.tool_use_id || e.error || "").slice(0, 120)}`;
 
-  /** Подтверждение локальной реплики: берём у серверного события время
-   *  обработки, остальное остаётся как показано. */
+  /** Подтверждение локальной реплики ответом на POST: берём у серверного
+   *  события время обработки, id остаётся локальным. По нему реплику ещё
+   *  найдут очередь (system.user_message_pending) и откат при ошибке. */
   const confirmLocalMessage = (localId: string, serverEvent: Event) => {
     const processedAt = (serverEvent as { processed_at?: unknown }).processed_at;
     if (typeof processedAt !== "string") return;
     setEvents((prev) =>
       prev.map((e) => (e.id === localId ? { ...e, processed_at: processedAt } : e)),
+    );
+  };
+
+  /** user.message сервера из потока заменяет локальную реплику на месте:
+   *  id, время и содержимое берём у сервера. Иначе «События», выбор
+   *  `?event=` и скачанный журнал несут id `local-user-…`, которого нет
+   *  в журнале сессии. */
+  const replaceLocalMessage = (localId: string, serverEvent: Event) => {
+    setEvents((prev) =>
+      prev.map((e) => (e.id === localId ? { ...e, ...serverEvent } : e)),
     );
   };
 
@@ -602,7 +613,7 @@ export function SessionDetail() {
     if (ev.type === "user.message") {
       const localId = optimistic.current.claimForEvent(ev.id, userMessageText(ev.content));
       if (localId) {
-        confirmLocalMessage(localId, ev);
+        replaceLocalMessage(localId, ev);
         return;
       }
     }
@@ -1124,22 +1135,30 @@ export function SessionDetail() {
         ) : (
           <InspectorSkeleton />
         ))}
-      {inspectorTab === "events" && (
-        <EventsTab
-          sessionId={id ?? ""}
-          events={threadEvents}
-          selection={selection}
-          onSelectEvent={selectEvent}
-        />
-      )}
-      {inspectorTab === "tools" && (
-        <ToolsTab
-          events={threadEvents}
-          agentTools={agentTools}
-          selection={selection}
-          onSelectEvent={selectEvent}
-        />
-      )}
+      {/* Пока история не пришла, пустой список событий вводил бы в
+          заблуждение (правило 12 DDC): стоит скелетон, как в ленте. */}
+      {inspectorTab === "events" &&
+        (historyLoaded ? (
+          <EventsTab
+            sessionId={id ?? ""}
+            events={threadEvents}
+            selection={selection}
+            onSelectEvent={selectEvent}
+          />
+        ) : (
+          <InspectorSkeleton />
+        ))}
+      {inspectorTab === "tools" &&
+        (historyLoaded ? (
+          <ToolsTab
+            events={threadEvents}
+            agentTools={agentTools}
+            selection={selection}
+            onSelectEvent={selectEvent}
+          />
+        ) : (
+          <InspectorSkeleton />
+        ))}
       {inspectorTab === "resources" && id && <ResourcesTab sessionId={id} />}
       {inspectorTab === "thread" &&
         (session ? (
@@ -1215,6 +1234,12 @@ export function SessionDetail() {
             selection={selection}
             onSelectEvent={selectEvent}
             externalCursorMs={cursorMs}
+            overlay={
+              layout === "sheet" && inspector ? (
+                // Колонка разговора на узком экране с отступом 24 px: лист идёт от края до края.
+                <div className="-mx-6 flex h-full min-h-0 flex-col">{inspector}</div>
+              ) : undefined
+            }
             toolbarTrailing={
               inspectorOpen ? undefined : (
                 <Button variant="outline" size="xs" onClick={openInspector}>
@@ -1227,7 +1252,6 @@ export function SessionDetail() {
         </div>
         {layout === "side" && inspector}
       </div>
-      {layout === "sheet" && inspector}
 
       <EditBudgetDialog
         open={dialog === "budget"}

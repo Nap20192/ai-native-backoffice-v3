@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -150,6 +150,16 @@ describe("JumpToBottomButton", () => {
     await user.click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+  it("сама стоит по центру над полем ввода: классы оболочки из node_modules Tailwind не собирает", () => {
+    // Оболочка передаёт left-[50%] translate-x-[-50%] bottom-4, но Tailwind
+    // консоли не сканирует node_modules, и без своих классов кнопка уходит
+    // в левый нижний угол под поле ввода.
+    render(<JumpToBottomButton className="absolute bottom-4 left-[50%] translate-x-[-50%]" onClick={vi.fn()} />);
+
+    const button = screen.getByRole("button", { name: "Вниз" });
+    expect(button).toHaveClass("absolute", "bottom-4", "left-1/2", "-translate-x-1/2", "z-10");
+  });
 });
 
 describe("ManagedSessionConversation: каркас", () => {
@@ -198,6 +208,16 @@ describe("ManagedSessionConversation: каркас", () => {
     setup({ turns: [] });
 
     expect(screen.getByText("Отправьте сообщение, чтобы начать сессию.")).toBeInTheDocument();
+  });
+
+  it("ставит переданный лист поверх ленты под поиском и мини-картой", () => {
+    const { container } = setup({ overlay: <aside aria-label="Лист">лист</aside> });
+
+    const sheet = screen.getByRole("complementary", { name: "Лист" });
+    const layer = sheet.closest<HTMLElement>("[data-session-overlay]")!;
+    expect(layer).toHaveClass("absolute", "inset-0");
+    expect(container.querySelector("[data-session-toolbar]")!.contains(sheet)).toBe(false);
+    expect(layer.parentElement!.querySelector('[role="log"]')).not.toBeNull();
   });
 
   it("ставит место для кнопки «Инспектор» справа от лупы", () => {
@@ -470,41 +490,41 @@ describe("ManagedSessionConversation: выбор события снаружи",
   const rowButton = (container: HTMLElement) =>
     within(callRow(container)).getByRole("button", { name: /bash/ });
 
-  it("из вкладки «События» прокручивает к вызову и раскрывает его", () => {
+  it("из вкладки «События» прокручивает к вызову и раскрывает его", async () => {
     const { container } = setup({ selection: { eventId: "t1", source: "events", seq: 1 } });
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     expect(scrollIntoView.mock.contexts[0]).toBe(callRow(container));
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
     expect(rowButton(container)).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("результат вызова ведёт к той же строке вызова", () => {
+  it("результат вызова ведёт к той же строке вызова", async () => {
     const { container } = setup({ selection: { eventId: "t1r", source: "events", seq: 1 } });
 
-    expect(scrollIntoView.mock.contexts[0]).toBe(callRow(container));
+    await waitFor(() => expect(scrollIntoView.mock.contexts[0]).toBe(callRow(container)));
     expect(rowButton(container)).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("событие без строки ведёт к блоку", () => {
+  it("событие без строки ведёт к блоку", async () => {
     const { container } = setup({ selection: { eventId: "m1", source: "events", seq: 1 } });
 
-    expect(scrollIntoView.mock.contexts[0]).toBe(block(container, "r1"));
+    await waitFor(() => expect(scrollIntoView.mock.contexts[0]).toBe(block(container, "r1")));
     expect(block(container, "r1")).toHaveAttribute("data-selected", "true");
   });
 
-  it("из «Инструментов» прокручивает, но не раскрывает", () => {
+  it("из «Инструментов» прокручивает, но не раскрывает", async () => {
     const { container } = setup({ selection: { eventId: "t1", source: "tools", seq: 1 } });
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     expect(rowButton(container)).toHaveAttribute("aria-expanded", "false");
     expect(callRow(container)).toHaveAttribute("data-selected", "true");
   });
 
-  it("с мини-карты прокручивает, но не раскрывает", () => {
+  it("с мини-карты прокручивает, но не раскрывает", async () => {
     const { container } = setup({ selection: { eventId: "t1", source: "minimap", seq: 1 } });
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     expect(rowButton(container)).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -515,18 +535,19 @@ describe("ManagedSessionConversation: выбор события снаружи",
     expect(rowButton(container)).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("выбор из адреса при загрузке прокручивает к событию", () => {
+  it("выбор из адреса при загрузке прокручивает к событию", async () => {
     setup({ selection: { eventId: "t1", source: "url", seq: 0 } });
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
   });
 
-  it("повторный выбор того же события снова прокручивает (растёт seq)", () => {
+  it("повторный выбор того же события снова прокручивает (растёт seq)", async () => {
     const { rerender } = setup({ selection: { eventId: "t1", source: "events", seq: 1 } });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
     rerender({ selection: { eventId: "t1", source: "events", seq: 2 } });
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
   });
 
   it("без выбора ничего не прокручивает", () => {
@@ -535,13 +556,14 @@ describe("ManagedSessionConversation: выбор события снаружи",
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it("ждёт появления блока: выбор из адреса до загрузки истории", () => {
+  it("ждёт появления блока: выбор из адреса до загрузки истории", async () => {
     const { rerender } = setup({ turns: [], selection: { eventId: "t1", source: "url", seq: 0 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(scrollIntoView).not.toHaveBeenCalled();
 
     rerender({ turns: turnsFrom(sessionEvents()), selection: { eventId: "t1", source: "url", seq: 0 } });
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
   });
 
   it("клик по блоку в ленте сообщает выбор с источником «transcript»", async () => {
@@ -635,6 +657,30 @@ describe("ManagedSessionConversation: клавиши", () => {
     press("j", { altKey: true });
 
     expect(props.onSelectEvent).not.toHaveBeenCalled();
+  });
+
+  it("клавиши из листа инспектора поверх ленты лента не ловит, как на десктопе", () => {
+    const { props } = setup({
+      selection: { eventId: "u1", source: "tools", seq: 1 },
+      overlay: (
+        <div role="row" tabIndex={0} data-testid="sheet-row">
+          bash
+        </div>
+      ),
+    });
+    const row = screen.getByTestId("sheet-row");
+    const keys = ["ArrowDown", "ArrowUp", "j", "k", "Escape", "ArrowLeft", "ArrowRight", "/"];
+    const prevented = keys.map((key) => {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      act(() => {
+        row.dispatchEvent(event);
+      });
+      return event.defaultPrevented;
+    });
+
+    expect(props.onSelectEvent).not.toHaveBeenCalled();
+    expect(prevented).toEqual(keys.map(() => false));
+    expect(searchField()).not.toHaveFocus();
   });
 
   it("клавиши не срабатывают, когда открыто окно", () => {

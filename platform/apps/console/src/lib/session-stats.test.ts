@@ -45,6 +45,23 @@ describe("event data", () => {
     expect(["agent", "user", "span", "session", "system", "other"].map(x => s.eventFamily(`${x}.x`))).toEqual(["agent", "user", "span", "session", "system", "other"]);
   });
 
+  it("keeps outcome evaluations outside request frames, as on the reference events tab", () => {
+    const events = [e("span.model_request_start", "s"), e("agent.message", "m"), e("span.model_request_end", "end", 1, { model_request_start_id: "s" }),
+      e("span.outcome_evaluation_start", "es", 2), e("span.outcome_evaluation_ongoing", "eo", 3), e("span.outcome_evaluation_end", "ee", 4),
+      e("span.model_request_start", "s2", 5)];
+    expect(s.groupEventsByRequest(events)).toEqual([
+      { kind: "request", id: "s", events: events.slice(0, 3) },
+      { kind: "single", event: events[3] }, { kind: "single", event: events[4] }, { kind: "single", event: events[5] },
+      { kind: "request", id: "s2", events: [events[6]] },
+    ]);
+  });
+
+  it("previews the first non-empty line of a message", () => {
+    const index = s.buildEventIndex([]);
+    expect(s.eventPreview(e("agent.message", "m", 0, { content: [{ type: "text", text: "\n\nПривет! Я готов.\n\nЯ могу:" }] }), index)).toBe("Привет! Я готов.");
+    expect(s.eventPreview(e("user.message", "u", 0, { content: [{ type: "text", text: "  \nвыполни pwd" }] }), index)).toBe("выполни pwd");
+  });
+
   it("formats every supported preview and canonical JSON", () => {
     const events = [e("span.model_request_start", "start"), e("span.model_request_end", "end", 3600, { model_request_start_id: "start", model_usage: { input_tokens: 4, output_tokens: 139, cache_read_input_tokens: 20900 } }), e("agent.tool_use", "use", 1, { name: "edit", input: { file_path: "/x" } })];
     const index = s.buildEventIndex(events);
@@ -61,6 +78,9 @@ describe("event data", () => {
     const keys = { bash: "command", read: "file_path", write: "path", edit: "file_path", glob: "pattern", grep: "pattern", web_fetch: "url", web_search: "query" };
     for (const [name, key] of Object.entries(keys)) expect(s.toolInputPreview(name, { [key]: "value", extra: "ignored" })).toBe("value");
     expect(s.toolInputPreview("other", { n: 1 })).toBe('{"n":1}');
+    // Наш харнесс пишет путь в filePath, содержимое стоит раньше пути.
+    expect(s.toolInputPreview("write", { content: "print()", filePath: "/workspace/hello.py" })).toBe("/workspace/hello.py");
+    expect(s.toolInputPreview("edit", { oldString: "a", newString: "b", filePath: "/w/a.txt" })).toBe("/w/a.txt");
     expect(s.eventJson({ type: "x", ts: 1, processed_at: "date", z: { b: 1, a: [{ z: 2, a: 1 }] } })).toBe(JSON.stringify({ processed_at: "date", type: "x", z: { a: [{ a: 1, z: 2 }], b: 1 } }, null, 2));
   });
 });
@@ -124,6 +144,12 @@ describe("totals, costs and transcript", () => {
     expect(s.computeThreadStats(thread, "child", base + 400)).toMatchObject({ activeMs: 300, contextTokens: 35, contextSeries: [{ atMs: base + 50, tokens: 35 }, { atMs: base + 250, tokens: 35 }] });
   });
 
+  it("counts active time of the primary thread by session statuses when the server sends no thread statuses", () => {
+    const events = [e("session.status_running", "r1", 0), e("span.model_request_end", "a", 50, { model_usage: usage }), e("session.status_idle", "i1", 1000),
+      e("session.status_running", "r2", 5000), e("session.status_idle", "i2", 5500)];
+    expect(s.computeThreadStats(events, s.PRIMARY_THREAD_ID).activeMs).toBe(1500);
+  });
+
   it("validates prices and budget and builds cumulative costs", () => {
     const price = s.priceFromModelCard({ pi_config: { cost: { input: 3, output: 15 } } });
     expect(price).toEqual({ input: 3, output: 15, cacheRead: 0, cacheWrite: 0 });
@@ -154,6 +180,13 @@ describe("totals, costs and transcript", () => {
     expect(map.get("result")).toBe("req");
     expect(map.get("status")).toBe("u");
     expect(s.collectOutcomes(events)[0]).toMatchObject({ outcomeId: "o", evaluations: [{ endEventId: "ee" }, { endEventId: "ee2" }] });
+  });
+
+  it("gives each evaluation its start time for the minimap span", () => {
+    const events = [e("user.define_outcome", "out", 0, { outcome_id: "o", description: "Report", rubric: { type: "text", content: "Clear" } }),
+      e("span.outcome_evaluation_start", "es", 1000, { outcome_id: "o", iteration: 0 }), e("span.outcome_evaluation_end", "ee", 21_000, { outcome_id: "o", iteration: 0, result: "needs_revision", outcome_evaluation_start_id: "es" }),
+      e("span.outcome_evaluation_end", "lone", 30_000, { outcome_id: "o", iteration: 1, result: "satisfied" })];
+    expect(s.collectOutcomes(events)[0].evaluations.map(x => [x.startMs, x.atMs])).toEqual([[base + 1000, base + 21_000], [null, base + 30_000]]);
   });
 
   it("keeps accounting events in their request and does not render status cards", () => {

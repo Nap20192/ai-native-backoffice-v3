@@ -849,7 +849,10 @@ function ToolDetails({ call }: { call: ToolCall }) {
   const input = asRecord(call.input);
   const output =
     call.output === undefined || call.output === null ? "" : formatToolOutput(call.output);
-  const path = asText(input.file_path) || asText(input.path);
+  // Харнессы пишут поля по-разному: file_path и filePath, old_string и oldString.
+  const path = asText(input.file_path) || asText(input.filePath) || asText(input.path);
+  const oldText = asText(input.old_string) || asText(input.oldString);
+  const newText = asText(input.new_string) || asText(input.newString);
 
   let inputPart: ReactNode = null;
   if (call.name === "bash" && asText(input.command)) {
@@ -879,12 +882,8 @@ function ToolDetails({ call }: { call: ToolCall }) {
     inputPart = (
       <>
         {path ? <PathChip path={path} /> : null}
-        {asText(input.old_string) ? (
-          <TextBox data-tool-old label="Было" text={asText(input.old_string)} tone="old" />
-        ) : null}
-        {asText(input.new_string) ? (
-          <TextBox data-tool-new label="Стало" text={asText(input.new_string)} tone="new" />
-        ) : null}
+        {oldText ? <TextBox data-tool-old label="Было" text={oldText} tone="old" /> : null}
+        {newText ? <TextBox data-tool-new label="Стало" text={newText} tone="new" /> : null}
       </>
     );
   } else if (call.input !== undefined && Object.keys(input).length > 0) {

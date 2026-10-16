@@ -137,6 +137,8 @@ export interface OutcomeEvaluation {
   explanation: string;
   startEventId: string | null;
   endEventId: string;
+  /** Время span.outcome_evaluation_start: от него мини-карта рисует отрезок оценки. */
+  startMs: number | null;
   atMs: number | null;
   usage: ModelUsage;
 }
@@ -261,6 +263,10 @@ export function collectModelRequests(events: readonly SessionEvent[]): ModelRequ
 function topLevel(type: string): boolean {
   return type.startsWith("user.") || type.startsWith("session.status_") || type.startsWith("session.thread_status_") || ["session.thread_created", "session.updated", "session.deleted"].includes(type);
 }
+/** Оценка результата идёт после запроса к модели и в его рамку не входит. */
+function outsideRequest(type: string): boolean {
+  return topLevel(type) || type.startsWith("span.outcome_evaluation_");
+}
 export function groupEventsByRequest(events: readonly SessionEvent[]): EventGroup[] {
   const groups: EventGroup[] = [];
   let current: Extract<EventGroup, { kind: "request" }> | null = null;
@@ -268,7 +274,7 @@ export function groupEventsByRequest(events: readonly SessionEvent[]): EventGrou
     if (event.type === "span.model_request_start") {
       current = { kind: "request", id: idOf(event), events: [event] };
       groups.push(current);
-    } else if (topLevel(event.type)) {
+    } else if (outsideRequest(event.type)) {
       current = null;
       groups.push({ kind: "single", event });
     } else if (current) current.events.push(event);
@@ -300,12 +306,16 @@ function contentText(content: unknown): string {
   if (typeof content === "string") return content;
   return Array.isArray(content) ? content.map(block => str(record(block).text)).filter(Boolean).join("\n") : "";
 }
+/** Первая непустая строка: ответ модели часто начинается с пустых строк. */
+function firstLine(text: string): string {
+  return text.split("\n").map(line => line.trim()).find(Boolean) ?? "";
+}
 const outcomeLabels: Record<string, string> = { satisfied: "выполнено", needs_revision: "нужна доработка", max_iterations_reached: "итерации исчерпаны", failed: "оценка не удалась", interrupted: "прервано" };
 export function eventPreview(event: SessionEvent, index: EventIndex): string {
-  if (event.type === "user.message" || event.type === "agent.message") return contentText(event.content).split("\n")[0];
+  if (event.type === "user.message" || event.type === "agent.message") return firstLine(contentText(event.content));
   if (toolKind(event.type) !== null) return `${event.name ?? ""} ${toolInputPreview(event.name ?? "", event.input)}`.trim();
   const resultId = toolResultId(event);
-  if (resultId) return `${index.toolNameByUseId.get(resultId) ?? ""} ${contentText(event.content).split("\n")[0]}`.trim();
+  if (resultId) return `${index.toolNameByUseId.get(resultId) ?? ""} ${firstLine(contentText(event.content))}`.trim();
   if (event.type === "span.model_request_end") {
     const r = index.requestByEndId.get(idOf(event));
     const u = r?.usage;
@@ -320,12 +330,14 @@ export function eventPreview(event: SessionEvent, index: EventIndex): string {
   if (event.type === "user.define_outcome") return str(event.description);
   return "";
 }
+const FILE_PATH_KEYS = ["file_path", "filePath", "path"] as const;
 export function toolInputPreview(name: string, input: unknown): string {
   if (typeof input === "string") return input;
   const value = record(input);
-  const key = ({ bash: "command", read: "file_path", write: "file_path", edit: "file_path", glob: "pattern", grep: "pattern", web_fetch: "url", web_search: "query" } as Record<string, string>)[name];
-  const primary = value[key] ?? (["read", "write", "edit"].includes(name) ? value.path : undefined);
-  return str(primary) || Object.values(value).find((v): v is string => typeof v === "string") || JSON.stringify(input ?? {});
+  // Харнессы называют путь по-разному: file_path, filePath или path.
+  const keys = ({ bash: ["command"], read: FILE_PATH_KEYS, write: FILE_PATH_KEYS, edit: FILE_PATH_KEYS, glob: ["pattern"], grep: ["pattern"], web_fetch: ["url"], web_search: ["query"] } as Record<string, readonly string[]>)[name] ?? [];
+  const primary = keys.map(key => str(value[key])).find(Boolean);
+  return primary || Object.values(value).find((v): v is string => typeof v === "string") || JSON.stringify(input ?? {});
 }
 export function eventJson(event: SessionEvent): string {
   function sorted(value: unknown): unknown {
@@ -477,7 +489,10 @@ export function computeThreadStats(events: readonly SessionEvent[], threadId: st
   const requests = collectModelRequests(scoped).filter(r => r.usage !== null && r.endEventId !== null);
   const contextSeries = requests.filter(r => r.endMs !== null).map(r => ({ atMs: r.endMs!, tokens: totalInput(r.usage!) + r.usage!.output }));
   const last = requests.at(-1);
-  return { ...computeSessionTotals(scoped, { nowMs }), activeMs: activeTime(scoped, "session.thread_status_", nowMs), threadId, contextTokens: last ? totalInput(last.usage!) + last.usage!.output : null, contextSeries };
+  // Сервер может не слать статусы потока: тогда считаем по статусам сессии в событиях потока.
+  const hasThreadStatuses = scoped.some(event => event.type.startsWith("session.thread_status_"));
+  const activeMs = activeTime(scoped, hasThreadStatuses ? "session.thread_status_" : "session.status_", nowMs);
+  return { ...computeSessionTotals(scoped, { nowMs }), activeMs, threadId, contextTokens: last ? totalInput(last.usage!) + last.usage!.output : null, contextSeries };
 }
 export function priceFromModelCard(card: { pi_config?: Record<string, unknown> } | null | undefined): UsdPerMillion | null {
   const cost = record(card?.pi_config?.cost);
@@ -519,7 +534,7 @@ export function collectOutcomes(events: readonly SessionEvent[]): OutcomeView[] 
     else if (event.type === "span.outcome_evaluation_end") {
       const outcome = outcomes.find(o => o.outcomeId === event.outcome_id);
       const start = starts.get(str(event.outcome_evaluation_start_id)) ?? [...starts.values()].find(e => e.outcome_id === event.outcome_id && e.iteration === event.iteration);
-      outcome?.evaluations.push({ iteration: num(event.iteration), result: str(event.result), explanation: str(event.explanation), startEventId: start ? idOf(start) : null, endEventId: idOf(event), atMs: eventTimeMs(event), usage: readUsage(event.usage) });
+      outcome?.evaluations.push({ iteration: num(event.iteration), result: str(event.result), explanation: str(event.explanation), startEventId: start ? idOf(start) : null, endEventId: idOf(event), startMs: start ? eventTimeMs(start) : null, atMs: eventTimeMs(event), usage: readUsage(event.usage) });
     }
   }
   return outcomes;

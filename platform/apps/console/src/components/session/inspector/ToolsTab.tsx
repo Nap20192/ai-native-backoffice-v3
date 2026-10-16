@@ -5,6 +5,9 @@ import {
   type EventSelection, type SessionEvent, type ToolCallStatus, type ToolStatusCounts,
 } from "../../../lib/session-stats";
 import { EMPTY_VALUE, formatClockRu, formatPercentRu, formatShortDurationRu, plural } from "../format-ru";
+import { Button } from "../../ui/button";
+import { Input } from "../../ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui/table";
 
 export interface ToolsTabProps {
   events: readonly SessionEvent[];
@@ -33,13 +36,14 @@ function StatusRing({ counts }: { counts: ToolStatusCounts }) {
       })}
     </svg>
     <dl className="grid flex-1 grid-cols-[auto_1fr] gap-x-5 gap-y-1">
-      {statuses.filter(([status]) => status !== "running" || counts.running > 0).map(([status, label, color]) => <div key={status} className="contents"><dt className="flex items-center gap-1.5 text-ddc-text-muted"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: `var(${color})` }} />{label}</dt><dd className={status === "failed" && counts.failed ? "text-ddc-danger-text" : "text-ddc-text"}>{counts[status] ? `${counts[status]} (${formatPercentRu(counts[status] / total)})` : "нет"}</dd></div>)}
+      {statuses.filter(([status]) => status !== "running" || counts.running > 0).map(([status, label, color]) => <div key={status} className="contents"><dt className="flex items-center gap-1.5 text-ddc-text-muted"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: `var(${color})` }} />{label}</dt><dd className={status === "failed" && counts.failed ? "text-ddc-danger-text" : "text-ddc-text"}>{!counts[status] ? "нет" : status === "failed" ? `${counts[status]} (${formatPercentRu(counts[status] / total)})` : counts[status]}</dd></div>)}
     </dl>
   </div>;
 }
 
-const head = "h-6 px-2 text-left font-normal text-ddc-label";
-const cell = "h-6 truncate px-2";
+// Таблицы инспектора теснее общих: строка 24 px, заголовок без капса.
+const head = "h-6 px-2 text-left text-xs font-normal tracking-normal normal-case text-ddc-label";
+const cell = "h-6 truncate px-2 py-0";
 const duration = (ms: number | null) => ms === 0 ? "0 с" : formatShortDurationRu(ms);
 function ToolIcon({ name }: { name: string }) {
   const Icon = name === "bash" ? Terminal : name.startsWith("web_") ? Globe : ["read", "write", "edit"].includes(name) ? FileText : ["grep", "glob"].includes(name) ? Search : Code;
@@ -55,34 +59,105 @@ export function ToolsTab({ events, agentTools, selection, onSelectEvent }: Tools
   const { rows, summary } = useMemo(() => computeToolStats(collectToolCalls(events), toolCatalogFromAgent(agentTools)), [events, agentTools]);
   const selected = rows.find(row => JSON.stringify([row.kind, row.name, row.callList[0]?.mcpServerName]) === selectedKey);
   const filtered = rows.filter(row => row.name.toLowerCase().includes(query.toLowerCase()));
+  const keyOf = (row: (typeof rows)[number]) => JSON.stringify([row.kind, row.name, row.callList[0]?.mcpServerName]);
+  const callSelected = (call: (typeof rows)[number]["callList"][number]) =>
+    selection.eventId === call.useEventId || (call.resultEventId !== null && selection.eventId === call.resultEventId);
+
   return <div className="flex h-full min-h-0 flex-col bg-ddc-surface font-sans text-xs text-ddc-text">
-    <div className="relative mx-2 my-2 shrink-0"><Search size={12} className="absolute top-2 left-2 text-ddc-icon-muted" /><input type="search" aria-label="Найти инструмент" placeholder="Найти инструмент" value={query} onChange={event => setQuery(event.target.value)} className="h-7 w-48 max-w-full rounded-md border border-ddc-border bg-ddc-surface pr-2 pl-7 placeholder:text-ddc-placeholder" /></div>
+    <div className="relative mx-2 my-2 shrink-0">
+      <Search aria-hidden="true" size={12} className="pointer-events-none absolute top-2.5 left-2 text-ddc-icon-muted" />
+      <Input
+        type="search"
+        aria-label="Найти инструмент"
+        placeholder="Найти инструмент"
+        value={query}
+        onChange={event => setQuery(event.target.value)}
+        className="h-8 w-48 max-w-full rounded-lg pr-2 pl-7 text-xs"
+      />
+    </div>
     <div className="min-h-0 flex-1 overflow-auto">
-      <table aria-label="Инструменты" className="w-full table-fixed border-collapse">
+      <Table aria-label="Инструменты" container={false} className="table-fixed border-collapse text-xs">
         <colgroup><col className="w-[29%]" /><col className="w-[25%]" /><col className="w-[12%]" /><col className="w-[20%]" /><col className="w-[14%]" /></colgroup>
-        <thead className="sticky top-0 bg-ddc-surface"><tr>{["Название", "Разрешение", "Вызовы", "Ошибки", "p50"].map(label => <th key={label} className={`${head} ${["Вызовы", "Ошибки", "p50"].includes(label) ? "text-right" : ""}`}>{label}</th>)}</tr></thead>
-        <tbody>{filtered.map((row, index) => <tr key={`${row.kind}-${row.name}-${index}`} tabIndex={0} aria-selected={selected === row} className={`h-6 cursor-pointer hover:bg-ddc-surface-muted ${row.calls === 0 ? "text-ddc-text-muted" : ""} ${selected === row ? "bg-ddc-selected-bg" : ""}`}
-          onClick={() => setSelectedKey(JSON.stringify([row.kind, row.name, row.callList[0]?.mcpServerName]))}
-          onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedKey(JSON.stringify([row.kind, row.name, row.callList[0]?.mcpServerName])); } }}>
-          <td className={cell}><span className="flex items-center gap-1.5" title={row.name}><ToolIcon name={row.name} /><span className="truncate font-mono">{row.name}</span></span></td>
-          <td className={cell}><Permission value={row.permission} /></td><td className={`${cell} text-right tabular-nums`}>{row.calls}</td>
-          <td className={`${cell} text-right tabular-nums ${row.failed ? "text-ddc-danger-text" : ""}`}>{row.calls === 0 ? EMPTY_VALUE : row.failed ? `${row.failed} (${formatPercentRu(row.failedRatio!)})` : "0"}</td>
-          <td className={`${cell} text-right tabular-nums`}>{duration(row.p50Ms)}</td>
-        </tr>)}</tbody>
-      </table>
+        <TableHeader variant="wireless" className="sticky top-0 bg-ddc-surface">
+          <TableRow variant="wireless">
+            {["Название", "Разрешение", "Вызовы", "Ошибки", "p50"].map(label => (
+              <TableHead key={label} className={`${head} ${["Вызовы", "Ошибки", "p50"].includes(label) ? "text-right" : ""}`}>{label}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filtered.map((row, index) => (
+            <TableRow
+              key={`${row.kind}-${row.name}-${index}`}
+              variant="wireless"
+              tabIndex={0}
+              aria-selected={selected === row}
+              className={`h-6 cursor-pointer hover:bg-ddc-surface-muted ${row.calls === 0 ? "text-ddc-text-muted" : ""} ${selected === row ? "bg-ddc-selected-bg" : ""}`}
+              onClick={() => setSelectedKey(keyOf(row))}
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedKey(keyOf(row)); } }}
+            >
+              <TableCell className={cell}><span className="flex items-center gap-1.5" title={row.name}><ToolIcon name={row.name} /><span className="truncate font-mono">{row.name}</span></span></TableCell>
+              <TableCell className={cell}><Permission value={row.permission} /></TableCell>
+              <TableCell className={`${cell} text-right tabular-nums`}>{row.calls}</TableCell>
+              <TableCell className={`${cell} text-right tabular-nums ${row.failed ? "text-ddc-danger-text" : ""}`}>{row.calls === 0 ? EMPTY_VALUE : row.failed ? `${row.failed} (${formatPercentRu(row.failedRatio!)})` : "0"}</TableCell>
+              <TableCell className={`${cell} text-right tabular-nums`}>{duration(row.p50Ms)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
       {!filtered.length && <div className="p-3 text-ddc-text-muted">Инструменты не найдены</div>}
     </div>
     <section role="region" aria-label={selected ? `Инструмент ${selected.name}` : "Сводка"} className="flex h-1/2 min-h-0 shrink-0 flex-col border-t border-ddc-divider">
       <div className="flex h-8 shrink-0 items-center gap-2 px-2">
-        <span className="min-w-0 flex-1 truncate font-medium">{selected ? `Инструмент ${selected.name}` : "Сводка"}</span>
-        {selected ? <><Permission value={selected.permission} /><button type="button" aria-label="Закрыть инструмент" onClick={() => setSelectedKey(null)}><X size={14} /></button></> : <span className="text-right text-2xs text-ddc-text-muted">{summary.toolCount} {plural(summary.toolCount, "инструмент", "инструмента", "инструментов")}, {summary.usedCount} использовано, {summary.callCount} {plural(summary.callCount, "вызов", "вызова", "вызовов")}</span>}
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {selected ? <><span className="font-normal text-ddc-text-muted">Инструмент</span> <span className="font-mono">{selected.name}</span></> : "Сводка"}
+        </span>
+        {selected
+          ? <><Permission value={selected.permission} /><Button variant="ghost" size="icon-xs" aria-label="Закрыть инструмент" title="Закрыть инструмент" onClick={() => setSelectedKey(null)}><X aria-hidden="true" className="size-3.5" /></Button></>
+          : <span className="text-right text-2xs text-ddc-text-muted">{summary.toolCount} {plural(summary.toolCount, "инструмент", "инструмента", "инструментов")}, {summary.usedCount} использовано, {summary.callCount} {plural(summary.callCount, "вызов", "вызова", "вызовов")}</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <StatusRing counts={selected?.counts ?? summary.counts} />
-        {selected ? <table aria-label={`Вызовы ${selected.name}`} className="w-full table-fixed border-collapse"><colgroup><col className="w-20" /><col /><col className="w-24" /><col className="w-20" /></colgroup><thead><tr>{["Время", "Ввод", "Статус", "Длительность"].map(label => <th key={label} className={head}>{label}</th>)}</tr></thead>
-          <tbody>{selected.callList.map(call => <tr key={call.useEventId} tabIndex={0} aria-selected={selection.eventId === call.useEventId || selection.eventId === call.resultEventId && call.resultEventId !== null} className={`h-6 cursor-pointer hover:bg-ddc-surface-muted ${selection.eventId === call.useEventId || selection.eventId === call.resultEventId && call.resultEventId !== null ? "bg-ddc-selected-bg outline outline-1 -outline-offset-1 outline-ddc-ring" : ""}`} onClick={() => onSelectEvent(call.useEventId, "tools")} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectEvent(call.useEventId, "tools"); } }}>
-            <td className={`${cell} text-ddc-text-muted tabular-nums`}>{call.startMs === null ? EMPTY_VALUE : formatClockRu(call.startMs)}</td><td className={`${cell} font-mono`} title={toolInputPreview(call.name, call.input)}>{toolInputPreview(call.name, call.input)}</td><td className={`${cell} ${call.status === "completed" ? "text-ddc-success-text" : call.status === "failed" ? "text-ddc-danger-text" : "text-ddc-text-muted"}`}>{statusLabels[call.status]}</td><td className={`${cell} text-right tabular-nums`}>{duration(call.durationMs)}</td>
-          </tr>)}</tbody></table> : <table className="w-full border-collapse"><thead><tr><th className={head}>Время в инструментах</th><th className={`${head} text-right`}>Длительность</th></tr></thead><tbody>{[["Всего", summary.time.totalMs], ["Выполнение", summary.time.executingMs], ["Ожидание вас", summary.time.waitingMs]].map(([label, ms]) => <tr key={label}><td className={`${cell} text-ddc-text-muted`}>{label}</td><td className={`${cell} text-right tabular-nums`}>{duration(ms as number)}</td></tr>)}</tbody></table>}
+        {selected ? (
+          <Table aria-label={`Вызовы ${selected.name}`} container={false} className="table-fixed border-collapse text-xs">
+            <colgroup><col className="w-20" /><col /><col className="w-24" /><col className="w-28" /></colgroup>
+            <TableHeader variant="wireless">
+              <TableRow variant="wireless">{["Время", "Ввод", "Статус", "Длительность"].map(label => <TableHead key={label} className={`${head} ${label === "Длительность" ? "text-right" : ""}`}>{label}</TableHead>)}</TableRow>
+            </TableHeader>
+            <TableBody>
+              {selected.callList.map(call => (
+                <TableRow
+                  key={call.useEventId}
+                  variant="wireless"
+                  tabIndex={0}
+                  aria-selected={callSelected(call)}
+                  className={`h-6 cursor-pointer hover:bg-ddc-surface-muted ${callSelected(call) ? "bg-ddc-selected-bg outline outline-1 -outline-offset-1 outline-ddc-ring" : ""}`}
+                  onClick={() => onSelectEvent(call.useEventId, "tools")}
+                  onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectEvent(call.useEventId, "tools"); } }}
+                >
+                  <TableCell className={`${cell} text-ddc-text-muted tabular-nums`}>{call.startMs === null ? EMPTY_VALUE : formatClockRu(call.startMs)}</TableCell>
+                  <TableCell className={`${cell} font-mono`} title={toolInputPreview(call.name, call.input)}>{toolInputPreview(call.name, call.input)}</TableCell>
+                  <TableCell className={`${cell} ${call.status === "completed" ? "text-ddc-success-text" : call.status === "failed" ? "text-ddc-danger-text" : "text-ddc-text-muted"}`}>{statusLabels[call.status]}</TableCell>
+                  <TableCell className={`${cell} text-right tabular-nums`}>{duration(call.durationMs)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <Table container={false} className="border-collapse text-xs">
+            <TableHeader variant="wireless">
+              <TableRow variant="wireless"><TableHead className={head}>Время в инструментах</TableHead><TableHead className={`${head} text-right`}>Длительность</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {([["Всего", summary.time.totalMs], ["Выполнение", summary.time.executingMs], ["Ожидание вас", summary.time.waitingMs]] as const).map(([label, ms]) => (
+                <TableRow key={label} variant="wireless">
+                  <TableCell className={`${cell} ${label === "Всего" ? "font-medium text-ddc-text" : "text-ddc-text-muted"}`}>{label}</TableCell>
+                  <TableCell className={`${cell} text-right tabular-nums ${label === "Всего" ? "font-medium" : ""}`}>{duration(ms)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </div>
     </section>
   </div>;

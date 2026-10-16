@@ -41,6 +41,7 @@ function gradingBlock(overrides: Partial<Block<"grading">> = {}, result = "needs
       explanation: "Независимый оценщик нашёл **два** недочёта.",
       startEventId: "start-1",
       endEventId: "end-1",
+      startMs: 1_000,
       atMs: 2_000,
       usage: ZERO,
     },

@@ -234,7 +234,9 @@ describe("SessionInspector: ширина", () => {
     const aside = screen.getByRole("complementary", { name: "Инспектор сессии" });
     expect(aside).toHaveAttribute("data-layout", "sheet");
     expect(aside.style.width).toBe("");
-    expect(aside).toHaveClass("fixed", "inset-x-0", "bottom-0", "top-[40%]");
+    // Лист занимает место ленты под мини-картой: его рамку задаёт страница.
+    expect(aside).toHaveClass("h-full", "border-t");
+    expect(aside).not.toHaveClass("fixed");
     expect(screen.queryByRole("separator")).toBeNull();
   });
 });

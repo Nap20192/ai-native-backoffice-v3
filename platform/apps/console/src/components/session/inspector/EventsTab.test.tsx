@@ -58,18 +58,54 @@ describe("EventsTab", () => {
     expect(screen.getByRole("table").querySelectorAll("[data-event-id]")).toHaveLength(1);
   });
 
-  it("scrolls repeated external selections and retains details across thread changes", () => {
+  // Список прокручиваем сами, без scrollIntoView: в Chrome второй вызов
+  // scrollIntoView в том же кадре обрывает плавную прокрутку ленты к блоку.
+  function trackScroll(list: HTMLElement) {
+    let top = 0;
+    Object.defineProperty(list, "scrollTop", { configurable: true, get: () => top, set: (value: number) => { top = value; } });
+    return () => top;
+  }
+  function placeRow(eventId: string, rowTop: number) {
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const box = (top: number, height: number) => ({ x: 0, y: top, left: 0, right: 0, width: 0, top, height, bottom: top + height, toJSON: () => ({}) }) as DOMRect;
+      if (this.getAttribute("role") === "table") return box(100, 200);
+      if (this.hasAttribute("data-events-head")) return box(100, 24);
+      if (this.dataset.eventId === eventId) return box(rowTop, 24);
+      return box(0, 0);
+    });
+  }
+
+  it("brings an externally selected row into the list on every repeated selection and retains details across thread changes", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;
-    const props = { sessionId: "s", events, selection: { ...selection, eventId: "message" }, onSelectEvent: vi.fn() };
-    const { rerender } = render(<EventsTab {...props} />);
-    expect(scroll).toHaveBeenCalled();
-    scroll.mockClear();
-    rerender(<EventsTab {...props} selection={{ ...props.selection, seq: 1 }} />);
-    expect(scroll).toHaveBeenCalledOnce();
-    rerender(<EventsTab {...props} events={events.slice(0, 2)} />);
+    const props = { sessionId: "s", events, onSelectEvent: vi.fn() };
+    const { rerender } = render(<EventsTab {...props} selection={selection} />);
+    const scrollTop = trackScroll(screen.getByRole("table"));
+    const rect = placeRow("message", 350);
+    rerender(<EventsTab {...props} selection={{ eventId: "message", source: "transcript", seq: 1 }} />);
+    expect(scrollTop()).toBe(74);
+    rect.mockRestore();
+    const again = placeRow("message", 60);
+    rerender(<EventsTab {...props} selection={{ eventId: "message", source: "transcript", seq: 2 }} />);
+    expect(scrollTop()).toBe(10);
+    again.mockRestore();
+    expect(scroll).not.toHaveBeenCalled();
+    rerender(<EventsTab {...props} events={events.slice(0, 2)} selection={{ eventId: "message", source: "transcript", seq: 2 }} />);
     expect(screen.getByRole("region", { name: "Выбранное событие" })).toHaveTextContent('"type": "agent.message"');
     expect(screen.getByText("Событие скрыто фильтром")).toBeInTheDocument();
+  });
+
+  it("keeps a row picked in the list visible when the JSON panel opens under it", () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const props = { sessionId: "s", events, onSelectEvent: vi.fn() };
+    const { rerender } = render(<EventsTab {...props} selection={selection} />);
+    const scrollTop = trackScroll(screen.getByRole("table"));
+    const rect = placeRow("end", 310);
+    rerender(<EventsTab {...props} selection={{ eventId: "end", source: "events", seq: 1 }} />);
+    rect.mockRestore();
+    expect(scrollTop()).toBe(34);
+    expect(scroll).not.toHaveBeenCalled();
   });
 
   it("copies and downloads only the filtered events and reports copy failures", async () => {

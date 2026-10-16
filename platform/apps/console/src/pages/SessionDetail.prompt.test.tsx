@@ -166,9 +166,9 @@ function text(value: string): Frame {
   return { type: "text", text: value };
 }
 
-async function openSession() {
+async function openSession(path = "/sessions/session-1") {
   const view = render(
-    <MemoryRouter initialEntries={["/sessions/session-1"]}>
+    <MemoryRouter initialEntries={[path]}>
       <I18nProvider>
         <Routes>
           <Route path="/sessions/:id" element={<SessionDetail />} />
@@ -366,5 +366,60 @@ describe("SessionDetail: реплика пользователя в ходе р�
     await waitFor(() => expect(screen.getByText("Сеть доступна")).toBeInTheDocument());
     expect(prompts(container)).toEqual(["Проверь сеть из песочницы"]);
     expect(screen.getAllByText("Проверь сеть из песочницы")).toHaveLength(1);
+  });
+});
+
+describe("SessionDetail: реплика после user.message из потока", () => {
+  /** id строк user.message на вкладке «События» инспектора. */
+  function userMessageRows(container: HTMLElement) {
+    return Array.from(
+      container.querySelectorAll<HTMLElement>('[role="table"][aria-label="События"] [role="row"][data-event-id]'),
+    )
+      .filter((row) => row.textContent?.startsWith("user.message"))
+      .map((row) => row.dataset.eventId);
+  }
+
+  it("несёт id события сервера: «События» показывают тот же id, что журнал", async () => {
+    const { container } = await openSession("/sessions/session-1?inspector=events");
+
+    await sendMessage("Проверь сеть из песочницы");
+    await waitFor(() => expect(api.sessions.events.send).toHaveBeenCalledOnce());
+    await act(async () => {
+      state.stream!.push({
+        type: "user.message",
+        id: "sevt_server_0",
+        processed_at: "2026-10-15T14:00:05.000Z",
+        content: [text("Проверь сеть из песочницы")],
+      });
+    });
+
+    await waitFor(() => expect(userMessageRows(container)).toEqual(["sevt_server_0"]));
+    expect(prompts(container)).toEqual(["Проверь сеть из песочницы"]);
+  });
+
+  it("несёт id события сервера, когда поток опередил ответ на POST", async () => {
+    let answer: (value: unknown) => void = () => {};
+    state.sendImpl = (events) =>
+      new Promise((resolve) => {
+        answer = () => resolve({ data: acceptedEvents(events) });
+      });
+    const { container } = await openSession("/sessions/session-1?inspector=events");
+
+    await sendMessage("Проверь сеть из песочницы");
+    await waitFor(() => expect(api.sessions.events.send).toHaveBeenCalledOnce());
+    await act(async () => {
+      state.stream!.push({
+        type: "user.message",
+        id: "sevt_server_0",
+        processed_at: "2026-10-15T14:00:05.000Z",
+        content: [text("Проверь сеть из песочницы")],
+      });
+    });
+    await act(async () => {
+      answer(null);
+    });
+
+    await waitFor(() => expect(userMessageRows(container)).toEqual(["sevt_server_0"]));
+    expect(prompts(container)).toEqual(["Проверь сеть из песочницы"]);
   });
 });

@@ -118,6 +118,7 @@ const gradingBlock: Block<"grading"> = {
     explanation: "Доработать",
     startEventId: null,
     endEventId: "grade",
+    startMs: null,
     atMs: T0 + 30_000,
     usage: ZERO,
   },
@@ -182,6 +183,19 @@ describe("minimapSegments", () => {
     expect(segments[1]?.label).toBe("Задан результат");
     expect(segments[2]?.label).toBe("Оценка, итерация 1");
     expect(segments[3]?.label).toBe("Песочница не запустилась");
+  });
+
+  it("оценка с известным началом идёт отрезком от начала до конца, как светлые полосы образца", () => {
+    const graded: Block<"grading"> = {
+      ...gradingBlock,
+      evaluation: { ...gradingBlock.evaluation, startEventId: "grade-start", startMs: T0 + 10_000 },
+    };
+
+    expect(minimapSegments([graded])[0]).toMatchObject({
+      kind: "grading",
+      startMs: T0 + 10_000,
+      endMs: T0 + 30_000,
+    });
   });
 
   it("разрыв времени, предупреждение и блоки без времени отрезков не дают", () => {
@@ -318,6 +332,15 @@ describe("TranscriptMinimap", () => {
     expect(buttons[0]!.className).toContain("brand");
   });
 
+  it("оценку рисует светло-голубой полосой, как в образце", () => {
+    const { container } = setup({ blocks: [gradingBlock] });
+
+    const [grading] = segmentButtons(container);
+    expect(grading!.dataset.kind).toBe("grading");
+    expect(grading!.className).toContain("bg-sky-200");
+    expect(grading!.className).not.toContain("ddc-dot-warning");
+  });
+
   it("называет отрезки для экранного чтения по подписи и времени", () => {
     setup();
 
@@ -345,6 +368,20 @@ describe("TranscriptMinimap", () => {
     expect(within(card).getByText("57,7 с")).toBeInTheDocument();
     expect(within(card).getByText("Вызвал write")).toBeInTheDocument();
     expect(within(card).getByText(formatClockRu(T0 + 1_000))).toBeInTheDocument();
+  });
+
+  it("карточка в две строки, как в образце: имя, длительность и время сверху, подпись одной строкой", async () => {
+    const user = userEvent.setup();
+    const { container } = setup();
+
+    await user.hover(segmentButtons(container)[1]!);
+
+    const card = screen.getByTestId("minimap-card");
+    const head = within(card).getByText("Deep researcher").parentElement!;
+    expect(head).toHaveTextContent("57,7 с");
+    expect(head).toHaveTextContent(formatClockRu(T0 + 1_000));
+    expect(within(card).getByText("Вызвал write")).toHaveClass("truncate");
+    expect(card.style.width).toBe("320px");
   });
 
   it("карточка метки пользователя называет «Пользователь» без длительности", async () => {

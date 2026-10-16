@@ -81,7 +81,10 @@ export function minimapSegments(blocks: readonly TranscriptBlock[]): MinimapSegm
         break;
       case "grading":
         if (block.atMs !== null) {
-          segments.push(mark(block, "grading", `Оценка, итерация ${block.evaluation.iteration + 1}`));
+          // Оценка в образце идёт полосой от начала до конца, без начала остаётся меткой.
+          const segment = mark(block, "grading", `Оценка, итерация ${block.evaluation.iteration + 1}`);
+          const startMs = block.evaluation.startMs;
+          segments.push(startMs !== null && startMs <= segment.endMs ? { ...segment, startMs } : segment);
         }
         break;
       case "error":
@@ -226,7 +229,7 @@ export interface TranscriptMinimapProps {
 
 /** Ширина колонки, пока её нет в вёрстке (тесты, первый кадр). */
 const FALLBACK_WIDTH_PX = 720;
-const CARD_WIDTH_PX = 224;
+const CARD_WIDTH_PX = 320;
 const MARK_MIN_WIDTH_PX = 3;
 const BAR_MIN_WIDTH_PX = 2;
 
@@ -249,7 +252,7 @@ const KIND_CLASS: Record<MinimapSegment["kind"], string> = {
   request: "bg-sky-300 data-[active=true]:bg-sky-500",
   user: "bg-brand-500",
   outcome: "bg-brand-300 data-[active=true]:bg-brand-500",
-  grading: "bg-(--ddc-dot-warning)",
+  grading: "bg-sky-200 data-[active=true]:bg-sky-400",
   error: "bg-(--ddc-dot-danger)",
 };
 
@@ -443,7 +446,7 @@ export function TranscriptMinimap({
           data-testid="minimap-card"
           style={{ left: cardLeft, width: CARD_WIDTH_PX }}
         >
-          <div className="flex items-baseline justify-between gap-2">
+          <div className="flex items-baseline gap-2">
             <span
               className={cn(
                 "min-w-0 truncate font-medium",
@@ -457,13 +460,20 @@ export function TranscriptMinimap({
                 : KIND_OWNER[hoverEntry.segment.kind]}
             </span>
             {hoverEntry.segment.endMs > hoverEntry.segment.startMs ? (
-              <span className="flex-none tabular-nums text-ddc-text-muted">
+              <span className="ml-auto flex-none tabular-nums text-ddc-text-muted">
                 {formatShortDurationRu(hoverEntry.segment.endMs - hoverEntry.segment.startMs)}
               </span>
             ) : null}
+            <span
+              className={cn(
+                "flex-none tabular-nums text-ddc-text-muted",
+                hoverEntry.segment.endMs > hoverEntry.segment.startMs ? undefined : "ml-auto",
+              )}
+            >
+              {formatClockRu(hoverEntry.segment.startMs)}
+            </span>
           </div>
-          <div className="tabular-nums text-ddc-text-muted">{formatClockRu(hoverEntry.segment.startMs)}</div>
-          <div className="mt-0.5 line-clamp-2 text-ddc-text">{hoverEntry.segment.label}</div>
+          <div className="mt-0.5 truncate text-ddc-text">{hoverEntry.segment.label}</div>
         </div>
       ) : null}
     </div>

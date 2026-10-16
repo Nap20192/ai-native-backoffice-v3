@@ -184,7 +184,7 @@ export function SessionInspector({
       className={cn(
         "relative flex min-h-0 flex-col bg-ddc-surface",
         isSheet
-          ? "fixed inset-x-0 bottom-0 top-[40%] z-30 border-t border-ddc-divider shadow-card"
+          ? "h-full border-t border-ddc-divider shadow-card"
           : "h-full shrink-0 border-l border-ddc-divider",
       )}
     >

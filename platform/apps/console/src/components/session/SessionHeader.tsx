@@ -76,11 +76,14 @@ function useNow(intervalMs: number): number {
 }
 
 function InfoChip({
+  name,
   icon,
   tip,
   children,
   card = false,
 }: {
+  /** Метка data-session-chip: по ней чип находят тесты и проверка скилла. */
+  name: "duration" | "tokens" | "cost" | "activity";
   icon: ReactNode;
   tip: ReactNode;
   children: ReactNode;
@@ -92,6 +95,7 @@ function InfoChip({
       <TooltipTrigger asChild>
         <span
           tabIndex={0}
+          data-session-chip={name}
           className="inline-flex h-6 items-center gap-1.5 rounded-md px-1.5 text-xs leading-4 text-ddc-text-muted hover:bg-ddc-surface-muted"
         >
           <span className="flex flex-none text-ddc-icon-muted">{icon}</span>
@@ -231,7 +235,7 @@ function SessionTitle({
       <PlainButton
         onClick={start}
         title="Изменить название"
-        className="-mx-2 block max-w-full truncate rounded-lg border border-transparent px-2 py-0.5 text-left hover:border-ddc-border-strong"
+        className="-mx-2 block max-w-[calc(100%+1rem)] truncate rounded-lg border border-transparent px-2 py-0.5 text-left hover:border-ddc-border-strong"
       >
         {title || session.id}
       </PlainButton>
@@ -358,6 +362,7 @@ export function SessionHeader({
           <div data-chip-group="usage" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
             {elapsedMs !== null && (
               <InfoChip
+                name="duration"
                 icon={<DurationIcon className="size-3.5" />}
                 tip={
                   <>
@@ -372,6 +377,7 @@ export function SessionHeader({
               </InfoChip>
             )}
             <InfoChip
+              name="tokens"
               card
               icon={<LayersIcon className="size-3.5" />}
               tip={
@@ -396,6 +402,7 @@ export function SessionHeader({
           </div>
           <div data-chip-group="cost" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
             <InfoChip
+              name="cost"
               icon={<WalletIcon className="size-3.5" />}
               tip={
                 <>
@@ -422,6 +429,7 @@ export function SessionHeader({
             </InfoChip>
             {lastActivityMs !== null && (
               <InfoChip
+                name="activity"
                 icon={<ClockIcon className="size-3.5" />}
                 tip={<div>{formatEventDateTimeRu(lastActivityMs)}</div>}
               >

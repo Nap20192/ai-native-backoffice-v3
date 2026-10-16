@@ -2,31 +2,22 @@ import { useMemo } from "react";
 import type { BetaManagedAgentsSession } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
 import type { BetaManagedAgentsSessionThread } from "@anthropic-ai/sdk/resources/beta/sessions/threads/threads";
 
-import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   PRIMARY_THREAD_ID,
   computeThreadStats,
-  usageCostMicros,
   type SessionEvent,
-  type ThreadStats,
-  type UsdPerMillion,
 } from "../../../lib/session-stats";
 import { AgentChip, type AgentCardInfo } from "../../../pages/session-detail/Panels";
 import { StatusPill } from "../../Badge";
-import {
-  EMPTY_VALUE,
-  formatShortDurationRu,
-  formatTokensRu,
-  formatUsdMicrosRu,
-} from "../format-ru";
-import { SessionPropertyRow, TimeChart, niceCeil } from "./SessionTab";
+import { EMPTY_VALUE, formatShortDurationRu } from "../format-ru";
+import { SessionPropertyRow } from "./SessionTab";
 
 /**
  * Вкладка «Потоки»: таблица потоков сессии и деталь выбранного потока снизу.
  * Выбор потока переключает ленту и вкладку «События» на его события.
- * Сервер не заполняет `usage` и `stats` у потоков, поэтому всё считаем по
- * событиям потока.
+ * Сервер не заполняет `stats` у потоков, поэтому активное время считаем по
+ * событиям потока. Токенов и стоимости здесь нет, потому что модели внутренние.
  */
 
 export interface ThreadsTabProps {
@@ -37,7 +28,6 @@ export interface ThreadsTabProps {
   events: readonly SessionEvent[];
   activeThreadId: string;
   onSelectThread(threadId: string): void;
-  priceForModel(modelId: string | null): UsdPerMillion | null;
 }
 
 interface ThreadView {
@@ -86,11 +76,6 @@ function viewOf(
   };
 }
 
-function costOf(stats: ThreadStats, modelId: string | null, priceForModel: ThreadsTabProps["priceForModel"]): number | null {
-  const price = priceForModel(modelId);
-  return price ? usageCostMicros(stats.usage, price) : null;
-}
-
 const HEAD_CLASS = "h-8 px-3 text-xs tracking-normal normal-case";
 
 export function ThreadsTab({
@@ -99,7 +84,6 @@ export function ThreadsTab({
   events,
   activeThreadId,
   onSelectThread,
-  priceForModel,
 }: ThreadsTabProps) {
   const views = useMemo<ThreadView[]>(() => {
     const list = threads.map((thread) =>
@@ -111,20 +95,11 @@ export function ThreadsTab({
     return list;
   }, [threads, session]);
 
-  const stats = useMemo(
-    () => new Map(views.map((view) => [view.id, computeThreadStats(events, view.id)])),
-    [views, events],
-  );
-
   const selected = views.find((view) => view.id === activeThreadId) ?? views[0]!;
-  const selectedStats = stats.get(selected.id)!;
-  const selectedCost = costOf(selectedStats, selected.modelId, priceForModel);
-
-  const chartPoints = selectedStats.contextSeries.map((point) => ({ atMs: point.atMs, value: point.tokens }));
-  const maxContext = chartPoints.reduce((max, point) => Math.max(max, point.value), 0);
-  const step = niceCeil(maxContext / 3);
-  const chartStart = selectedStats.firstEventMs ?? chartPoints[0]?.atMs ?? 0;
-  const chartEnd = Math.max(selectedStats.lastEventMs ?? 0, chartPoints[chartPoints.length - 1]?.atMs ?? 0, chartStart + 1);
+  const selectedStats = useMemo(
+    () => computeThreadStats(events, selected.id),
+    [events, selected.id],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -134,13 +109,10 @@ export function ThreadsTab({
             <TableRow>
               <TableHead className={HEAD_CLASS}>Поток</TableHead>
               <TableHead className={HEAD_CLASS}>Статус</TableHead>
-              <TableHead className={cn(HEAD_CLASS, "text-right")}>Контекст</TableHead>
-              <TableHead className={cn(HEAD_CLASS, "text-right")}>Стоимость</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {views.map((view) => {
-              const viewStats = stats.get(view.id)!;
               const isSelected = view.id === selected.id;
               return (
                 <TableRow
@@ -157,12 +129,6 @@ export function ThreadsTab({
                   </TableCell>
                   <TableCell className="px-3 py-1">
                     <StatusPill status={view.status} />
-                  </TableCell>
-                  <TableCell className="px-3 py-1 text-right tabular-nums">
-                    {viewStats.contextTokens === null ? EMPTY_VALUE : formatTokensRu(viewStats.contextTokens)}
-                  </TableCell>
-                  <TableCell className="px-3 py-1 text-right tabular-nums">
-                    {formatUsdMicrosRu(costOf(viewStats, view.modelId, priceForModel))}
                   </TableCell>
                 </TableRow>
               );
@@ -201,28 +167,6 @@ export function ThreadsTab({
           </dl>
         </div>
 
-        {selectedStats.contextTokens !== null && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-semibold text-ddc-heading">Контекст</h4>
-              <span className="text-xs tabular-nums">{formatTokensRu(selectedStats.contextTokens)}</span>
-            </div>
-            <TimeChart
-              label="График контекста"
-              points={chartPoints}
-              startMs={chartStart}
-              endMs={chartEnd}
-              yTicks={[0, step, 2 * step, 3 * step]}
-              formatValue={formatTokensRu}
-              renderTooltip={(point) => (
-                <div className="space-y-0.5">
-                  <div className="tabular-nums">{formatTokensRu(point.value)}</div>
-                </div>
-              )}
-            />
-          </div>
-        )}
-
         <Table aria-label="Использование" className="text-xs">
           <TableHeader>
             <TableRow>
@@ -235,22 +179,12 @@ export function ThreadsTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {[
-              ["Стоимость", formatUsdMicrosRu(selectedCost)],
-              ["Входные токены", formatTokensRu(selectedStats.usage.input)],
-              ["Выходные токены", formatTokensRu(selectedStats.usage.output)],
-              ["Чтение кэша", formatTokensRu(selectedStats.usage.cacheRead)],
-              ["Запись кэша", formatTokensRu(selectedStats.usage.cacheWrite)],
-              [
-                "Активное время",
-                selectedStats.activeMs > 0 ? formatShortDurationRu(selectedStats.activeMs) : EMPTY_VALUE,
-              ],
-            ].map(([name, value]) => (
-              <TableRow key={name} className="border-0 hover:bg-transparent">
-                <TableCell className="px-0 py-1 text-ddc-text-muted">{name}</TableCell>
-                <TableCell className="px-0 py-1 tabular-nums">{value}</TableCell>
-              </TableRow>
-            ))}
+            <TableRow className="border-0 hover:bg-transparent">
+              <TableCell className="px-0 py-1 text-ddc-text-muted">Активное время</TableCell>
+              <TableCell className="px-0 py-1 tabular-nums">
+                {selectedStats.activeMs > 0 ? formatShortDurationRu(selectedStats.activeMs) : EMPTY_VALUE}
+              </TableCell>
+            </TableRow>
           </TableBody>
         </Table>
       </section>

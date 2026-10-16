@@ -6,8 +6,6 @@ import { ClampedContent, GradingBlock, OutcomeDefinedBlock } from "./OutcomeBloc
 
 type Block<K extends TranscriptBlock["kind"]> = Extract<TranscriptBlock, { kind: K }>;
 
-const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-
 const outcome: OutcomeView = {
   outcomeId: "outcome-1",
   eventId: "out-1",
@@ -43,7 +41,6 @@ function gradingBlock(overrides: Partial<Block<"grading">> = {}, result = "needs
       endEventId: "end-1",
       startMs: 1_000,
       atMs: 2_000,
-      usage: ZERO,
     },
     index: 1,
     count: 3,

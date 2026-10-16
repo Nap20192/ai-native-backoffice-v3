@@ -6,9 +6,7 @@ import {
   ChevronDownIcon,
   CopyIcon,
   EllipsisVerticalIcon,
-  LayersIcon,
   MessageCircleQuestionIcon,
-  WalletIcon,
   XIcon,
 } from "lucide-react";
 
@@ -23,27 +21,24 @@ import {
 import { Input } from "@/components/ui/input";
 import { PlainButton } from "@/components/ui/plain-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { totalInput, type SessionTotals } from "../../lib/session-stats";
+import type { SessionTotals } from "../../lib/session-stats";
 import { AgentChip, EnvironmentChip } from "../../pages/session-detail/Panels";
 import { StatusPill } from "../Badge";
 import { ClockIcon, DurationIcon } from "../icons";
 import { Skeleton } from "../Skeleton";
 import {
   EMPTY_VALUE,
-  formatCentsRu,
   formatEventDateTimeRu,
   formatRelativeRu,
   formatShortDurationRu,
-  formatTokensRu,
-  formatUsdMicrosRu,
 } from "./format-ru";
-import type { SessionCost } from "./useSessionCost";
 
 /**
  * Шапка страницы сессии: ID с копированием, меню действий, название с
- * правкой по месту, статус и чипы состава, расхода и активности. Три ряда
- * на десктопе. На узком экране чипы идут тремя строками: агент и
- * окружение, длительность и токены, стоимость и активность.
+ * правкой по месту, статус и чипы состава и времени. Три ряда на десктопе.
+ * На узком экране чипы идут двумя строками: агент и окружение, длительность
+ * и активность. Токенов, стоимости и бюджета в шапке нет, потому что модели
+ * внутренние.
  */
 
 export interface SessionHeaderProps {
@@ -51,12 +46,10 @@ export interface SessionHeaderProps {
   environment: BetaEnvironment | null;
   status: string;
   totals: SessionTotals;
-  cost: SessionCost;
   lastActivityMs: number | null;
   onRename(title: string): Promise<void>;
   onInterrupt(): void;
   onDefineOutcome(): void;
-  onEditBudget(): void;
   onArchive(): void;
   onCopyEvents(): void;
   onDownloadEvents(): void;
@@ -80,15 +73,12 @@ function InfoChip({
   icon,
   tip,
   children,
-  card = false,
 }: {
   /** Метка data-session-chip: по ней чип находят тесты и проверка скилла. */
-  name: "duration" | "tokens" | "cost" | "activity";
+  name: "duration" | "activity";
   icon: ReactNode;
   tip: ReactNode;
   children: ReactNode;
-  /** Подсказка белой карточкой с таблицей, как у токенов в образце. */
-  card?: boolean;
 }) {
   return (
     <Tooltip>
@@ -102,14 +92,7 @@ function InfoChip({
           {children}
         </span>
       </TooltipTrigger>
-      <TooltipContent
-        side="bottom"
-        className={
-          card
-            ? "min-w-44 flex-col items-stretch gap-1 border border-ddc-border bg-ddc-surface p-3 text-ddc-text shadow-card [&>svg]:hidden"
-            : "flex-col items-start gap-0.5"
-        }
-      >
+      <TooltipContent side="bottom" className="flex-col items-start gap-0.5">
         {tip}
       </TooltipContent>
     </Tooltip>
@@ -264,12 +247,10 @@ export function SessionHeader({
   environment,
   status,
   totals,
-  cost,
   lastActivityMs,
   onRename,
   onInterrupt,
   onDefineOutcome,
-  onEditBudget,
   onArchive,
   onCopyEvents,
   onDownloadEvents,
@@ -283,7 +264,6 @@ export function SessionHeader({
   const endMs = lastActivityMs ?? totals.lastEventMs;
   const elapsedMs =
     Number.isFinite(createdMs) && endMs !== null && endMs >= createdMs ? endMs - createdMs : null;
-  const usage = totals.usage;
   const running = status === "running" || status === "rescheduling";
   const archived = Boolean(session.archived_at);
 
@@ -311,7 +291,6 @@ export function SessionHeader({
                   Прервать
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={onDefineOutcome}>Задать результат…</DropdownMenuItem>
-                <DropdownMenuItem onSelect={onEditBudget}>Изменить бюджет</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" disabled={archived} onSelect={onArchive}>
                   Архивировать
@@ -359,7 +338,7 @@ export function SessionHeader({
             <AgentChip agent={session.agent} />
             <EnvironmentChip id={session.environment_id} environment={environment} />
           </div>
-          <div data-chip-group="usage" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
+          <div data-chip-group="time" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
             {elapsedMs !== null && (
               <InfoChip
                 name="duration"
@@ -376,57 +355,6 @@ export function SessionHeader({
                 <span>{formatShortDurationRu(elapsedMs)}</span>
               </InfoChip>
             )}
-            <InfoChip
-              name="tokens"
-              card
-              icon={<LayersIcon className="size-3.5" />}
-              tip={
-                <>
-                  <div className="font-medium text-ddc-heading">Токены вход / выход</div>
-                  {[
-                    ["Чтение кэша", usage.cacheRead],
-                    ["Запись кэша", usage.cacheWrite],
-                    ["Без кэша", usage.input],
-                    ["Выход", usage.output],
-                  ].map(([name, value]) => (
-                    <div key={name} className="flex justify-between gap-6">
-                      <span className="text-ddc-text-muted">{name}</span>{" "}
-                      <span className="tabular-nums">{formatTokensRu(value as number)}</span>
-                    </div>
-                  ))}
-                </>
-              }
-            >
-              <span>{`${formatTokensRu(totalInput(usage))} / ${formatTokensRu(usage.output)}`}</span>
-            </InfoChip>
-          </div>
-          <div data-chip-group="cost" className="flex flex-wrap items-center gap-1 max-sm:basis-full">
-            <InfoChip
-              name="cost"
-              icon={<WalletIcon className="size-3.5" />}
-              tip={
-                <>
-                  <div>
-                    {cost.totalMicros === null
-                      ? "Цены модели нет, стоимость не посчитана."
-                      : "Стоимость по ценам модели, без скидок."}
-                  </div>
-                  <div>
-                    {cost.budgetCents === null
-                      ? "Бюджет не задан."
-                      : `Бюджет ${formatCentsRu(cost.budgetCents)}.`}
-                  </div>
-                </>
-              }
-            >
-              <span>{cost.loading ? "…" : formatUsdMicrosRu(cost.totalMicros)}</span>
-              {cost.budgetCents !== null && (
-                <>
-                  {" "}
-                  <span className="text-ddc-placeholder">/ {formatCentsRu(cost.budgetCents)}</span>
-                </>
-              )}
-            </InfoChip>
             {lastActivityMs !== null && (
               <InfoChip
                 name="activity"

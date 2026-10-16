@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import * as formats from "./format-ru";
 import {
   EMPTY_VALUE,
   formatBytesRu,
-  formatCentsRu,
   formatClockRu,
   formatDateRu,
   formatDateTimeRu,
@@ -15,7 +15,6 @@ import {
   formatRelativeRu,
   formatShortDurationRu,
   formatTokensRu,
-  formatUsdMicrosRu,
   plural,
   sessionErrorText,
 } from "./format-ru";
@@ -156,30 +155,9 @@ describe("formatTokensRu", () => {
   });
 });
 
-describe("formatUsdMicrosRu", () => {
-  it("без цены пишет «нет цены», ноль пишет «$0»", () => {
-    expect(formatUsdMicrosRu(null)).toBe("нет цены");
-    expect(formatUsdMicrosRu(0)).toBe("$0");
-  });
-
-  it("очень малые суммы пишет «<$0,0001»", () => {
-    expect(formatUsdMicrosRu(40)).toBe("<$0,0001");
-    expect(formatUsdMicrosRu(99)).toBe("<$0,0001");
-  });
-
-  it("до цента четыре знака, дальше два", () => {
-    expect(formatUsdMicrosRu(210)).toBe("$0,0002");
-    expect(formatUsdMicrosRu(8_100)).toBe("$0,0081");
-    expect(formatUsdMicrosRu(890_000)).toBe("$0,89");
-    expect(formatUsdMicrosRu(12_500_000)).toBe("$12,50");
-  });
-});
-
-describe("formatCentsRu", () => {
-  it("центы в доллары с двумя знаками", () => {
-    expect(formatCentsRu(500)).toBe("$5,00");
-    expect(formatCentsRu(5)).toBe("$0,05");
-    expect(formatCentsRu(125_050)).toBe("$1250,50");
+describe("форматы денег", () => {
+  it("страница сессии не пишет суммы, форматов для долларов и центов в модуле нет", () => {
+    for (const name of ["formatUsdMicrosRu", "formatCentsRu"]) expect(formats).not.toHaveProperty(name);
   });
 });
 

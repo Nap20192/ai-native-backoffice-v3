@@ -137,28 +137,6 @@ export function formatTokensRu(n: number): string {
   return `${sign}${oneDecimal(value)} ${units[index]![1]}`;
 }
 
-/** Доллары с двумя знаками без разделителя тысяч: «$0,89», «$1250,50». */
-function usd(value: number, digits: number): string {
-  return `$${decimal(value, digits)}`;
-}
-
-/**
- * Деньги из миллионных долей доллара. Без цены «нет цены», ноль «$0»,
- * меньше сотой доли цента «<$0,0001», до цента четыре знака («$0,0081»),
- * дальше два знака («$0,89», «$12,50»).
- */
-export function formatUsdMicrosRu(micros: number | null): string {
-  if (micros === null || !Number.isFinite(micros)) return "нет цены";
-  if (micros === 0) return "$0";
-  if (micros < 100) return "<$0,0001";
-  return usd(micros / 1_000_000, micros < 10_000 ? 4 : 2);
-}
-
-/** Центы в доллары: 500 даёт «$5,00». */
-export function formatCentsRu(cents: number): string {
-  return usd(cents / 100, 2);
-}
-
 /** Доля как процент: 0,35 даёт «35 %». Малая ненулевая доля даёт «<1 %». */
 export function formatPercentRu(ratio: number): string {
   if (!Number.isFinite(ratio)) return EMPTY_VALUE;

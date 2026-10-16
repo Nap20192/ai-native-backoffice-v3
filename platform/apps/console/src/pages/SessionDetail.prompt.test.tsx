@@ -124,14 +124,8 @@ beforeEach(() => {
   api.sessions.archive.mockReset().mockResolvedValue({});
   api.sessions.resources.list.mockReset().mockResolvedValue({ data: [], next_page: null });
   api.sessions.threads.list.mockReset().mockResolvedValue({ data: [] });
-  // Инспектор и шапка ходят за ценой и файлами через fetch: отвечаем пусто.
-  server.use(
-    http.get("*/v1/sessions/session-1/outputs", () => HttpResponse.json({ data: [], has_more: false })),
-    http.get("*/v1/oma/model_cards", () => HttpResponse.json({ data: [] })),
-    http.get("*/v1/oma/analytics/sessions/session-1", () =>
-      HttpResponse.json({ error: { type: "not_found_error", message: "нет" } }, { status: 404 }),
-    ),
-  );
+  // Инспектор ходит за файлами через fetch: отвечаем пусто.
+  server.use(http.get("*/v1/sessions/session-1/outputs", () => HttpResponse.json({ data: [], has_more: false })));
   api.sessions.events.list.mockReset().mockImplementation(async () => ({
     data: state.history,
     next_page: null,

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionEvent, UsdPerMillion } from "../../../lib/session-stats";
+import type { SessionEvent } from "../../../lib/session-stats";
 
 const api = vi.hoisted(() => ({ agents: { retrieve: vi.fn() } }));
 vi.mock("../../../lib/useManagedApi", () => ({ useManagedApi: () => api }));
@@ -87,8 +87,6 @@ const events: SessionEvent[] = [
   end("we1", "ws1", 30_000, { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, "sthr_2"),
 ];
 
-const price: UsdPerMillion = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
-
 function props(overrides: Partial<ThreadsTabProps> = {}): ThreadsTabProps {
   return {
     session,
@@ -96,7 +94,6 @@ function props(overrides: Partial<ThreadsTabProps> = {}): ThreadsTabProps {
     events,
     activeThreadId: "sthr_primary",
     onSelectThread: vi.fn(),
-    priceForModel: (id) => (id === "claude-opus-5" ? price : null),
     ...overrides,
   };
 }
@@ -117,31 +114,32 @@ function threadRow(name: string): HTMLElement {
 }
 
 describe("ThreadsTab: таблица потоков", () => {
-  it("колонки «Поток», «Статус», «Контекст», «Стоимость»", () => {
+  it("колонки «Поток» и «Статус», колонок про контекст и стоимость нет", () => {
     renderTab();
 
-    for (const name of ["Поток", "Статус", "Контекст", "Стоимость"]) {
-      expect(screen.getByRole("columnheader", { name })).toBeInTheDocument();
-    }
+    const table = screen.getByRole("table", { name: "Потоки" });
+    expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "Поток",
+      "Статус",
+    ]);
   });
 
-  it("строка потока: имя агента, статус, контекст последнего запроса и стоимость по цене карточки", () => {
+  it("строка потока: имя агента и статус, число токенов и цена не рисуются", () => {
     renderTab();
 
     const cells = within(threadRow("Исследователь")).getAllByRole("cell");
+    expect(cells).toHaveLength(2);
     expect(cells[0]).toHaveTextContent("Исследователь");
     expect(cells[1]).toHaveTextContent("Ожидает");
-    expect(cells[2]).toHaveTextContent("26,9 тыс.");
-    expect(cells[3]).toHaveTextContent("$0,04");
+    expect(threadRow("Исследователь")).not.toHaveTextContent(/тыс\.|\$|нет цены/);
   });
 
-  it("у потока с моделью без цены стоимость «нет цены»", () => {
+  it("у второго потока тоже имя и статус", () => {
     renderTab();
 
     const cells = within(threadRow("Проверяющий")).getAllByRole("cell");
+    expect(cells[0]).toHaveTextContent("Проверяющий");
     expect(cells[1]).toHaveTextContent("Выполняется");
-    expect(cells[2]).toHaveTextContent("15");
-    expect(cells[3]).toHaveTextContent("нет цены");
   });
 
   it("выбранный поток отмечен, клик по другому сообщает его id", async () => {
@@ -179,7 +177,7 @@ describe("ThreadsTab: деталь потока", () => {
     expect(within(detail).getByText("Поток", { exact: true })).toHaveClass("text-ddc-text-muted");
   });
 
-  it("заголовок с именем, подробности, контекст и использование выбранного потока", () => {
+  it("заголовок с именем, подробности и активное время выбранного потока", () => {
     renderTab();
 
     const detail = screen.getByRole("region", { name: "Поток Исследователь" });
@@ -192,28 +190,21 @@ describe("ThreadsTab: деталь потока", () => {
     expect(within(detail).getByText("claude-opus-5")).toHaveClass("font-mono");
     expect(within(detail).getByText("Низкое усилие")).toBeInTheDocument();
 
-    expect(within(detail).getByText("Контекст")).toBeInTheDocument();
-    expect(within(detail).getAllByText("26,9 тыс.").length).toBeGreaterThanOrEqual(1);
-
     const table = within(detail).getByRole("table", { name: "Использование" });
     expect(within(table).getByRole("columnheader", { name: "Этот поток" })).toBeInTheDocument();
-    const value = (label: string) =>
-      within(within(table).getByRole("row", { name: new RegExp(`^${label}`) })).getAllByRole("cell")[1];
-    expect(value("Стоимость")).toHaveTextContent("$0,04");
-    expect(value("Входные токены")).toHaveTextContent("100");
-    expect(value("Выходные токены")).toHaveTextContent("800");
-    expect(value("Чтение кэша")).toHaveTextContent("20 тыс.");
-    expect(value("Запись кэша")).toHaveTextContent("6 тыс.");
-    expect(value("Активное время")).toHaveTextContent("5 мин 9 с");
+    const rows = within(table).getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[1]!).getAllByRole("cell")[0]).toHaveTextContent("Активное время");
+    expect(within(rows[1]!).getAllByRole("cell")[1]).toHaveTextContent("5 мин 9 с");
   });
 
-  it("график контекста с осью Y кратной 10 тыс.", () => {
-    renderTab();
+  it("контекста, графика, стоимости и токенов нет, хотя события потока их несут", () => {
+    const { container } = renderTab();
 
-    const chart = screen.getByRole("img", { name: "График контекста" });
-    for (const label of ["0", "10 тыс.", "20 тыс.", "30 тыс."]) {
-      expect(within(chart).getByText(label)).toBeInTheDocument();
-    }
+    expect(screen.queryByText("Контекст")).toBeNull();
+    expect(screen.queryByRole("img", { name: "График контекста" })).toBeNull();
+    expect(container.querySelector("[data-chart-plot]")).toBeNull();
+    expect(container).not.toHaveTextContent(/токен|стоимост|кэш|контекст|нет цены|\$/i);
   });
 
   it("деталь следует за выбранным потоком", () => {
@@ -223,15 +214,14 @@ describe("ThreadsTab: деталь потока", () => {
     expect(within(detail).getByText("v3")).toBeInTheDocument();
     expect(within(detail).getByText("model-w")).toBeInTheDocument();
     const table = within(detail).getByRole("table", { name: "Использование" });
-    const stoimost = within(within(table).getByRole("row", { name: /^Стоимость/ })).getAllByRole("cell")[1];
-    expect(stoimost).toHaveTextContent("нет цены");
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
   });
 
-  it("поток без запросов: контекста и графика нет", () => {
+  it("поток без событий: активное время прочерк", () => {
     renderTab({ events: [], activeThreadId: "sthr_primary" });
 
-    expect(screen.queryByRole("img", { name: "График контекста" })).toBeNull();
-    const cells = within(threadRow("Исследователь")).getAllByRole("cell");
-    expect(cells[2]).toHaveTextContent("–");
+    const detail = screen.getByRole("region", { name: "Поток Исследователь" });
+    const cells = within(within(detail).getByRole("row", { name: /^Активное время/ })).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent("–");
   });
 });

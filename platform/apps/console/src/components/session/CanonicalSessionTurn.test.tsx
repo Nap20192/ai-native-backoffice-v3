@@ -253,12 +253,11 @@ describe("CanonicalSessionTurn: метка агента и «Думал»", () =
     expect(props.onSelectEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("у карточки с запросом показывает входные и выходные токены", () => {
+  it("у карточки с запросом нет токенов, хотя событие конца запроса их несёт", () => {
     const { container } = setup(helloWorldEvents());
 
-    const usage = block(container, "r1")!.querySelector("[data-session-usage]");
-    expect(usage).toHaveTextContent("↑ 6,5 тыс.");
-    expect(usage).toHaveTextContent("↓ 275");
+    expect(container.querySelector("[data-session-usage]")).toBeNull();
+    expect(block(container, "r1")).not.toHaveTextContent(/[↑↓]|тыс\./);
   });
 
   it("запрос к модели с ошибкой помечен красной плашкой «Ошибка запроса»", () => {
@@ -270,12 +269,6 @@ describe("CanonicalSessionTurn: метка агента и «Думал»", () =
     const badge = within(block(container, "r2")!).getByText("Ошибка запроса");
     expect(badge.className).toContain("ddc-tone-danger");
     expect(within(block(container, "r1")!).queryByText("Ошибка запроса")).not.toBeInTheDocument();
-  });
-
-  it("карточка без данных об использовании не показывает токены", () => {
-    const { container } = setup(helloWorldEvents());
-
-    expect(block(container, "r3")!.querySelector("[data-session-usage]")).toBeNull();
   });
 });
 

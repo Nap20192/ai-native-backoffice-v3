@@ -16,8 +16,6 @@ describe("event data", () => {
     const events = [e("x", "late", 10), e("x", "early", 0, { session_thread_id: "child" })];
     expect(s.eventsOfThread(events, s.PRIMARY_THREAD_ID)).toEqual([events[0]]);
     expect(s.eventThreadId(events[1])).toBe("child");
-    expect(s.addUsage(s.ZERO_USAGE, { input: 20, output: 10, cacheRead: 3, cacheWrite: 2 })).toEqual({ input: 20, output: 10, cacheRead: 3, cacheWrite: 2 });
-    expect(s.totalInput({ input: 20, output: 10, cacheRead: 3, cacheWrite: 2 })).toBe(25);
   });
 
   it("pairs requests by id across threads and keeps orphan starts and ends", () => {
@@ -26,9 +24,11 @@ describe("event data", () => {
       e("span.model_request_end", "d", 4000, { model_request_start_id: "absent", is_error: true })];
     const requests = s.collectModelRequests(events);
     expect(requests).toHaveLength(3);
-    expect(requests[0]).toMatchObject({ id: "a", startEventId: "a", endEventId: "c", durationMs: 3600, usage: { input: 20, output: 10, cacheRead: 3, cacheWrite: 2 } });
+    expect(requests[0]).toMatchObject({ id: "a", startEventId: "a", endEventId: "c", durationMs: 3600 });
     expect(requests[1]).toMatchObject({ endEventId: null, durationMs: null });
     expect(requests[2]).toMatchObject({ id: "d", startEventId: null, isError: true });
+    // model_usage в событии есть, но запрос его не копирует: токены не считаем.
+    for (const request of requests) expect(request).not.toHaveProperty("usage");
   });
 
   it("frames model requests and leaves user and status events outside", () => {
@@ -65,7 +65,7 @@ describe("event data", () => {
   it("formats every supported preview and canonical JSON", () => {
     const events = [e("span.model_request_start", "start"), e("span.model_request_end", "end", 3600, { model_request_start_id: "start", model_usage: { input_tokens: 4, output_tokens: 139, cache_read_input_tokens: 20900 } }), e("agent.tool_use", "use", 1, { name: "edit", input: { file_path: "/x" } })];
     const index = s.buildEventIndex(events);
-    expect(s.eventPreview(events[1], index)).toBe("3,6 с 4 вх. 139 вых. 20,9 тыс. кэш");
+    expect(s.eventPreview(events[1], index)).toBe("3,6 с");
     for (const type of ["user.message", "agent.message"]) expect(s.eventPreview(e(type, "x", 0, { content: [{ type: "text", text: "first\nsecond" }] }), index)).toBe("first");
     expect(s.eventPreview(events[2], index)).toBe("edit /x");
     expect(s.eventPreview(e("agent.tool_result", "r", 0, { tool_use_id: "use", content: [{ type: "text", text: "File updated" }] }), index)).toBe("edit File updated");
@@ -134,14 +134,14 @@ describe("tools", () => {
   });
 });
 
-describe("totals, costs and transcript", () => {
-  it("sums all requests, separates evaluations and closes active intervals", () => {
+describe("totals and transcript", () => {
+  it("counts requests and errors, closes active intervals and ignores the token payload", () => {
     const events = [e("session.status_running", "s"), e("session.status_running", "dup", 10), e("span.model_request_end", "a", 50, { model_usage: usage }), e("session.status_idle", "idle", 100),
       e("session.status_running", "s2", 200), e("span.model_request_end", "b", 250, { model_usage: usage, is_error: true }), e("span.outcome_evaluation_end", "ev", 300, { usage })];
-    expect(s.computeSessionTotals(events, { nowMs: base + 400 })).toMatchObject({ activeMs: 300, requestCount: 2, erroredRequestCount: 1, usage: { input: 40, output: 20, cacheRead: 6, cacheWrite: 4 }, evaluationUsage: { input: 20, output: 10, cacheRead: 3, cacheWrite: 2 }, firstEventMs: base, lastEventMs: base + 300 });
+    expect(s.computeSessionTotals(events, { nowMs: base + 400 })).toEqual({ activeMs: 300, requestCount: 2, erroredRequestCount: 1, firstEventMs: base, lastEventMs: base + 300 });
     expect(s.computeSessionTotals([]).activeMs).toBe(0);
     const thread = events.map(x => ({ ...x, type: x.type.replace("session.status_", "session.thread_status_"), session_thread_id: "child" }));
-    expect(s.computeThreadStats(thread, "child", base + 400)).toMatchObject({ activeMs: 300, contextTokens: 35, contextSeries: [{ atMs: base + 50, tokens: 35 }, { atMs: base + 250, tokens: 35 }] });
+    expect(s.computeThreadStats(thread, "child", base + 400)).toEqual({ activeMs: 300, requestCount: 2, erroredRequestCount: 1, firstEventMs: base, lastEventMs: base + 300, threadId: "child" });
   });
 
   it("counts active time of the primary thread by session statuses when the server sends no thread statuses", () => {
@@ -150,17 +150,10 @@ describe("totals, costs and transcript", () => {
     expect(s.computeThreadStats(events, s.PRIMARY_THREAD_ID).activeMs).toBe(1500);
   });
 
-  it("validates prices and budget and builds cumulative costs", () => {
-    const price = s.priceFromModelCard({ pi_config: { cost: { input: 3, output: 15 } } });
-    expect(price).toEqual({ input: 3, output: 15, cacheRead: 0, cacheWrite: 0 });
-    expect(s.priceFromModelCard({ pi_config: { cost: { input: -1, output: 2 } } })).toBeNull();
-    expect(s.priceFromModelCard(null)).toBeNull();
-    expect(s.usageCostMicros({ input: 20, output: 10, cacheRead: 0, cacheWrite: 0 }, price!)).toBe(210);
-    expect(s.budgetCents({ max_list_cost: { amount: "500", currency: "USD" } })).toBe(500);
-    expect(s.budgetCents({ max_list_cost: { amount: "-5" } })).toBeNull();
-    const requests = s.collectModelRequests([e("span.model_request_end", "a"), e("span.model_request_end", "b", 1)]);
-    expect(s.buildCostSeries(requests, () => 210)).toEqual([{ atMs: base, eventId: "a", stepMicros: 210, cumulativeMicros: 210 }, { atMs: base + 1, eventId: "b", stepMicros: 210, cumulativeMicros: 420 }]);
-    expect(s.buildCostSeries(requests, () => null)).toBeNull();
+  it("has no token, price or budget helpers", () => {
+    for (const name of ["ZERO_USAGE", "addUsage", "totalInput", "priceFromModelCard", "usageCostMicros", "buildCostSeries", "budgetCents"]) {
+      expect(s).not.toHaveProperty(name);
+    }
   });
 
   it("builds user, request, outcome, grading, gap, warning and error blocks and maps every event", () => {
@@ -180,6 +173,7 @@ describe("totals, costs and transcript", () => {
     expect(map.get("result")).toBe("req");
     expect(map.get("status")).toBe("u");
     expect(s.collectOutcomes(events)[0]).toMatchObject({ outcomeId: "o", evaluations: [{ endEventId: "ee" }, { endEventId: "ee2" }] });
+    for (const evaluation of s.collectOutcomes(events)[0].evaluations) expect(evaluation).not.toHaveProperty("usage");
   });
 
   it("gives each evaluation its start time for the minimap span", () => {

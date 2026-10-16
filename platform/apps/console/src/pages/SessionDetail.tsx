@@ -40,7 +40,6 @@ import {
 import { ManagedSessionConversation } from "../components/session/ManagedSessionConversation";
 import {
   PRIMARY_THREAD_ID,
-  collectModelRequests,
   collectOutcomes,
   computeSessionTotals,
   eventsOfThread,
@@ -51,12 +50,9 @@ import type { Trajectory } from "../lib/trajectory";
 import { SessionHeader } from "../components/session/SessionHeader";
 import {
   DefineOutcomeDialog,
-  EditBudgetDialog,
   ShortcutsDialog,
-  type BudgetParams,
   type OutcomeParams,
 } from "../components/session/SessionDialogs";
-import { useSessionCost } from "../components/session/useSessionCost";
 import {
   INSPECTOR_DEFAULT_WIDTH,
   SessionInspector,
@@ -146,16 +142,6 @@ function useNarrowViewport(): boolean {
   return narrow;
 }
 
-/** Модель из снимка агента: старые записи хранили строку, новые объект. */
-function modelIdOf(agent: { model?: unknown } | null | undefined): string | null {
-  const model = agent?.model;
-  if (typeof model === "string") return model;
-  if (model && typeof model === "object" && typeof (model as { id?: unknown }).id === "string") {
-    return (model as { id: string }).id;
-  }
-  return null;
-}
-
 /** Строки «Источник» для вкладки «Сессия»: сессию запустил Linear или Slack. */
 function buildSourceRows(metadata: Record<string, string> | null | undefined): ReactNode {
   const linear = readManagedMetadataObject(metadata, "linear") as
@@ -228,7 +214,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 
-type Dialog = "budget" | "outcome" | "shortcuts" | "archive" | null;
+type Dialog = "outcome" | "shortcuts" | "archive" | null;
 
 export function SessionDetail() {
   const { id } = useParams();
@@ -264,7 +250,7 @@ export function SessionDetail() {
   // событие остаётся прежним, чтобы не менялся id хода и ход не
   // перерисовывался с нуля.
   const optimistic = useRef(new OptimisticUserMessages());
-  /** Снимок сессии с сервера. Название, бюджет и архивация правятся на месте. */
+  /** Снимок сессии с сервера. Название и архивация правятся на месте. */
   const [session, setSession] = useState<BetaManagedAgentsSession | null>(null);
   const [environment, setEnvironment] = useState<BetaEnvironment | null>(null);
   const [vaults, setVaults] = useState<Array<{ id: string; name?: string }>>([]);
@@ -315,28 +301,6 @@ export function SessionDetail() {
     source: "url",
     seq: 0,
   }));
-  /** Время под курсором на графике стоимости: метка на мини-карте. */
-  const [cursorMs, setCursorMs] = useState<number | null>(null);
-  const cursorFrame = useRef<number | null>(null);
-  /** Курсор двигается чаще, чем рисует экран: обновляем не чаще кадра. */
-  const hoverTime = useCallback((ms: number | null) => {
-    if (cursorFrame.current !== null) cancelAnimationFrame(cursorFrame.current);
-    if (ms === null) {
-      cursorFrame.current = null;
-      setCursorMs(null);
-      return;
-    }
-    cursorFrame.current = requestAnimationFrame(() => {
-      cursorFrame.current = null;
-      setCursorMs(ms);
-    });
-  }, []);
-  useEffect(
-    () => () => {
-      if (cursorFrame.current !== null) cancelAnimationFrame(cursorFrame.current);
-    },
-    [],
-  );
   const eventParam = searchParams.get("event");
   const eventParamRef = useRef(eventParam);
   eventParamRef.current = eventParam;
@@ -973,20 +937,7 @@ export function SessionDetail() {
     [events, activeThreadId],
   );
   const totals = useMemo(() => computeSessionTotals(events), [events]);
-  const modelRequests = useMemo(() => collectModelRequests(events), [events]);
   const outcomes = useMemo(() => collectOutcomes(events), [events]);
-  const threadModelIds = useMemo(
-    () => new Map(threads.map((thread) => [thread.id, modelIdOf(thread.agent)])),
-    [threads],
-  );
-  const cost = useSessionCost({
-    sessionId: id ?? "",
-    modelId: modelIdOf(session?.agent),
-    budget: session?.budget ?? null,
-    requests: modelRequests,
-    status,
-    threadModelIds,
-  });
   const sourceRows = useMemo(() => buildSourceRows(session?.metadata), [session]);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const agentName =
@@ -1019,12 +970,6 @@ export function SessionDetail() {
     setSession((previous) =>
       previous ? { ...previous, title: updated?.title ?? (title || null) } : previous,
     );
-  };
-
-  const saveBudget = async (budget: BudgetParams | null) => {
-    if (!id) return;
-    await managedApi.sessions.update(id, { budget });
-    setSession((previous) => (previous ? { ...previous, budget } : previous));
   };
 
   const defineOutcome = async (event: OutcomeParams) => {
@@ -1127,10 +1072,7 @@ export function SessionDetail() {
             status={status}
             totals={totals}
             outcomes={outcomes}
-            cost={cost}
             sources={sourceRows}
-            onEditBudget={() => setDialog("budget")}
-            onHoverTime={hoverTime}
           />
         ) : (
           <InspectorSkeleton />
@@ -1168,7 +1110,6 @@ export function SessionDetail() {
             events={events}
             activeThreadId={activeThreadId}
             onSelectThread={setActiveThreadId}
-            priceForModel={cost.priceForModel}
           />
         ) : (
           <InspectorSkeleton />
@@ -1184,12 +1125,10 @@ export function SessionDetail() {
           environment={environment}
           status={status}
           totals={totals}
-          cost={cost}
           lastActivityMs={lastActivityMs}
           onRename={rename}
           onInterrupt={() => void interrupt()}
           onDefineOutcome={() => setDialog("outcome")}
-          onEditBudget={() => setDialog("budget")}
           onArchive={() => setDialog("archive")}
           onCopyEvents={() => void copyAllEvents()}
           onDownloadEvents={() => {
@@ -1233,7 +1172,6 @@ export function SessionDetail() {
             running={status === "running"}
             selection={selection}
             onSelectEvent={selectEvent}
-            externalCursorMs={cursorMs}
             overlay={
               layout === "sheet" && inspector ? (
                 // Колонка разговора на узком экране с отступом 24 px: лист идёт от края до края.
@@ -1253,13 +1191,6 @@ export function SessionDetail() {
         {layout === "side" && inspector}
       </div>
 
-      <EditBudgetDialog
-        open={dialog === "budget"}
-        onClose={() => setDialog(null)}
-        budgetCents={cost.budgetCents}
-        spentMicros={cost.totalMicros}
-        onSave={saveBudget}
-      />
       <DefineOutcomeDialog
         open={dialog === "outcome"}
         onClose={() => setDialog(null)}

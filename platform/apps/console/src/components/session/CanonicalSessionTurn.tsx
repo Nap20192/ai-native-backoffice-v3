@@ -32,7 +32,6 @@ import { cn } from "@/lib/utils";
 import { formatToolOutput } from "../../lib/tool-output";
 import {
   toolInputPreview,
-  totalInput,
   type RequestItem,
   type ToolCall,
   type TranscriptBlock,
@@ -43,7 +42,6 @@ import {
   formatDateTimeRu,
   formatGapRu,
   formatShortDurationRu,
-  formatTokensRu,
   TURN_FAILED_FALLBACK,
 } from "./format-ru";
 import {
@@ -465,18 +463,12 @@ function RequestCard({
   rawById: ReadonlyMap<string, WireSessionEvent>;
   onSelectEvent(eventId: string | null): void;
 }) {
-  const usage = block.request?.usage ?? null;
   const failed = block.request?.isError === true;
   const showHead = block.thinking || failed;
 
   return (
     <div
-      className={cn(
-        "group relative",
-        SESSION_CARD_CLASS,
-        "space-y-1",
-        selected && SESSION_CARD_SELECTED_CLASS,
-      )}
+      className={cn(SESSION_CARD_CLASS, "space-y-1", selected && SESSION_CARD_SELECTED_CLASS)}
       data-block-id={block.id}
       data-block-kind="request"
       data-hovered={hovered ? "true" : "false"}
@@ -507,16 +499,6 @@ function RequestCard({
             </Badge>
           ) : null}
         </div>
-      ) : null}
-      {usage ? (
-        <span
-          className="pointer-events-none absolute top-1.5 right-3 z-10 flex items-center gap-2 text-xs leading-5 tabular-nums text-ddc-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-data-[selected=true]:opacity-100"
-          data-search-skip
-          data-session-usage
-        >
-          <span>↑ {formatTokensRu(totalInput(usage))}</span>
-          <span>↓ {formatTokensRu(usage.output)}</span>
-        </span>
       ) : null}
       {block.items.map((item, index) => (
         <RequestItemView

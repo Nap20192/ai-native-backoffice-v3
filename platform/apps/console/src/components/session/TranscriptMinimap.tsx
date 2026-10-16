@@ -221,8 +221,6 @@ export interface TranscriptMinimapProps {
   hoveredBlockId: string | null;
   selectedBlockId: string | null;
   matchBlockIds: ReadonlySet<string>;
-  /** Метка времени, когда курсор стоит на графике стоимости в инспекторе. */
-  externalCursorMs?: number | null;
   onHoverBlock(blockId: string | null): void;
   onSelectBlock(blockId: string, eventId: string): void;
 }
@@ -273,7 +271,6 @@ export function TranscriptMinimap({
   hoveredBlockId,
   selectedBlockId,
   matchBlockIds,
-  externalCursorMs,
   onHoverBlock,
   onSelectBlock,
 }: TranscriptMinimapProps) {
@@ -337,13 +334,7 @@ export function TranscriptMinimap({
     setCursorX(Math.min(Math.max(event.clientX - rect.left, 0), scale.width));
   };
 
-  const externalX =
-    cursorX === null && externalCursorMs !== null && externalCursorMs !== undefined
-      ? scale.toX(externalCursorMs)
-      : null;
-  const cursorLineX = cursorX ?? externalX;
-  const cursorMs =
-    cursorX !== null ? scale.toMs(cursorX) : externalX !== null ? (externalCursorMs ?? null) : null;
+  const cursorMs = cursorX !== null ? scale.toMs(cursorX) : null;
 
   const cardLeft = hoverEntry
     ? Math.min(Math.max(hoverEntry.left - scrollLeft, 0), Math.max(widthPx - CARD_WIDTH_PX, 0))
@@ -419,19 +410,19 @@ export function TranscriptMinimap({
               />
             ) : null,
           )}
-          {cursorLineX !== null ? (
+          {cursorX !== null ? (
             <>
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute top-0.5 h-8 w-px bg-ddc-text"
                 data-minimap-cursor
-                style={{ left: cursorLineX }}
+                style={{ left: cursorX }}
               />
               {cursorMs !== null ? (
                 <span
                   className="pointer-events-none absolute top-[35px] rounded bg-ddc-surface px-1 text-2xs leading-3 whitespace-nowrap tabular-nums text-ddc-text-muted"
                   data-testid="minimap-cursor-label"
-                  style={{ left: Math.min(cursorLineX + 4, Math.max(scale.width - 96, 0)) }}
+                  style={{ left: Math.min(cursorX + 4, Math.max(scale.width - 96, 0)) }}
                 >
                   {formatMinimapTimeRu(cursorMs)}
                 </span>

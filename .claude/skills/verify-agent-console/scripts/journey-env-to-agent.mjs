@@ -347,20 +347,6 @@ function durationLabels(text) {
   return [...String(text ?? "").matchAll(/(Работал|Работает|Думал)\s+(?:(\d+)\s*мин\s*)?(\d+)\s*с(?![а-яё])/g)]
     .map((m) => ({ label: m[0], seconds: Number(m[2] ?? 0) * 60 + Number(m[3]) }));
 }
-// Токены так, как их пишет шапка сессии (formatTokensRu в apps/console/src/components/session/format-ru.ts):
-// «20», «1,2 тыс.», «3 млн».
-function tokensRu(n) {
-  const abs = Math.abs(n);
-  if (abs < 1000) return `${n < 0 ? "-" : ""}${Math.round(abs)}`;
-  const units = [[1e3, "тыс."], [1e6, "млн"], [1e9, "млрд"]];
-  let i = abs >= 1e9 ? 2 : abs >= 1e6 ? 1 : 0;
-  let value = Math.round((abs / units[i][0]) * 10) / 10;
-  if (value >= 1000 && i < units.length - 1) {
-    i += 1;
-    value = Math.round((abs / units[i][0]) * 10) / 10;
-  }
-  return `${n < 0 ? "-" : ""}${Number.isInteger(value) ? value : value.toFixed(1).replace(".", ",")} ${units[i][1]}`;
-}
 // Короткая длительность строки вызова (formatShortDurationRu): «119 мс», «6,8 с», «3 мин 5 с» -> секунды.
 function shortDurationSeconds(label) {
   const text = squash(label).replace(",", ".");
@@ -1321,8 +1307,8 @@ async function stepAgentTurn() {
   cover("session-answer");
 
   // ---- Страница сессии как в консоли Claude (docs/plans/session-page.md, образец docs/cma-console/03-sessions.md):
-  // шапка с токенами, инспектор с пятью вкладками, выбор события, общий для ленты и «Событий»,
-  // мини-карта, поиск по разговору, узкий экран. Id событий и сумма токенов берутся из журнала API.
+  // шапка без токенов, стоимости и бюджета, инспектор с пятью вкладками, выбор события, общий для ленты и «Событий»,
+  // мини-карта, поиск по разговору, узкий экран. Id событий берутся из журнала API.
   const pageEvents = await listEvents(ids.session);
   const pageEventsFile = saveJson("47-session-page-events", pageEvents);
   const turnUser = runTurn.userMessage ?? null;
@@ -1349,33 +1335,118 @@ async function stepAgentTurn() {
     return eventRow(id).getAttribute("aria-selected").catch(() => null);
   };
 
-  const usageSum = pageEvents.filter((e) => e.type === "span.model_request_end").reduce((sum, e) => {
+  // Расхода на странице нет: владелец отменил токены, стоимость и бюджет, модели внутренние
+  // (docs/plans/session-page.md). Журнал по-прежнему хранит model_usage у span.model_request_end,
+  // поэтому проверка жёсткая: шапка, подсказки её чипов, меню «Действия» и вкладка «Сессия».
+  // Проблемы собираются списком, и провал называет всё, что вернулось.
+  const requestEnds = pageEvents.filter((e) => e.type === "span.model_request_end");
+  const usageSum = requestEnds.reduce((sum, e) => {
     const u = e.model_usage ?? {};
     return {
-      requests: sum.requests + 1,
+      withUsage: sum.withUsage + (e.model_usage ? 1 : 0),
       input: sum.input + (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
       output: sum.output + (u.output_tokens ?? 0),
     };
-  }, { requests: 0, input: 0, output: 0 });
-  await check("session.ui_header_tokens", "шапка показывает токены «вход / выход», равные сумме model_usage всех span.model_request_end из GET /events (вход вместе с чтением и записью кэша)", async () => {
-    assert(usageSum.requests > 0, "в журнале сессии нет span.model_request_end");
-    // В fake два запроса к модели: сумма отличается от последнего запроса.
-    if (FAKE) assert(usageSum.requests >= 2, `запросов к модели ${usageSum.requests}, ожидалось 2 (tool_use и итоговый текст)`);
-    const expected = `${tokensRu(usageSum.input)} / ${tokensRu(usageSum.output)}`;
-    const chip = page.getByRole("main").locator('header [data-session-chip="tokens"]').first();
-    await chip.waitFor({ timeout: 15_000 });
-    let shown = "";
-    for (let i = 0; i < 30; i++) {
-      shown = squash(await chip.innerText());
-      if (shown === expected) break;
-      await sleep(500);
+  }, { withUsage: 0, input: 0, output: 0 });
+  // Те же слова, что в тестах консоли (SessionHeader.test.tsx, SessionTab.test.tsx).
+  const USAGE_WORDS = /токен|стоимост|бюджет|нет цены|кэш|\$/i;
+  await check("session.ui_no_usage", "шапка и вкладка «Сессия» не показывают токены, стоимость и бюджет (модели внутренние), хотя журнал хранит model_usage: нет чипов tokens и cost, текста «нет цены», пункта и кнопки «Изменить бюджет»; чипы длительности и активности на месте", async () => {
+    assert(requestEnds.length > 0, "в журнале сессии нет span.model_request_end");
+    // В fake два запроса к модели, у каждого model_usage: токены в журнале есть, а на странице их быть не должно.
+    if (FAKE) assert(requestEnds.length >= 2 && usageSum.withUsage === requestEnds.length && usageSum.output > 0,
+      `запросов к модели ${requestEnds.length}, с model_usage ${usageSum.withUsage}, выход ${usageSum.output}; ожидалось 2 запроса с токенами (${pageEventsFile})`);
+    const problems = [];
+    const found = (where, text) => {
+      const hits = [...new Set((squash(text).match(new RegExp(USAGE_WORDS.source, "gi")) ?? []).map((hit) => hit.toLowerCase()))];
+      if (hits.length) problems.push(`${where}: ${hits.map((hit) => `«${hit}»`).join(", ")} в «${squash(text).slice(0, 160)}»`);
+    };
+
+    // Шапка: чипы и текст.
+    const header = page.getByRole("main").locator("header", { has: page.getByRole("heading", { level: 1 }) }).first();
+    await header.locator('[data-session-chip="duration"]').first().waitFor({ timeout: 15_000 });
+    const chips = await header.locator("[data-session-chip]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-chip")));
+    for (const name of ["duration", "activity"]) {
+      if (!chips.includes(name)) problems.push(`в шапке нет чипа ${name}, чипы ${JSON.stringify(chips)}`);
     }
-    assert(shown === expected,
-      `в шапке «${shown}», по журналу ${expected} (запросов ${usageSum.requests}, вход ${usageSum.input}, выход ${usageSum.output}; ${pageEventsFile}). ` +
-      "Сумму считает computeSessionTotals (apps/console/src/lib/session-stats.ts), чип рисует SessionHeader (components/session/SessionHeader.tsx, data-session-chip=\"tokens\")");
-    return `${expected}; запросов к модели ${usageSum.requests}; ${pageEventsFile}`;
+    for (const name of ["tokens", "cost"]) {
+      const count = await page.locator(`[data-session-chip="${name}"]`).count();
+      if (count) problems.push(`на странице чип [data-session-chip="${name}"] (${count} шт., components/session/SessionHeader.tsx)`);
+    }
+    found("текст шапки", await header.innerText());
+
+    // Подсказки чипов (Radix Tooltip): раньше там стояли токены по видам и бюджет. Пока подсказка открыта,
+    // Radix ставит чипу aria-describedby с id копии её текста (role="tooltip"). По этому id читается
+    // подсказка именно этого чипа: подсказка прошлого чипа может ещё стоять в DOM.
+    const tips = [];
+    try {
+      for (const name of chips) {
+        const chip = header.locator(`[data-session-chip="${name}"]`).first();
+        await chip.hover();
+        let tipId = null;
+        for (let i = 0; i < 25 && !tipId; i++) {
+          tipId = await chip.getAttribute("aria-describedby");
+          if (!tipId) await sleep(200);
+        }
+        const tipText = tipId ? squash(await page.locator(`[id=${JSON.stringify(tipId)}]`).innerText().catch(() => "")) : "";
+        if (name === "duration" && !tipText.includes("Прошло с создания")) {
+          problems.push(`подсказка чипа duration «${tipText || "не открылась"}», ожидалось «Прошло с создания …»`);
+        }
+        found(`подсказка чипа ${name}`, tipText);
+        tips.push(`${name} «${tipText || "нет"}»`);
+        // Мышь уходит в несколько шагов. После прыжка одним событием Radix считает точку внутри
+        // коридора к подсказке (grace area) и оставляет подсказку открытой (прогон 20261016-065145).
+        await page.mouse.move(0, 0, { steps: 5 });
+        for (let i = 0; i < 25 && (await chip.getAttribute("aria-describedby")); i++) await sleep(200);
+      }
+    } finally {
+      await page.mouse.move(0, 0, { steps: 5 });
+    }
+
+    // Меню «Действия»: пункта «Изменить бюджет» нет, остальные пункты на месте.
+    const menu = page.getByRole("menu");
+    let items = [];
+    let menuShot = "";
+    try {
+      await header.getByRole("button", { name: "Действия", exact: true }).click();
+      await menu.waitFor({ timeout: 5_000 });
+      // Меню появляется анимацией (fade-in, zoom-in): без ожидания снимок полупрозрачный.
+      await settleAnimations(menu);
+      items = (await menu.getByRole("menuitem").allInnerTexts()).map(squash);
+      menuShot = await shot("session-actions-menu");
+    } finally {
+      if (await menu.count()) {
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+      }
+    }
+    const budgetItems = items.filter((item) => /бюджет/i.test(item));
+    if (budgetItems.length) problems.push(`в меню «Действия» пункт ${budgetItems.map((item) => `«${item}»`).join(", ")}: ${JSON.stringify(items)}`);
+    for (const item of ["Прервать", "Задать результат…", "Архивировать"]) {
+      if (!items.includes(item)) problems.push(`в меню «Действия» нет пункта «${item}»: ${JSON.stringify(items)}`);
+    }
+    items.filter((item) => !budgetItems.includes(item)).forEach((item) => found("пункт меню «Действия»", item));
+
+    // Вкладка «Сессия»: свойства и таблица «Использование» с активным временем.
+    await inspectorTab("Сессия").click();
+    const panel = inspector.getByRole("tabpanel", { name: "Сессия" });
+    await panel.waitFor({ timeout: 15_000 });
+    const usageTable = panel.getByRole("table", { name: "Использование" });
+    const rows = await usageTable.waitFor({ timeout: 15_000 })
+      .then(() => usageTable.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => [...tr.cells].map((td) => td.innerText.trim()).join(" "))), () => null);
+    if (rows === null) problems.push("на вкладке «Сессия» нет таблицы «Использование»");
+    else if (!rows.some((row) => row.startsWith("Активное время"))) problems.push(`в таблице «Использование» нет строки «Активное время»: ${JSON.stringify(rows)}`);
+    found("вкладка «Сессия»", await panel.innerText());
+    const budgetButtons = await page.getByRole("button", { name: /бюджет/i }).count();
+    if (budgetButtons) problems.push(`на странице кнопка «Изменить бюджет» (${budgetButtons} шт., components/session/inspector/SessionTab.tsx)`);
+    const noPrice = await page.getByText("нет цены").count();
+    if (noPrice) problems.push(`на странице текст «нет цены» (${noPrice} шт.)`);
+    const tabShot = await shot("session-tab");
+
+    assert(problems.length === 0, `${problems.join("; ")}. Снимки ${menuShot || "меню не открылось"}, ${tabShot}`);
+    return `${menuShot}, ${tabShot}; чипы шапки ${chips.join(", ")}; подсказки: ${tips.join(", ")}; меню «Действия»: ${items.join(", ")}; ` +
+      `«Использование»: ${(rows ?? []).join(", ")}; в журнале запросов к модели ${requestEnds.length}, с model_usage ${usageSum.withUsage} (вход ${usageSum.input}, выход ${usageSum.output}), ${pageEventsFile}`;
   });
-  cover("session-header-usage");
+  cover("session-no-usage");
 
   await check("session.ui_inspector", "инспектор справа: закрывается крестиком, открывается кнопкой «Инспектор», в адресе inspector=, ширина 360..720 px, 5 вкладок: Сессия, События, Инструменты, Ресурсы, Потоки", async () => {
     await inspector.waitFor({ timeout: 15_000 });

@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import { formatShortDurationRu, formatTokensRu, sessionErrorText } from "../components/session/format-ru";
+import { formatShortDurationRu, sessionErrorText } from "../components/session/format-ru";
 
 export type SessionEvent = Event;
 
@@ -11,8 +11,6 @@ export interface EventSelection {
   seq: number;
 }
 
-export interface ModelUsage { input: number; output: number; cacheRead: number; cacheWrite: number }
-
 export interface ModelRequest {
   
   id: string;
@@ -22,7 +20,6 @@ export interface ModelRequest {
   startMs: number | null;
   endMs: number | null;
   durationMs: number | null;
-  usage: ModelUsage | null;
   isError: boolean;
 }
 
@@ -102,12 +99,8 @@ export interface ToolsSummary {
 }
 
 export interface SessionTotals {
-  
-  usage: ModelUsage;
   requestCount: number;
   erroredRequestCount: number;
-  
-  evaluationUsage: ModelUsage;
   
   activeMs: number;
   firstEventMs: number | null;
@@ -116,18 +109,6 @@ export interface SessionTotals {
 
 export interface ThreadStats extends SessionTotals {
   threadId: string;
-  
-  contextTokens: number | null;
-  contextSeries: Array<{ atMs: number; tokens: number }>;
-}
-
-export interface UsdPerMillion { input: number; output: number; cacheRead: number; cacheWrite: number }
-
-export interface CostPoint {
-  atMs: number;
-  eventId: string;
-  stepMicros: number;
-  cumulativeMicros: number;
 }
 
 export interface OutcomeEvaluation {
@@ -140,7 +121,6 @@ export interface OutcomeEvaluation {
   /** Время span.outcome_evaluation_start: от него мини-карта рисует отрезок оценки. */
   startMs: number | null;
   atMs: number | null;
-  usage: ModelUsage;
 }
 export interface OutcomeView {
   outcomeId: string;
@@ -208,7 +188,6 @@ export type TranscriptBlock =
   | (BlockBase & { kind: "warning"; eventId: string; source: string; message: string });
 
 export const PRIMARY_THREAD_ID = "sthr_primary";
-export const ZERO_USAGE: ModelUsage = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 export const TRANSCRIPT_GAP_MS = 30 * 60_000;
 
 function record(value: unknown): Record<string, unknown> {
@@ -232,27 +211,19 @@ export function eventThreadId(event: SessionEvent): string { return str(event.se
 export function eventsOfThread(events: readonly SessionEvent[], threadId: string): SessionEvent[] {
   return events.filter(event => eventThreadId(event) === threadId);
 }
-export function addUsage(a: ModelUsage, b: ModelUsage): ModelUsage {
-  return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite };
-}
-export function totalInput(usage: ModelUsage): number { return usage.input + usage.cacheRead + usage.cacheWrite; }
-function readUsage(value: unknown): ModelUsage {
-  const u = record(value);
-  return { input: num(u.input_tokens), output: num(u.output_tokens), cacheRead: num(u.cache_read_input_tokens), cacheWrite: num(u.cache_creation_input_tokens) };
-}
 
 export function collectModelRequests(events: readonly SessionEvent[]): ModelRequest[] {
   const requests: ModelRequest[] = [];
   const starts = new Map<string, ModelRequest>();
   for (const event of events) {
     if (event.type === "span.model_request_start") {
-      const request: ModelRequest = { id: idOf(event), startEventId: idOf(event), endEventId: null, threadId: eventThreadId(event), startMs: eventTimeMs(event), endMs: null, durationMs: null, usage: null, isError: false };
+      const request: ModelRequest = { id: idOf(event), startEventId: idOf(event), endEventId: null, threadId: eventThreadId(event), startMs: eventTimeMs(event), endMs: null, durationMs: null, isError: false };
       requests.push(request);
       starts.set(`${request.threadId}:${request.id}`, request);
     } else if (event.type === "span.model_request_end") {
       const request = starts.get(`${eventThreadId(event)}:${str(event.model_request_start_id)}`);
       const endMs = eventTimeMs(event);
-      const end = { endEventId: idOf(event), endMs, usage: event.model_usage ? readUsage(event.model_usage) : null, isError: event.is_error === true };
+      const end = { endEventId: idOf(event), endMs, isError: event.is_error === true };
       if (request && request.endEventId === null) Object.assign(request, end, { durationMs: elapsed(request.startMs, endMs) });
       else requests.push({ id: idOf(event), startEventId: null, threadId: eventThreadId(event), startMs: null, durationMs: null, ...end });
     }
@@ -317,9 +288,8 @@ export function eventPreview(event: SessionEvent, index: EventIndex): string {
   const resultId = toolResultId(event);
   if (resultId) return `${index.toolNameByUseId.get(resultId) ?? ""} ${firstLine(contentText(event.content))}`.trim();
   if (event.type === "span.model_request_end") {
-    const r = index.requestByEndId.get(idOf(event));
-    const u = r?.usage;
-    return [r?.durationMs !== null && r?.durationMs !== undefined ? formatShortDurationRu(r.durationMs) : "", u ? `${formatTokensRu(u.input)} вх. ${formatTokensRu(u.output)} вых. ${formatTokensRu(u.cacheRead + u.cacheWrite)} кэш` : ""].filter(Boolean).join(" ");
+    const durationMs = index.requestByEndId.get(idOf(event))?.durationMs;
+    return durationMs !== null && durationMs !== undefined ? formatShortDurationRu(durationMs) : "";
   }
   if (event.type.startsWith("span.outcome_evaluation_")) {
     const iteration = `Итерация ${num(event.iteration) + 1}`;
@@ -478,49 +448,16 @@ export function computeSessionTotals(events: readonly SessionEvent[], options: {
   const requests = collectModelRequests(scoped);
   const times = scoped.map(eventTimeMs).filter((n): n is number => n !== null);
   return {
-    usage: requests.reduce((sum, r) => r.endEventId ? addUsage(sum, r.usage ?? ZERO_USAGE) : sum, { ...ZERO_USAGE }),
     requestCount: requests.length, erroredRequestCount: requests.filter(r => r.isError).length,
-    evaluationUsage: scoped.filter(e => e.type === "span.outcome_evaluation_end").reduce((sum, e) => addUsage(sum, readUsage(e.usage)), { ...ZERO_USAGE }),
     activeMs: activeTime(scoped, "session.status_", options.nowMs), firstEventMs: times[0] ?? null, lastEventMs: times.at(-1) ?? null,
   };
 }
 export function computeThreadStats(events: readonly SessionEvent[], threadId: string, nowMs?: number): ThreadStats {
   const scoped = eventsOfThread(events, threadId);
-  const requests = collectModelRequests(scoped).filter(r => r.usage !== null && r.endEventId !== null);
-  const contextSeries = requests.filter(r => r.endMs !== null).map(r => ({ atMs: r.endMs!, tokens: totalInput(r.usage!) + r.usage!.output }));
-  const last = requests.at(-1);
   // Сервер может не слать статусы потока: тогда считаем по статусам сессии в событиях потока.
   const hasThreadStatuses = scoped.some(event => event.type.startsWith("session.thread_status_"));
   const activeMs = activeTime(scoped, hasThreadStatuses ? "session.thread_status_" : "session.status_", nowMs);
-  return { ...computeSessionTotals(scoped, { nowMs }), activeMs, threadId, contextTokens: last ? totalInput(last.usage!) + last.usage!.output : null, contextSeries };
-}
-export function priceFromModelCard(card: { pi_config?: Record<string, unknown> } | null | undefined): UsdPerMillion | null {
-  const cost = record(card?.pi_config?.cost);
-  const values = [cost.input, cost.output, cost.cacheRead ?? 0, cost.cacheWrite ?? 0];
-  if (values.some(v => typeof v !== "number" || !Number.isFinite(v) || v < 0)) return null;
-  const [input, output, cacheRead, cacheWrite] = values as number[];
-  return { input, output, cacheRead, cacheWrite };
-}
-export function usageCostMicros(usage: ModelUsage, price: UsdPerMillion): number {
-  return Math.round(usage.input * price.input + usage.output * price.output + usage.cacheRead * price.cacheRead + usage.cacheWrite * price.cacheWrite);
-}
-export function buildCostSeries(requests: readonly ModelRequest[], costOf: (request: ModelRequest) => number | null): CostPoint[] | null {
-  const points: CostPoint[] = [];
-  let cumulativeMicros = 0;
-  for (const request of requests) {
-    if (request.endMs === null) continue;
-    const stepMicros = costOf(request);
-    if (stepMicros === null) return null;
-    cumulativeMicros += stepMicros;
-    points.push({ atMs: request.endMs, eventId: request.endEventId ?? request.id, stepMicros, cumulativeMicros });
-  }
-  return points;
-}
-export function budgetCents(budget: unknown): number | null {
-  const value = record(record(budget).max_list_cost).amount;
-  if ((typeof value !== "string" && typeof value !== "number") || String(value).trim() === "") return null;
-  const cents = Number(value);
-  return Number.isFinite(cents) && cents >= 0 ? cents : null;
+  return { ...computeSessionTotals(scoped, { nowMs }), activeMs, threadId };
 }
 
 export function collectOutcomes(events: readonly SessionEvent[]): OutcomeView[] {
@@ -534,7 +471,7 @@ export function collectOutcomes(events: readonly SessionEvent[]): OutcomeView[] 
     else if (event.type === "span.outcome_evaluation_end") {
       const outcome = outcomes.find(o => o.outcomeId === event.outcome_id);
       const start = starts.get(str(event.outcome_evaluation_start_id)) ?? [...starts.values()].find(e => e.outcome_id === event.outcome_id && e.iteration === event.iteration);
-      outcome?.evaluations.push({ iteration: num(event.iteration), result: str(event.result), explanation: str(event.explanation), startEventId: start ? idOf(start) : null, endEventId: idOf(event), startMs: start ? eventTimeMs(start) : null, atMs: eventTimeMs(event), usage: readUsage(event.usage) });
+      outcome?.evaluations.push({ iteration: num(event.iteration), result: str(event.result), explanation: str(event.explanation), startEventId: start ? idOf(start) : null, endEventId: idOf(event), startMs: start ? eventTimeMs(start) : null, atMs: eventTimeMs(event) });
     }
   }
   return outcomes;

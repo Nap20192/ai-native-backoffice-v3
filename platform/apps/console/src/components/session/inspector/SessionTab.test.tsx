@@ -1,22 +1,16 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OutcomeView, SessionTotals } from "../../../lib/session-stats";
 import { EMPTY_VALUE, formatEventDateTimeRu } from "../format-ru";
-import type { SessionCost } from "../useSessionCost";
 
 const api = vi.hoisted(() => ({ agents: { retrieve: vi.fn() } }));
 vi.mock("../../../lib/useManagedApi", () => ({ useManagedApi: () => api }));
 
-import {
-  SessionTab,
-  TimeChart,
-  niceCeil,
-  niceTimeTicks,
-  type SessionTabProps,
-} from "./SessionTab";
+import * as sessionTabModule from "./SessionTab";
+import { SessionTab, type SessionTabProps } from "./SessionTab";
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -47,12 +41,13 @@ const session = {
   environment_id: "env_01ZXCVBNM",
   deployment_id: null,
   agent: { id: "agent_01ABCDEFGH", name: "Исследователь", version: 1, description: null, model: { id: "m1" } },
-  budget: null,
+  // Сервер отдаёт бюджет и расход, вкладка их не рисует.
+  budget: { type: "limit", max_list_cost: { amount: "500", currency: "USD" } },
   metadata: {},
   resources: [],
   vault_ids: [],
   outcome_evaluations: [],
-  usage: {},
+  usage: { input_tokens: 76, output_tokens: 20_100, cache_read_input_tokens: 328_600 },
   stats: {},
 } as unknown as SessionTabProps["session"];
 
@@ -65,21 +60,11 @@ const environment = {
 } as unknown as SessionTabProps["environment"];
 
 const totals: SessionTotals = {
-  usage: { input: 76, output: 20_100, cacheRead: 328_600, cacheWrite: 82_400 },
   requestCount: 12,
   erroredRequestCount: 0,
-  evaluationUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   activeMs: 310_000,
   firstEventMs: CREATED,
   lastEventMs: UPDATED,
-};
-
-const cost: SessionCost = {
-  source: "card",
-  totalMicros: 890_000,
-  budgetCents: 500,
-  series: null,
-  priceForModel: () => null,
 };
 
 const outcome: OutcomeView = {
@@ -98,7 +83,6 @@ const outcome: OutcomeView = {
       endEventId: "e0",
       startMs: null,
       atMs: UPDATED - 60_000,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
     {
       iteration: 2,
@@ -108,7 +92,6 @@ const outcome: OutcomeView = {
       endEventId: "e2",
       startMs: null,
       atMs: UPDATED,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
   ],
 };
@@ -121,9 +104,6 @@ function props(overrides: Partial<SessionTabProps> = {}): SessionTabProps {
     status: "idle",
     totals,
     outcomes: [],
-    cost,
-    onEditBudget: vi.fn(),
-    onHoverTime: vi.fn(),
     ...overrides,
   };
 }
@@ -272,53 +252,35 @@ describe("SessionTab: результат", () => {
   });
 });
 
-describe("SessionTab: стоимость", () => {
-  it("рисует расход и бюджет, карандаш открывает правку бюджета", async () => {
-    const { props: p } = renderTab();
+describe("SessionTab: без токенов, стоимости и бюджета", () => {
+  it("раздела «Стоимость», графика и кнопки бюджета нет, хотя сессия несёт бюджет", () => {
+    const { container } = renderTab();
 
-    const section = screen.getByRole("region", { name: "Стоимость" });
-    expect(within(section).getByText("$0,89")).toBeInTheDocument();
-    expect(within(section).getByText("/ $5,00")).toBeInTheDocument();
-    await userEvent.click(within(section).getByRole("button", { name: "Изменить бюджет" }));
-    expect(p.onEditBudget).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("region", { name: "Стоимость" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Стоимость" })).toBeNull();
+    expect(screen.queryByRole("img", { name: "График стоимости" })).toBeNull();
+    expect(container.querySelector("[data-chart-plot]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Изменить бюджет" })).toBeNull();
+    expect(container).not.toHaveTextContent(/токен|стоимост|бюджет|нет цены|кэш|\$/i);
   });
 
-  it("без цены пишет «нет цены» и объясняет, что графика не будет", () => {
-    renderTab({ cost: { ...cost, source: "none", totalMicros: null } });
-
-    const section = screen.getByRole("region", { name: "Стоимость" });
-    expect(within(section).getByText("нет цены")).toBeInTheDocument();
-    expect(within(section).getByText(/график не построить/)).toBeInTheDocument();
-    expect(within(section).queryByRole("img")).toBeNull();
-  });
-
-  it("с рядом рисует график с подписями осей и точкой на конце", () => {
-    const series = [
-      { atMs: CREATED + 3_600_000, eventId: "a", stepMicros: 300_000, cumulativeMicros: 300_000 },
-      { atMs: CREATED + 7_200_000, eventId: "b", stepMicros: 590_000, cumulativeMicros: 890_000 },
-    ];
-    const { container } = renderTab({ cost: { ...cost, series } });
-
-    const chart = screen.getByRole("img", { name: "График стоимости" });
-    expect(chart).toBeInTheDocument();
-    for (const label of ["$0", "$0,50", "$1,00"]) expect(within(chart).getByText(label)).toBeInTheDocument();
-    expect(container.querySelector("[data-chart-end]")).not.toBeNull();
+  it("график по времени убран из модуля, он рисовал только стоимость и контекст в токенах", () => {
+    for (const name of ["TimeChart", "niceCeil", "niceTimeTicks"]) {
+      expect(sessionTabModule).not.toHaveProperty(name);
+    }
   });
 });
 
 describe("SessionTab: использование и метаданные", () => {
-  it("таблица «Итого по сессии» с токенами и активным временем", () => {
+  it("таблица «Итого по сессии» держит только активное время", () => {
     renderTab();
 
     const table = screen.getByRole("table", { name: "Использование" });
     expect(within(table).getByRole("columnheader", { name: "Итого по сессии" })).toBeInTheDocument();
-    const cells = (label: string) =>
-      within(within(table).getByRole("row", { name: new RegExp(`^${label}`) })).getAllByRole("cell");
-    expect(cells("Входные токены")[1]).toHaveTextContent("76");
-    expect(cells("Выходные токены")[1]).toHaveTextContent("20,1 тыс.");
-    expect(cells("Чтение кэша")[1]).toHaveTextContent("328,6 тыс.");
-    expect(cells("Запись кэша")[1]).toHaveTextContent("82,4 тыс.");
-    expect(cells("Активное время")[1]).toHaveTextContent("5 мин 10 с");
+    const rows = within(table).getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[1]!).getAllByRole("cell")[0]).toHaveTextContent("Активное время");
+    expect(within(rows[1]!).getAllByRole("cell")[1]).toHaveTextContent("5 мин 10 с");
   });
 
   it("нулевое активное время даёт прочерк, а не «<1 мс»", () => {
@@ -353,112 +315,5 @@ describe("SessionTab: использование и метаданные", () =>
       </MemoryRouter>,
     );
     expect(screen.queryByRole("heading", { name: "Метаданные" })).toBeNull();
-  });
-});
-
-describe("TimeChart", () => {
-  const stubRect = (width: number) =>
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-      left: 0,
-      top: 0,
-      right: width,
-      bottom: 100,
-      width,
-      height: 100,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect);
-
-  const start = new Date(2026, 9, 15, 12, 0, 0).getTime();
-  const end = new Date(2026, 9, 16, 0, 0, 0).getTime();
-
-  it("метки времени идут через три часа, полночь подписана датой", () => {
-    render(
-      <TimeChart
-        label="График"
-        points={[{ atMs: start + 3_600_000, value: 5 }]}
-        startMs={start}
-        endMs={end}
-        formatValue={(value) => String(value)}
-      />,
-    );
-
-    for (const label of ["12:00", "15:00", "18:00", "21:00", "16 окт."]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
-    }
-  });
-
-  it("наведение показывает курсор и подсказку по последней точке слева и сообщает время", () => {
-    stubRect(200);
-    const onHoverTime = vi.fn();
-    const { container } = render(
-      <TimeChart
-        label="График"
-        points={[
-          { atMs: start + 3_600_000, value: 2 },
-          { atMs: start + 7_200_000, value: 8 },
-        ]}
-        startMs={start}
-        endMs={end}
-        formatValue={(value) => `v${value}`}
-        renderTooltip={(point) => <span>значение {point.value}</span>}
-        onHoverTime={onHoverTime}
-      />,
-    );
-
-    const plot = container.querySelector("[data-chart-plot]") as HTMLElement;
-    // Ширина 200 px на 12 часов: курсор в 100 px это шесть часов, последняя точка слева уже вторая.
-    fireEvent.pointerMove(plot, { clientX: 100 });
-
-    expect(onHoverTime).toHaveBeenLastCalledWith(start + 6 * 3_600_000);
-    expect(screen.getByText("значение 8")).toBeInTheDocument();
-    expect(container.querySelector("[data-chart-cursor]")).not.toBeNull();
-
-    fireEvent.pointerLeave(plot);
-    expect(onHoverTime).toHaveBeenLastCalledWith(null);
-    expect(screen.queryByText("значение 8")).toBeNull();
-    expect(container.querySelector("[data-chart-cursor]")).toBeNull();
-  });
-
-  it("до первой точки подсказки нет", () => {
-    stubRect(200);
-    const { container } = render(
-      <TimeChart
-        label="График"
-        points={[{ atMs: start + 6 * 3_600_000, value: 3 }]}
-        startMs={start}
-        endMs={end}
-        formatValue={String}
-        renderTooltip={(point) => <span>значение {point.value}</span>}
-      />,
-    );
-
-    fireEvent.pointerMove(container.querySelector("[data-chart-plot]") as HTMLElement, { clientX: 20 });
-
-    expect(screen.queryByText(/значение/)).toBeNull();
-    expect(container.querySelector("[data-chart-cursor]")).not.toBeNull();
-  });
-});
-
-describe("niceCeil и niceTimeTicks", () => {
-  it("округляют вверх до 1, 2, 2,5, 5 и 10 на порядок", () => {
-    expect(niceCeil(890_000)).toBe(1_000_000);
-    expect(niceCeil(26_900)).toBe(50_000);
-    expect(niceCeil(0.3)).toBeCloseTo(0.5);
-    expect(niceCeil(0)).toBe(1);
-  });
-
-  it("метки времени не выходят за границы", () => {
-    const start = new Date(2026, 9, 15, 12, 0, 0).getTime();
-    const end = new Date(2026, 9, 16, 0, 0, 0).getTime();
-    const ticks = niceTimeTicks(start, end);
-
-    expect(ticks.length).toBeGreaterThanOrEqual(3);
-    expect(ticks.length).toBeLessThanOrEqual(6);
-    for (const tick of ticks) {
-      expect(tick).toBeGreaterThanOrEqual(start);
-      expect(tick).toBeLessThanOrEqual(end);
-    }
   });
 });

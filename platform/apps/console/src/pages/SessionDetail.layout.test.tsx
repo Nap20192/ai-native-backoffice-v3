@@ -55,7 +55,6 @@ vi.mock("../components/session/ManagedSessionConversation", () => ({
         data-source={props.selection?.source ?? ""}
         data-seq={props.selection?.seq ?? ""}
         data-turns={props.turns?.length ?? 0}
-        data-cursor={props.externalCursorMs ?? ""}
       >
         <div data-session-toolbar>{props.toolbarTrailing}</div>
         {props.overlay ? <div data-testid="conversation-overlay">{props.overlay}</div> : null}
@@ -254,13 +253,7 @@ beforeEach(() => {
   api.agents.retrieve.mockReset().mockResolvedValue({ id: "agent_1", created_at: "2026-10-15T00:00:00.000Z" });
   api.files.upload.mockReset().mockResolvedValue({ id: "file_1" });
 
-  server.use(
-    http.get("*/v1/sessions/sesn_1/outputs", () => HttpResponse.json({ data: [], has_more: false })),
-    http.get("*/v1/oma/model_cards", () => HttpResponse.json({ data: [] })),
-    http.get("*/v1/oma/analytics/sessions/sesn_1", () =>
-      HttpResponse.json({ error: { type: "not_found_error", message: "нет" } }, { status: 404 }),
-    ),
-  );
+  server.use(http.get("*/v1/sessions/sesn_1/outputs", () => HttpResponse.json({ data: [], has_more: false })));
 });
 
 afterEach(() => {
@@ -302,27 +295,43 @@ describe("SessionDetail: шапка", () => {
     expect(screen.queryByRole("button", { name: "Траектория" })).toBeNull();
   });
 
-  it("стоимость без карточки модели и без аналитики: «нет цены», бюджет рядом", async () => {
+  it("шапка и вкладка «Сессия» не показывают токены, стоимость и бюджет", async () => {
     openPage();
     await pageReady();
 
-    expect((await screen.findAllByText("нет цены", { selector: "span" })).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("/ $5,00").length).toBeGreaterThanOrEqual(1);
+    const header = screen.getByRole("banner", { hidden: true });
+    const inspector = await screen.findByRole("complementary", { name: "Инспектор сессии" });
+    // Сессия несёт бюджет $5, события несут токены: на экране от них ничего нет.
+    for (const area of [header, inspector]) {
+      expect(area).not.toHaveTextContent(/токен|стоимост|бюджет|нет цены|кэш|\$/i);
+    }
+    expect(document.querySelector('[data-session-chip="tokens"]')).toBeNull();
+    expect(document.querySelector('[data-session-chip="cost"]')).toBeNull();
+    expect(screen.queryByRole("img", { name: "График стоимости" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Изменить бюджет" })).toBeNull();
+    // Длительность и активность остаются.
+    expect(header.querySelector('[data-session-chip="duration"]')).not.toBeNull();
+    expect(header.querySelector('[data-session-chip="activity"]')).not.toBeNull();
   });
 
-  it("стоимость по карточке модели, когда аналитика отвечает 404", async () => {
-    server.use(
-      http.get("*/v1/oma/model_cards", () =>
-        HttpResponse.json({
-          data: [{ id: "c1", model_id: "m1", pi_config: { cost: { input: 3, output: 15 } } }],
-        }),
-      ),
-    );
-    openPage();
-    await pageReady();
+  it("страница не ходит за аналитикой и ценами моделей", async () => {
+    const requested: string[] = [];
+    const onStart = ({ request }: { request: Request }) => {
+      requested.push(new URL(request.url).pathname);
+    };
+    server.events.on("request:start", onStart);
+    try {
+      openPage("/sessions/sesn_1?inspector=thread");
+      await pageReady();
+      await screen.findByRole("table", { name: "Потоки" });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+    } finally {
+      server.events.removeListener("request:start", onStart);
+    }
 
-    // 20 вход. по $3 и 10 выход. по $15: 210 миллионных долей доллара.
-    expect((await screen.findAllByText("$0,0002", { selector: "span" })).length).toBeGreaterThanOrEqual(1);
+    expect(requested.filter((path) => /\/v1\/oma\/(analytics|model_cards)/.test(path))).toEqual([]);
   });
 });
 
@@ -572,77 +581,17 @@ describe("SessionDetail: инспектор", () => {
   });
 });
 
-describe("SessionDetail: график стоимости и мини-карта", () => {
-  it("наведение на график передаёт время ленте, уход курсора снимает метку", async () => {
-    server.use(
-      http.get("*/v1/oma/model_cards", () =>
-        HttpResponse.json({
-          data: [{ id: "c1", model_id: "m1", pi_config: { cost: { input: 3, output: 15 } } }],
-        }),
-      ),
-    );
-    openPage();
-    await pageReady();
-    await screen.findByRole("img", { name: "График стоимости" });
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-      left: 0,
-      top: 0,
-      right: 200,
-      bottom: 100,
-      width: 200,
-      height: 100,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect);
-    const plot = document.querySelector("[data-chart-plot]") as HTMLElement;
-
-    fireEvent.pointerMove(plot, { clientX: 100 });
-
-    await waitFor(() => expect(screen.getByTestId("conversation").getAttribute("data-cursor")).not.toBe(""));
-
-    fireEvent.pointerLeave(plot);
-
-    await waitFor(() => expect(screen.getByTestId("conversation").getAttribute("data-cursor")).toBe(""));
-  });
-});
-
 describe("SessionDetail: действия", () => {
-  it("«Изменить бюджет» сохраняет бюджет в центах и снимает его пустым полем", async () => {
+  it("в меню «Действия» нет бюджета, а сессия бюджет не получает", async () => {
     openPage();
     await pageReady();
 
     await userEvent.click(screen.getByRole("button", { name: "Действия" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Изменить бюджет" }));
-    const field = await screen.findByRole("textbox", { name: "Бюджет" });
-    expect(field).toHaveValue("5,00");
-    await userEvent.clear(field);
-    await userEvent.type(field, "7,5");
-    await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
-    await waitFor(() =>
-      expect(api.sessions.update).toHaveBeenCalledWith("sesn_1", {
-        budget: { type: "limit", max_list_cost: { amount: "750", currency: "USD" } },
-      }),
-    );
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Изменить бюджет" })).toBeNull());
-    expect((await screen.findAllByText("/ $7,50")).length).toBeGreaterThanOrEqual(1);
-
-    await userEvent.click(screen.getByRole("button", { name: "Действия" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Изменить бюджет" }));
-    await userEvent.clear(await screen.findByRole("textbox", { name: "Бюджет" }));
-    await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-
-    await waitFor(() => expect(api.sessions.update).toHaveBeenLastCalledWith("sesn_1", { budget: null }));
-  });
-
-  it("карандаш во вкладке «Сессия» открывает то же окно бюджета", async () => {
-    openPage();
-    await pageReady();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Изменить бюджет" }));
-
-    expect(await screen.findByRole("dialog", { name: "Изменить бюджет" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Прервать" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /бюджет/i })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Изменить бюджет" })).toBeNull();
+    expect(api.sessions.update).not.toHaveBeenCalled();
   });
 
   it("«Задать результат…» отправляет user.define_outcome", async () => {

@@ -14,7 +14,6 @@ import {
 type Block<K extends TranscriptBlock["kind"]> = Extract<TranscriptBlock, { kind: K }>;
 
 const T0 = Date.UTC(2026, 9, 15, 11, 40, 0);
-const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 function request(id: string, startMs: number, endMs: number | null, isError = false): ModelRequest {
   return {
@@ -25,7 +24,6 @@ function request(id: string, startMs: number, endMs: number | null, isError = fa
     startMs,
     endMs,
     durationMs: endMs === null ? null : endMs - startMs,
-    usage: ZERO,
     isError,
   };
 }
@@ -120,7 +118,6 @@ const gradingBlock: Block<"grading"> = {
     endEventId: "grade",
     startMs: null,
     atMs: T0 + 30_000,
-    usage: ZERO,
   },
   index: 0,
   count: 1,
@@ -464,12 +461,6 @@ describe("TranscriptMinimap", () => {
     fireEvent.mouseMove(track, { clientX: 0 });
 
     expect(screen.getByTestId("minimap-cursor-label")).toHaveTextContent(formatMinimapTimeRu(T0));
-  });
-
-  it("внешний курсор от графика стоимости рисует метку времени", () => {
-    setup({ externalCursorMs: T0 + 60_000 });
-
-    expect(screen.getByTestId("minimap-cursor-label")).toHaveTextContent(formatMinimapTimeRu(T0 + 60_000));
   });
 
   it("без отрезков показывает пустую дорожку без кнопок", () => {

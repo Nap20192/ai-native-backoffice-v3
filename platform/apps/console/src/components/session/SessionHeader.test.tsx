@@ -13,7 +13,6 @@ const api = vi.hoisted(() => ({
 vi.mock("../../lib/useManagedApi", () => ({ useManagedApi: () => api }));
 
 import { SessionHeader, type SessionHeaderProps } from "./SessionHeader";
-import type { SessionCost } from "./useSessionCost";
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -46,12 +45,13 @@ const session = {
     description: null,
     model: { id: "claude-opus-5" },
   },
-  budget: null,
+  // Сервер отдаёт бюджет и расход, шапка их не рисует.
+  budget: { type: "limit", max_list_cost: { amount: "500", currency: "USD" } },
   metadata: {},
   resources: [],
   vault_ids: [],
   outcome_evaluations: [],
-  usage: {},
+  usage: { input_tokens: 76, output_tokens: 20_100, cache_read_input_tokens: 328_600 },
   stats: {},
 } as unknown as NonNullable<SessionHeaderProps["session"]>;
 
@@ -64,21 +64,11 @@ const environment = {
 } as unknown as NonNullable<SessionHeaderProps["environment"]>;
 
 const totals: SessionTotals = {
-  usage: { input: 76, output: 20_100, cacheRead: 328_600, cacheWrite: 82_400 },
   requestCount: 12,
   erroredRequestCount: 0,
-  evaluationUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   activeMs: 310_000,
   firstEventMs: CREATED,
   lastEventMs: LAST,
-};
-
-const cost: SessionCost = {
-  source: "card",
-  totalMicros: 890_000,
-  budgetCents: 500,
-  series: null,
-  priceForModel: () => null,
 };
 
 function props(overrides: Partial<SessionHeaderProps> = {}): SessionHeaderProps {
@@ -87,12 +77,10 @@ function props(overrides: Partial<SessionHeaderProps> = {}): SessionHeaderProps 
     environment,
     status: "idle",
     totals,
-    cost,
     lastActivityMs: LAST,
     onRename: vi.fn().mockResolvedValue(undefined),
     onInterrupt: vi.fn(),
     onDefineOutcome: vi.fn(),
-    onEditBudget: vi.fn(),
     onArchive: vi.fn(),
     onCopyEvents: vi.fn(),
     onDownloadEvents: vi.fn(),
@@ -263,29 +251,34 @@ describe("SessionHeader: чипы", () => {
     );
   });
 
-  it("чипы идут тремя группами: агент и окружение, длительность и токены, стоимость и активность", () => {
+  it("чипы идут двумя группами: агент и окружение, длительность и активность", () => {
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
     const { container } = renderHeader();
 
     const groups = Array.from(container.querySelectorAll("[data-chip-group]"));
-    expect(groups.map((group) => group.getAttribute("data-chip-group"))).toEqual([
-      "resources",
-      "usage",
-      "cost",
-    ]);
+    expect(groups.map((group) => group.getAttribute("data-chip-group"))).toEqual(["resources", "time"]);
     expect(within(groups[0] as HTMLElement).getAllByRole("link")).toHaveLength(2);
     expect(groups[1]).toHaveTextContent("14 ч 2 мин");
-    expect(groups[1]).toHaveTextContent("411,1 тыс. / 20,1 тыс.");
-    expect(groups[2]).toHaveTextContent("$0,89 / $5,00");
+    expect(groups[1]).toHaveTextContent("18 мин назад");
   });
 
-  it("каждый чип расхода помечен data-session-chip: по метке его находит проверка скилла", () => {
+  it("чипы времени помечены data-session-chip: по метке их находит проверка скилла", () => {
     const { container } = renderHeader();
 
     const chip = (name: string) => container.querySelector(`[data-session-chip="${name}"]`);
     expect(chip("duration")).toHaveTextContent("14 ч 2 мин");
-    expect(chip("tokens")).toHaveTextContent(/^411,1 тыс\. \/ 20,1 тыс\.$/);
-    expect(chip("cost")).toHaveTextContent("$0,89 / $5,00");
     expect(chip("activity")).not.toBeNull();
+  });
+
+  it("токенов, стоимости и бюджета в шапке нет, хотя сессия их несёт", async () => {
+    const { container } = renderHeader();
+
+    expect(container.querySelector('[data-session-chip="tokens"]')).toBeNull();
+    expect(container.querySelector('[data-session-chip="cost"]')).toBeNull();
+    expect(container).not.toHaveTextContent(/токен|стоимост|бюджет|нет цены|кэш|\$/i);
+
+    await userEvent.hover(screen.getByText("14 ч 2 мин"));
+    expect(await screen.findByRole("tooltip")).not.toHaveTextContent(/токен|стоимост|бюджет|кэш|\$/i);
   });
 
   it("длительность считает от создания до последней активности", () => {
@@ -302,50 +295,6 @@ describe("SessionHeader: чипы", () => {
     const tip = await screen.findByRole("tooltip");
     expect(tip).toHaveTextContent("Прошло с создания: 14 ч 2 мин");
     expect(tip).toHaveTextContent("Активное время: 5 мин 10 с");
-  });
-
-  it("токены: вход с кэшем и выход, подсказка раскладывает по видам", async () => {
-    renderHeader();
-
-    await userEvent.hover(screen.getByText("411,1 тыс. / 20,1 тыс."));
-
-    const tip = await screen.findByRole("tooltip");
-    expect(tip).toHaveTextContent("Токены вход / выход");
-    expect(tip).toHaveTextContent("Чтение кэша 328,6 тыс.");
-    expect(tip).toHaveTextContent("Запись кэша 82,4 тыс.");
-    expect(tip).toHaveTextContent("Без кэша 76");
-    expect(tip).toHaveTextContent("Выход 20,1 тыс.");
-  });
-
-  it("стоимость без бюджета не рисует «/ бюджет»", () => {
-    renderHeader({ cost: { ...cost, budgetCents: null } });
-
-    expect(screen.getByText("$0,89")).toBeInTheDocument();
-    expect(screen.queryByText(/\/ \$5,00/)).toBeNull();
-  });
-
-  it("без цены пишет «нет цены», бюджет остаётся", () => {
-    renderHeader({ cost: { ...cost, source: "none", totalMicros: null } });
-
-    expect(screen.getByText("нет цены")).toBeInTheDocument();
-    expect(screen.getByText("/ $5,00")).toBeInTheDocument();
-  });
-
-  it("пока стоимость грузится, вместо «нет цены» стоит многоточие", () => {
-    renderHeader({ cost: { ...cost, source: "none", totalMicros: null, loading: true } });
-
-    expect(screen.queryByText("нет цены")).toBeNull();
-    expect(screen.getByText("…")).toBeInTheDocument();
-  });
-
-  it("подсказка стоимости говорит про цены и бюджет", async () => {
-    renderHeader();
-
-    await userEvent.hover(screen.getByText("$0,89"));
-
-    const tip = await screen.findByRole("tooltip");
-    expect(tip).toHaveTextContent("Стоимость по ценам модели, без скидок.");
-    expect(tip).toHaveTextContent("Бюджет $5,00.");
   });
 
   it("последняя активность показана возрастом, а подсказка точной датой", async () => {
@@ -379,18 +328,19 @@ describe("SessionHeader: чипы", () => {
 });
 
 describe("SessionHeader: меню «Действия»", () => {
-  it("содержит четыре пункта, архивирование красным", async () => {
+  it("содержит три пункта, архивирование красным, пункта про бюджет нет", async () => {
     renderHeader({ status: "running" });
 
     await userEvent.click(screen.getByRole("button", { name: "Действия" }));
 
     expect(await screen.findByRole("menuitem", { name: "Прервать" })).toBeEnabled();
     expect(screen.getByRole("menuitem", { name: "Задать результат…" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Изменить бюджет" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Архивировать" })).toHaveAttribute(
       "data-variant",
       "destructive",
     );
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    expect(screen.queryByRole("menuitem", { name: /бюджет/i })).toBeNull();
     expect(screen.getAllByRole("separator").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -400,7 +350,6 @@ describe("SessionHeader: меню «Действия»", () => {
     for (const [label, handler] of [
       ["Прервать", p.onInterrupt],
       ["Задать результат…", p.onDefineOutcome],
-      ["Изменить бюджет", p.onEditBudget],
       ["Архивировать", p.onArchive],
     ] as const) {
       await userEvent.click(screen.getByRole("button", { name: "Действия" }));

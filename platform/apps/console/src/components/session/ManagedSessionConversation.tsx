@@ -45,8 +45,6 @@ export interface ManagedSessionConversationProps {
   onSelectEvent(eventId: string | null, source: "transcript" | "minimap"): void;
   /** Кнопка «Инспектор» от страницы справа в строке поиска. */
   toolbarTrailing?: ReactNode;
-  /** Метка времени на мини-карте при наведении на график стоимости. */
-  externalCursorMs?: number | null;
   /** Слой поверх ленты и поля ввода под поиском и мини-картой: на узком
    *  экране там встаёт инспектор нижним листом. */
   overlay?: ReactNode;
@@ -321,7 +319,6 @@ export function ManagedSessionConversation({
   selection,
   onSelectEvent,
   toolbarTrailing,
-  externalCursorMs,
   overlay,
 }: ManagedSessionConversationProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -669,7 +666,6 @@ export function ManagedSessionConversation({
           <TranscriptMinimap
             agentName={agentName}
             blocks={model.allBlocks}
-            externalCursorMs={externalCursorMs}
             hoveredBlockId={hoveredBlockId}
             matchBlockIds={matchBlockIds}
             nowMs={running ? now : null}

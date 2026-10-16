@@ -1,165 +1,16 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
-import type {
-  BetaManagedAgentsBudgetLimit,
-} from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
+import { useEffect, useState } from "react";
 import type { BetaManagedAgentsUserDefineOutcomeEventParams } from "@anthropic-ai/sdk/resources/beta/sessions/events";
 
 import { Button } from "@/components/ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Field } from "../Field";
 import { Modal } from "../Modal";
-import { formatCentsRu, formatUsdMicrosRu } from "./format-ru";
 
 /**
- * Окна страницы сессии: бюджет, результат и горячие клавиши. Окна только
- * собирают тело запроса, само обращение к серверу делает страница.
+ * Окна страницы сессии: результат и горячие клавиши. Окна только собирают
+ * тело запроса, само обращение к серверу делает страница.
  */
-
-// ── Бюджет ───────────────────────────────────────────────────────────────
-
-export type BudgetParams = BetaManagedAgentsBudgetLimit;
-
-export type BudgetParse =
-  | { ok: true; cents: number | null }
-  | { ok: false; reason: "format" | "decimals" | "positive" };
-
-/** Доллары из поля в центы без плавающей запятой. Пустое поле снимает бюджет. */
-export function parseBudgetInput(raw: string): BudgetParse {
-  const text = raw.trim().replace(",", ".");
-  if (text === "") return { ok: true, cents: null };
-  const match = /^(\d+)(?:\.(\d*))?$/.exec(text);
-  if (!match) return { ok: false, reason: "format" };
-  const fraction = match[2] ?? "";
-  if (fraction.length > 2) return { ok: false, reason: "decimals" };
-  const cents = Number(match[1]) * 100 + Number(fraction.padEnd(2, "0"));
-  if (!Number.isSafeInteger(cents)) return { ok: false, reason: "format" };
-  if (cents <= 0) return { ok: false, reason: "positive" };
-  return { ok: true, cents };
-}
-
-const BUDGET_ERROR: Record<"format" | "decimals" | "positive", string> = {
-  format: "Введите сумму в долларах, например 5 или 7,50.",
-  decimals: "Не больше двух знаков после запятой.",
-  positive: "Сумма должна быть больше нуля. Чтобы снять бюджет, очистите поле.",
-};
-
-/** Бюджет для поля: «5,00» из 500 центов. */
-function budgetDraft(cents: number | null): string {
-  return cents === null ? "" : formatCentsRu(cents).slice(1);
-}
-
-export interface EditBudgetDialogProps {
-  open: boolean;
-  onClose(): void;
-  /** Текущий бюджет в центах, null без бюджета. */
-  budgetCents: number | null;
-  /** Расход в миллионных долях доллара, null без цены. */
-  spentMicros: number | null;
-  /** Тело `budget` для POST /v1/sessions/:id; null снимает бюджет. */
-  onSave(budget: BudgetParams | null): Promise<void>;
-}
-
-export function EditBudgetDialog({
-  open,
-  onClose,
-  budgetCents,
-  spentMicros,
-  onSave,
-}: EditBudgetDialogProps) {
-  const [draft, setDraft] = useState(() => budgetDraft(budgetCents));
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const fieldId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    setDraft(budgetDraft(budgetCents));
-    setError(null);
-  }, [open, budgetCents]);
-
-  const submit = async () => {
-    const parsed = parseBudgetInput(draft);
-    if (!parsed.ok) {
-      setError(BUDGET_ERROR[parsed.reason]);
-      return;
-    }
-    setError(null);
-    setSaving(true);
-    try {
-      await onSave(
-        parsed.cents === null
-          ? null
-          : {
-              type: "limit",
-              max_list_cost: { amount: String(parsed.cents), currency: "USD" },
-            },
-      );
-      onClose();
-    } catch {
-      // Обращение к серверу уже показало ошибку: окно остаётся открытым.
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const spent =
-    spentMicros === null
-      ? "Расход посчитать нельзя, цены нет."
-      : `Потрачено ${formatUsdMicrosRu(spentMicros)}.`;
-  const hint =
-    budgetCents === null
-      ? `Бюджета нет. ${spent}`
-      : `Сейчас ${formatCentsRu(budgetCents)}. ${spent} Если очистить поле, бюджет снимется.`;
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Изменить бюджет"
-      maxWidth="max-w-sm"
-      closeDisabled={saving}
-      footer={
-        <Button onClick={() => void submit()} loading={saving}>
-          Сохранить
-        </Button>
-      }
-    >
-      <form
-        onSubmit={(event: FormEvent) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <Label htmlFor={`${fieldId}-input`} className="mb-1.5 block text-xs leading-4 font-medium text-ddc-label">
-          Бюджет
-        </Label>
-        <InputGroup>
-          <InputGroupAddon>$</InputGroupAddon>
-          <InputGroupInput
-            id={`${fieldId}-input`}
-            inputMode="decimal"
-            autoComplete="off"
-            autoFocus
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            disabled={saving}
-            aria-invalid={error ? true : undefined}
-            aria-describedby={`${fieldId}-hint`}
-          />
-        </InputGroup>
-        <p
-          id={`${fieldId}-hint`}
-          className={`mt-1.5 text-xs leading-4 ${error ? "text-ddc-danger-text" : "text-ddc-text-muted"}`}
-        >
-          {error ?? hint}
-        </p>
-      </form>
-    </Modal>
-  );
-}
 
 // ── Результат ────────────────────────────────────────────────────────────
 

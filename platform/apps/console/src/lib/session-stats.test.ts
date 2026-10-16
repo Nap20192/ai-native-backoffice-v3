@@ -176,6 +176,23 @@ describe("totals and transcript", () => {
     for (const evaluation of s.collectOutcomes(events)[0].evaluations) expect(evaluation).not.toHaveProperty("usage");
   });
 
+  it("a grading in a later turn finds the outcome defined in an earlier one when it gets the outcomes of the whole session", () => {
+    // 2026-10-16: «Задать результат» before the first message puts user.define_outcome
+    // into the first turn and the evaluation into the next one; per-turn blocks lost «Оценка».
+    const turn1 = [e("user.define_outcome", "out", 0, { outcome_id: "o", description: "Свод", rubric: { type: "text", content: "Суммы сходятся" } }),
+      e("span.model_request_start", "r1", 100), e("agent.message", "m1", 200, { content: "Готово" }), e("span.model_request_end", "r1e", 300, { model_request_start_id: "r1" })];
+    const turn2 = [e("user.message", "u", 1000, { content: "Начинай" }),
+      e("span.outcome_evaluation_start", "es", 1100, { outcome_id: "o", iteration: 0 }),
+      e("span.outcome_evaluation_end", "ee", 1200, { outcome_id: "o", iteration: 0, result: "satisfied", explanation: "Все требования выполнены" })];
+    const outcomes = s.collectOutcomes([...turn1, ...turn2]);
+
+    const blocks = s.buildTranscriptBlocks(turn2, { outcomes });
+
+    expect(blocks.map(x => x.kind)).toEqual(["user", "grading"]);
+    expect(blocks[1]).toMatchObject({ outcomeId: "o", index: 0, count: 1, evaluation: { result: "satisfied", startEventId: "es" } });
+    expect(s.buildTranscriptBlocks(turn1, { outcomes }).map(x => x.kind)).toEqual(["outcome_defined", "request"]);
+  });
+
   it("gives each evaluation its start time for the minimap span", () => {
     const events = [e("user.define_outcome", "out", 0, { outcome_id: "o", description: "Report", rubric: { type: "text", content: "Clear" } }),
       e("span.outcome_evaluation_start", "es", 1000, { outcome_id: "o", iteration: 0 }), e("span.outcome_evaluation_end", "ee", 21_000, { outcome_id: "o", iteration: 0, result: "needs_revision", outcome_evaluation_start_id: "es" }),

@@ -477,13 +477,18 @@ export function collectOutcomes(events: readonly SessionEvent[]): OutcomeView[] 
   return outcomes;
 }
 
-export function buildTranscriptBlocks(events: readonly SessionEvent[], options: { previousEventMs?: number | null; gapMs?: number } = {}): TranscriptBlock[] {
+/**
+ * `outcomes`: результаты всей сессии. Разговор строит блоки по ходам, а оценка
+ * может прийти в другом ходе, чем user.define_outcome: «Задать результат» до
+ * первого сообщения. Без общего списка оценка своего результата не находит.
+ */
+export function buildTranscriptBlocks(events: readonly SessionEvent[], options: { previousEventMs?: number | null; gapMs?: number; outcomes?: readonly OutcomeView[] } = {}): TranscriptBlock[] {
   const requests = collectModelRequests(events);
   const requestByStart = new Map(requests.map(r => [r.startEventId, r]));
   const calls = collectToolCalls(events);
   const callByEvent = new Map<string, ToolCall>();
   for (const call of calls) for (const id of [call.useEventId, call.resultEventId, call.confirmationEventId]) if (id) callByEvent.set(id, call);
-  const outcomes = collectOutcomes(events);
+  const outcomes = options.outcomes ?? collectOutcomes(events);
   const blocks: TranscriptBlock[] = [];
   let current: Extract<TranscriptBlock, { kind: "request" }> | null = null;
   let previous = options.previousEventMs ?? null;

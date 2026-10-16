@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import {
   blockIdByEventId,
   buildTranscriptBlocks,
+  collectOutcomes,
   eventTimeMs,
   type EventSelection,
   type SessionEvent,
@@ -181,11 +182,13 @@ function buildModel(turns: readonly CanonicalChatTurn[]): ConversationModel {
   const allEvents: SessionEvent[] = [];
   const sequence: string[] = [];
   let previousEventMs: number | null = null;
+  // Результат и его оценка могут лежать в разных ходах: связываем их по всей сессии.
+  const outcomes = collectOutcomes(turns.flatMap((turn) => turn.rawEvents as unknown as SessionEvent[]));
 
   for (const turn of turns) {
     // События ответа API и потока совпадают по полям: типы WireSessionEvent и Event шире и уже друг друга.
     const events = turn.rawEvents as unknown as SessionEvent[];
-    const blocks = buildTranscriptBlocks(events, { previousEventMs });
+    const blocks = buildTranscriptBlocks(events, { previousEventMs, outcomes });
     blocksByTurn.set(turn.id, blocks);
     for (const event of events) {
       if (event.id) turnOfEvent.set(event.id, turn.id);

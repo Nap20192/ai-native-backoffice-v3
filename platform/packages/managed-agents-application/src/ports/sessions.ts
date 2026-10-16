@@ -104,7 +104,7 @@ export type CreateSessionResult =
   | { type: "dependency_not_found"; message: string };
 
 export type RetrieveSessionResult =
-  | { type: "found"; session: SessionView }
+  | { type: "found"; session: SessionView; revision?: number }
   | { type: "not_found" };
 
 export type UpdateSessionResult =

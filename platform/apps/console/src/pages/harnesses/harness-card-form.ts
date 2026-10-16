@@ -4,6 +4,7 @@
  * Проверяет только обязательные поля. Правила имён, пакетов и переменных
  * держит сервер, а окно показывает его ответ у поля из `field`.
  */
+import { sanitizeHarnessCardDraft } from "../../lib/assistant/drafts";
 import type {
   CardProtocol,
   HarnessCard,
@@ -65,6 +66,25 @@ export function cardToForm(card: HarnessCard): HarnessCardForm {
     pipText: card.install.pip.join("\n"),
     protocols: [...card.protocols],
     envText: card.allowed_env.join("\n"),
+  };
+}
+
+/**
+ * Форма «Новый harness» из черновика ассистента (раздел 1.4 плана). Состояние
+ * маршрута приходит из истории браузера, поэтому черновик фильтруется ещё раз.
+ * ID, команду, аргументы и рабочую папку вводит человек: команда работает в VM
+ * от root, и пустая папка не должна подменяться значением по умолчанию.
+ */
+export function draftToForm(raw: unknown): HarnessCardForm {
+  const draft = sanitizeHarnessCardDraft(raw);
+  return {
+    ...EMPTY_CARD_FORM,
+    cwd: "",
+    name: draft.name ?? "",
+    npmText: (draft.install?.npm ?? []).join("\n"),
+    pipText: (draft.install?.pip ?? []).join("\n"),
+    protocols: (draft.protocols ?? []) as CardProtocol[],
+    envText: (draft.allowed_env ?? []).join("\n"),
   };
 }
 

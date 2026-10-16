@@ -23,6 +23,7 @@ import {
   EMPTY_CARD_FORM,
   DEFAULT_CWD,
   cardToForm,
+  draftToForm,
   fieldForServerError,
   formToInput,
   formToPatch,
@@ -35,6 +36,8 @@ interface HarnessCardDialogProps {
   open: boolean;
   /** Карточка для правки. `null`: окно создаёт новую. */
   card: HarnessCard | null;
+  /** Черновик ассистента для новой карточки. Для правки не используется. */
+  draft?: unknown;
   onClose: () => void;
 }
 
@@ -53,15 +56,14 @@ const MONO_AREA = "resize-y font-mono text-xs leading-5";
  * только для чтения. Ошибку сервера окно показывает у поля из `field`, а
  * ошибку без поля над кнопками.
  */
-export function HarnessCardDialog({ open, card, onClose }: HarnessCardDialogProps) {
+export function HarnessCardDialog({ open, card, draft, onClose }: HarnessCardDialogProps) {
   const isEdit = card !== null;
   const create = useCreateHarnessCard();
   const update = useUpdateHarnessCard();
   const saving = create.isPending || update.isPending;
 
-  const [form, setForm] = useState<HarnessCardForm>(() =>
-    card ? cardToForm(card) : EMPTY_CARD_FORM,
-  );
+  const startForm = () => (card ? cardToForm(card) : draft ? draftToForm(draft) : EMPTY_CARD_FORM);
+  const [form, setForm] = useState<HarnessCardForm>(startForm);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState("");
 
@@ -72,14 +74,14 @@ export function HarnessCardDialog({ open, card, onClose }: HarnessCardDialogProp
   // При каждом открытии окно начинает с карточки или с пустой формы.
   useEffect(() => {
     if (!open) return;
-    setForm(card ? cardToForm(card) : EMPTY_CARD_FORM);
+    setForm(startForm());
     setErrors({});
     setFormError("");
     create.reset();
     update.reset();
     // Сбрасываем по открытию и смене карточки; мутации стабильны по смыслу.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, card?.id]);
+  }, [open, card?.id, draft]);
 
   const edit = (patch: Partial<HarnessCardForm>, field: CardFormField) => {
     setForm((current) => ({ ...current, ...patch }));

@@ -40,7 +40,7 @@ export interface McpRequestOptions {
 export interface McpClientPort {
   listTools(options?: McpRequestOptions): Promise<McpToolDefinition[]>;
   callTool(
-    input: { name: string; arguments?: McpJsonObject },
+    input: { name: string; arguments?: McpJsonObject; _meta?: McpJsonObject },
     options?: McpRequestOptions,
   ): Promise<McpToolResult>;
   close(): Promise<void>;

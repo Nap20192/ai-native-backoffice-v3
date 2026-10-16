@@ -46,7 +46,62 @@ export interface ApiKeyResolution {
         type: "sandbox_inference";
         sessionId: string;
         expiresAt: string;
-      };
+      }
+    | PlatformMcpActorCredential;
+}
+
+/** One-time token of the platform MCP server (docs/plans/builder-agent.md 3.3).
+ * `endpoint` opens `POST /v1/oma/platform-mcp` once, `route` opens one nested
+ * request of the server. `refused` is a token that was used, expired or never
+ * issued: it gets 403 instead of falling through to other credentials. */
+export interface PlatformMcpActorCredential {
+  type: "platform_mcp_actor";
+  kind: "endpoint" | "route" | "refused";
+  /** The assistant session the token was issued for. */
+  sessionId: string;
+  method: string;
+  /** Exact path with the query string. */
+  path: string;
+  issuer?: "handler" | "confirm";
+  bodySha256?: string;
+  toolUseId?: string;
+  expiresAt: string;
+}
+
+export const PLATFORM_MCP_ENDPOINT_PATH = "/v1/oma/platform-mcp";
+
+/** Paths a platform MCP route token never opens, whatever the token says
+ * (builder-agent.md 2.4). The route allowlist of main-node is the main check,
+ * this list is the second one. */
+const PLATFORM_MCP_DENIED_PREFIXES = [
+  "/v1/oma/platform-mcp",
+  "/v1/oma/mcp-proxy",
+  "/v1/oma/internal",
+  "/v1/oma/inference-proxy",
+  "/v1/oma/api_keys",
+  "/v1/oma/me",
+  "/v1/oma/tenants",
+];
+const PLATFORM_MCP_DENIED_PATTERNS = [
+  /^\/v1\/environments\/[^/]+\/work(?:\/|$)/,
+  /^\/v1\/oma\/sessions\/[^/]+\/exec(?:\/|$)/,
+  /^\/v1\/tunnels\/[^/]+\/reveal_token(?:\/|$)/,
+];
+
+function safeDecodePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+function platformMcpRouteAllowed(credential: PlatformMcpActorCredential, path: string): boolean {
+  if (!path.startsWith("/v1/")) return false;
+  if (PLATFORM_MCP_DENIED_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return false;
+  if (PLATFORM_MCP_DENIED_PATTERNS.some((pattern) => pattern.test(path))) return false;
+  const tokenPath = credential.path.split("?", 1)[0] ?? "";
+  return tokenPath === path || safeDecodePath(tokenPath) === safeDecodePath(path);
 }
 
 export interface BearerTokenRequest {
@@ -104,6 +159,13 @@ export function allowsApiKeyRequest(
   resolution: ApiKeyResolution,
   request: Pick<BearerTokenRequest, "path"> & { transport: "bearer" | "x-api-key" },
 ): boolean {
+  if (resolution.credential?.type === "platform_mcp_actor") {
+    const credential = resolution.credential;
+    if (request.transport !== "bearer") return false;
+    if (credential.kind === "endpoint") return request.path === PLATFORM_MCP_ENDPOINT_PATH;
+    if (credential.kind === "route") return platformMcpRouteAllowed(credential, request.path);
+    return false;
+  }
   if (resolution.credential?.type === "sandbox_inference") {
     return inferenceProxySessionOf(request.path) === resolution.credential.sessionId;
   }

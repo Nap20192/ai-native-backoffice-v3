@@ -10,7 +10,18 @@ import {
   skillVersionPageResponseSchema,
   skillVersionResponseSchema,
 } from "../contracts/skill-versions";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import {
+  apiError,
+  conflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import {
+  expectedRevisionOf,
+  readRevisionIfMatch,
+  setRevisionETag,
+} from "../if-match";
 import {
   toCreateSkillVersionCommand,
   toDeleteSkillVersionCommand,
@@ -37,6 +48,10 @@ export function buildSkillVersionRoutes(
   app.use("*", requireBeta(SKILLS_API_BETA));
 
   app.post("/:skillId/versions", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     let form: FormData;
     try {
       form = await c.req.formData();
@@ -48,14 +63,18 @@ export function buildSkillVersionRoutes(
       return c.json(invalidRequest("Request field files must contain files"), 400);
     }
 
-    const result = await resolveApplicationPort(source, c).createSkillVersion(
-      toCreateSkillVersionCommand(
+    const result = await resolveApplicationPort(source, c).createSkillVersion({
+      ...toCreateSkillVersionCommand(
         c.req.param("skillId"),
         await toSkillVersionUploadFiles(files),
       ),
-    );
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "invalid_request") {
       return c.json(invalidRequest(result.message), 400);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     if (result.type === "not_found") {
       return c.json(notFound(`Skill ${c.req.param("skillId")} was not found`), 404);
@@ -69,6 +88,7 @@ export function buildSkillVersionRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid skill version"), 500);
     }
+    setRevisionETag(c, result.skillRevision);
     return c.json(response.data, 200);
   });
 

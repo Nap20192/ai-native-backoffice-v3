@@ -94,9 +94,39 @@ const protectedRoutes: RouteObject[] = [
     children: [
       { index: true, element: <AgentsList /> },
       {
+        // «Описать агента» и шаблоны. Стоит до ":id", иначе "new" стал бы id агента.
+        path: "new",
+        handle: { crumb: "Новый агент" },
+        lazy: async () => {
+          const { AgentNewPage } = await import("./pages/agents/AgentNewPage");
+          return { Component: AgentNewPage };
+        },
+      },
+      {
         path: ":id",
         element: <AgentDetail />,
         handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Агент") },
+      },
+    ],
+  },
+  {
+    path: "quickstart",
+    handle: { crumb: "Быстрый старт" },
+    children: [
+      {
+        index: true,
+        lazy: async () => {
+          const { QuickstartPage } = await import("./pages/quickstart/QuickstartPage");
+          return { Component: QuickstartPage };
+        },
+      },
+      {
+        path: "new",
+        handle: { crumb: "Мастер" },
+        lazy: async () => {
+          const { QuickstartWizard } = await import("./pages/quickstart/QuickstartWizard");
+          return { Component: QuickstartWizard };
+        },
       },
     ],
   },

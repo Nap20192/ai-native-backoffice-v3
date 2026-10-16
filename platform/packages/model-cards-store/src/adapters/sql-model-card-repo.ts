@@ -19,6 +19,7 @@ import {
   ModelCardDefaultConflictError,
   ModelCardDuplicateModelIdError,
   ModelCardNotFoundError,
+  ModelCardPreconditionFailedError,
 } from "../errors";
 import type {
   ModelCardRepo,
@@ -204,6 +205,13 @@ export class SqlModelCardRepo implements ModelCardRepo {
     // so we read first to throw a domain error if the row is missing.
     const existing = await this.get(tenantId, cardId);
     if (!existing) throw new ModelCardNotFoundError();
+    const expected = update.expectedUpdatedAt;
+    if (
+      expected !== undefined &&
+      Date.parse(existing.updated_at ?? existing.created_at) !== expected
+    ) {
+      throw new ModelCardPreconditionFailedError();
+    }
 
     const set: Record<string, unknown> = { updated_at: update.updatedAt };
     if (update.provider !== undefined) set.provider = update.provider;
@@ -221,11 +229,22 @@ export class SqlModelCardRepo implements ModelCardRepo {
     if (update.apiKeyPreview !== undefined) set.api_key_preview = update.apiKeyPreview;
     if (update.isDefault !== undefined) set.is_default = update.isDefault ? 1 : 0;
 
+    // With an expected revision the row is written only while it still has
+    // that revision. The comparison is part of the UPDATE itself, so an edit
+    // that lands after the read above wins and this write does nothing.
+    const revisionGuard =
+      expected === undefined
+        ? undefined
+        : sql`COALESCE(${model_cards.updated_at}, ${model_cards.created_at}) = ${expected}`;
     const updateQ = this.db
       .update(model_cards)
       .set(set)
       .where(
-        and(eq(model_cards.id, cardId), eq(model_cards.tenant_id, tenantId)),
+        and(
+          eq(model_cards.id, cardId),
+          eq(model_cards.tenant_id, tenantId),
+          revisionGuard,
+        ),
       );
 
     try {
@@ -233,7 +252,12 @@ export class SqlModelCardRepo implements ModelCardRepo {
         // Atomic: clear other defaults THEN apply the patch (which sets
         // is_default = 1 for this row). The partial UNIQUE never sees two
         // defaults at once.
-        const clearQ = this.clearDefaultsExceptQuery(tenantId, cardId, update.updatedAt);
+        const clearQ = this.clearDefaultsExceptQuery(
+          tenantId,
+          cardId,
+          update.updatedAt,
+          expected,
+        );
         await atomicWrite(this.db, [clearQ, updateQ]);
       } else {
         await runOnce(updateQ);
@@ -243,6 +267,13 @@ export class SqlModelCardRepo implements ModelCardRepo {
     }
     const row = await this.get(tenantId, cardId);
     if (!row) throw new ModelCardNotFoundError();
+    // The guarded UPDATE changed no row: someone edited the card first.
+    if (
+      expected !== undefined &&
+      (row.updated_at === null || Date.parse(row.updated_at) !== update.updatedAt)
+    ) {
+      throw new ModelCardPreconditionFailedError();
+    }
     return row;
   }
 
@@ -310,11 +341,17 @@ export class SqlModelCardRepo implements ModelCardRepo {
       );
   }
 
-  /** Same as clearDefaultsQuery but skips the row that's about to be flipped on. */
+  /**
+   * Same as clearDefaultsQuery but skips the row that's about to be flipped on.
+   * With `expectedUpdatedAt` it clears only while that row still has the
+   * expected revision, so a stale write leaves the old default in place. The
+   * derived table keeps MySQL from refusing a subquery on the updated table.
+   */
   private clearDefaultsExceptQuery(
     tenantId: string,
     exceptCardId: string,
     updatedAt: number,
+    expectedUpdatedAt?: number,
   ) {
     return this.db
       .update(model_cards)
@@ -324,6 +361,9 @@ export class SqlModelCardRepo implements ModelCardRepo {
           eq(model_cards.tenant_id, tenantId),
           eq(model_cards.is_default, 1),
           ne(model_cards.id, exceptCardId),
+          expectedUpdatedAt === undefined
+            ? undefined
+            : sql`EXISTS (SELECT 1 FROM (SELECT id FROM model_cards WHERE id = ${exceptCardId} AND tenant_id = ${tenantId} AND COALESCE(updated_at, created_at) = ${expectedUpdatedAt}) AS revision_guard)`,
         ),
       );
   }

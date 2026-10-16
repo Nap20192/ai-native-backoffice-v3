@@ -26,6 +26,15 @@ import { buildTunnelCertificateRoutes } from "./routes/tunnel-certificates";
 import { buildTunnelRoutes } from "./routes/tunnels";
 
 export type { AgentCreateBody } from "./contracts/agents";
+// Request body schemas the platform MCP server of main-node checks before a
+// nested call (docs/plans/builder-agent.md, 2.3).
+export { agentCreateBodySchema, agentUpdateBodySchema } from "./contracts/agents";
+export { deploymentCreateBodySchema, deploymentUpdateBodySchema } from "./contracts/deployments";
+export { environmentCreateBodySchema, environmentUpdateBodySchema } from "./contracts/environments";
+export { memoryCreateBodySchema, memoryUpdateBodySchema } from "./contracts/memories";
+export { memoryStoreCreateBodySchema, memoryStoreUpdateBodySchema } from "./contracts/memory-stores";
+export { userDefineOutcomeEventInputSchema } from "./contracts/session-event-inputs";
+export { sessionCreateBodySchema } from "./contracts/sessions";
 export type * from "./ports";
 export {
   buildManagedSessionsApi,

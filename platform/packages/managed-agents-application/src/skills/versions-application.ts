@@ -99,6 +99,15 @@ export class SkillVersionsApplicationService
       skillId: command.skillId,
     });
     if (current === null) return { type: "not_found" };
+    if (
+      command.expectedRevision !== undefined &&
+      command.expectedRevision !== current.revision
+    ) {
+      return {
+        type: "precondition_failed",
+        message: `Skill ${command.skillId} is at revision ${current.revision}, not ${command.expectedRevision}`,
+      };
+    }
     const compiled = await this.dependencies.compiler.compile({
       files: command.files.map((file) => ({ ...file })),
     });
@@ -122,7 +131,7 @@ export class SkillVersionsApplicationService
     const result = await this.dependencies.store.appendVersion({
       workspaceId: this.dependencies.workspaceId,
       skillId: command.skillId,
-      expectedSkillRevision: current.revision,
+      expectedSkillRevision: command.expectedRevision ?? current.revision,
       nextSkill,
       version,
       archive: compiled.package.archive,
@@ -134,7 +143,11 @@ export class SkillVersionsApplicationService
         message: `Skill changed concurrently at revision ${result.actualRevision}`,
       };
     }
-    return { type: "created", version: result.version.version };
+    return {
+      type: "created",
+      version: result.version.version,
+      skillRevision: result.skill.revision,
+    };
   }
 
   async retrieveSkillVersion(

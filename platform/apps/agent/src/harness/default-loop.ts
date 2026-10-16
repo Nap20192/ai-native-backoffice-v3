@@ -94,6 +94,7 @@ function emitToolCallEvent(
           : extractMcpServerName(toolName),
       name: toolName,
       input: callInput,
+      ...(!tools[toolName]?.execute && { evaluated_permission: "ask" as const }),
     });
   } else if (isBuiltinTool(toolName) || tools[toolName]?.metadata?.openmaBuiltin === true) {
     const event: AgentToolUseEvent = {

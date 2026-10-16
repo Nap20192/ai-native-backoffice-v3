@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SparklesIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 
 import {
@@ -10,6 +11,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
+import { requestAssistantOpen } from "./assistant/use-assistant-shortcut";
 import { NAV_ICONS, type NavIcon } from "./nav-icons";
 import { useI18n } from "../i18n";
 
@@ -36,6 +38,7 @@ function useCommands(): NavCommand[] {
   const { t } = useI18n();
   return [
     { label: t.nav.dashboard, to: "/", icon: NAV_ICONS.dashboard, aliases: "dashboard главная" },
+    { label: "Быстрый старт", to: "/quickstart", icon: NAV_ICONS.dashboard, aliases: "quickstart начало мастер новый агент" },
     { label: t.nav.agents, to: "/agents", icon: NAV_ICONS.agents },
     { label: t.nav.sessions, to: "/sessions", icon: NAV_ICONS.sessions },
     { label: t.nav.files, to: "/files", icon: NAV_ICONS.files },
@@ -129,6 +132,12 @@ export function CommandPalette() {
     navigate(to);
   };
 
+  const openAssistant = () => {
+    setOpen(false);
+    setQuery("");
+    requestAssistantOpen();
+  };
+
   const recentCommands = recentPaths
     .map((path) => commands.find((command) => command.to === path))
     .filter((command): command is NavCommand => Boolean(command));
@@ -180,6 +189,15 @@ export function CommandPalette() {
         <CommandGroup heading={t.command.actions}>
           {renderCommand(commands.find((command) => command.to === "/agents")!, "view")}
           {renderCommand(commands.find((command) => command.to === "/sessions")!, "review")}
+          <CommandItem
+            value="action Ассистент помощник assistant ai"
+            onSelect={openAssistant}
+            className="cursor-pointer"
+          >
+            <SparklesIcon className="size-4 text-ddc-icon-muted" />
+            <span className="min-w-0 flex-1 truncate">Ассистент</span>
+            <kbd className="text-xs text-ddc-text-muted">Ctrl I</kbd>
+          </CommandItem>
         </CommandGroup>
         <CommandGroup heading={t.command.navigate}>
           {commands.map((command) => renderCommand(command, "navigate"))}

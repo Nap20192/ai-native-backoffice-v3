@@ -396,6 +396,7 @@ describe("Deployments application", () => {
     ]);
     expect(result).toEqual({
       type: "created",
+      revision: 1,
       deployment: persistenceCalls[0] &&
         (persistenceCalls[0] as { record: { deployment: object } }).record
           .deployment,
@@ -429,7 +430,7 @@ describe("Deployments application", () => {
 
     await expect(
       service.retrieveDeployment({ deploymentId: "depl_01" }),
-    ).resolves.toEqual({ type: "found", deployment });
+    ).resolves.toEqual({ type: "found", deployment, revision: 2 });
     const first = await service.listDeployments({
       pageSize: 1,
       agentId: "agent_01",
@@ -578,6 +579,7 @@ describe("Deployments application", () => {
     ]);
     expect(result).toEqual({
       type: "updated",
+      revision: 3,
       deployment: (replaceCalls[0] as {
         next: { deployment: object };
       }).next.deployment,

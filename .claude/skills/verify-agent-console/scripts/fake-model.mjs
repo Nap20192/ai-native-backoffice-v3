@@ -48,18 +48,26 @@
 // POST …/chat/completions (проверка ключа карточки модели OpenAI при создании)
 // получает короткий ответ OpenAI.
 //
-// Запуск: node fake-model.mjs --port 8792 --log <файл.jsonl>
+// Сценарий builder (journey-builder.mjs): маркер «VERIFY_BUILDER[_<ВИД>] nonce=<n>», решения в
+// fake-model-builder.mjs. С --canary-file фейк перечитывает файл контрольных секретов на каждом
+// запросе и ищет их в сыром теле до разбора. Попадание пишется строкой {decision: "canary_hit",
+// canary_id, n} без значения. --oracle-file: значение для подбора секрета (6.7), его фейк шлёт сам.
+//
+// Запуск: node fake-model.mjs --port 8792 --log <файл.jsonl> [--canary-file <canaries.json>] [--oracle-file <oracle.json>]
 // GET /health -> {"ok":true,"requests":N}. Каждый запрос модели пишется строкой в --log.
 import { createServer } from "node:http";
 import { appendFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
+import { decideBuilder, scanCanaries } from "./fake-model-builder.mjs";
 
 const { values: args } = parseArgs({
   options: {
     port: { type: "string", default: process.env.VERIFY_FAKE_PORT ?? "8792" },
     host: { type: "string", default: "127.0.0.1" },
     log: { type: "string" },
+    "canary-file": { type: "string" },
+    "oracle-file": { type: "string" },
   },
 });
 
@@ -229,6 +237,8 @@ const finalRunText = (n) =>
   ["Готово, итог проверки:", "", "```text", `VERIFY_DONE_${n}`, "```", "", `Файл verify-${n}.txt записан в /mnt/session/outputs и прочитан командой cat.`].join("\n");
 
 function decide(body) {
+  const builder = decideBuilder(body, { canaryFile: args["canary-file"], oracleFile: args["oracle-file"] });
+  if (builder) return builder;
   const cc = decideClaudeCode(body);
   if (cc) return cc;
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -320,11 +330,18 @@ const server = createServer(async (req, res) => {
   }
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString("utf8");
   let body = {};
   try {
-    body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+    body = chunks.length ? JSON.parse(raw) : {};
   } catch {
     body = {};
+  }
+  // Контрольные секреты ищутся в сыром теле до разбора и до сокращения журнала.
+  if (args["canary-file"]) {
+    for (const canaryId of scanCanaries(raw, args["canary-file"])) {
+      record({ decision: "canary_hit", canary_id: canaryId, n: requestCount + 1, path: url.pathname });
+    }
   }
   if (req.method === "POST" && url.pathname.endsWith("/messages/count_tokens")) {
     record({ path: url.pathname, decision: "count_tokens" });
@@ -389,6 +406,14 @@ const server = createServer(async (req, res) => {
     env: d.env ?? null,
     env_error: d.envError ?? null,
     tool_result_excerpt: d.toolResultExcerpt ?? null,
+    step: d.step ?? null,
+    builder: d.kind?.startsWith("BUILDER_") ? {
+      result_is_error: d.resultIsError ?? null,
+      list_error: d.listError ?? null,
+      get_error: d.getError ?? null,
+      masks: d.masks ?? null,
+      write_texts: d.writeTexts ?? null,
+    } : undefined,
     command: d.reply.input?.command ?? null,
     reply_tool: d.reply.tool ?? null,
     reply_input: d.reply.input ?? null,

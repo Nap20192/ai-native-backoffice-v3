@@ -4,6 +4,7 @@ import type { BetaManagedAgentsUserDefineOutcomeEventParams } from "@anthropic-a
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { SuggestOutcomeButton } from "../assistant/SuggestOutcomeButton";
 import { Field } from "../Field";
 import { Modal } from "../Modal";
 
@@ -23,9 +24,11 @@ export interface DefineOutcomeDialogProps {
   onClose(): void;
   /** Событие user.define_outcome для POST /v1/sessions/:id/events. */
   onSubmit(event: OutcomeParams): Promise<void>;
+  /** Сессия, для которой ассистент может предложить результат. Без неё кнопки нет. */
+  sessionId?: string;
 }
 
-export function DefineOutcomeDialog({ open, onClose, onSubmit }: DefineOutcomeDialogProps) {
+export function DefineOutcomeDialog({ open, onClose, onSubmit, sessionId }: DefineOutcomeDialogProps) {
   const [description, setDescription] = useState("");
   const [rubric, setRubric] = useState("");
   const [iterations, setIterations] = useState("");
@@ -84,6 +87,22 @@ export function DefineOutcomeDialog({ open, onClose, onSubmit }: DefineOutcomeDi
       }
     >
       <div className="space-y-4">
+        {sessionId ? (
+          <SuggestOutcomeButton
+            sessionId={sessionId}
+            disabled={saving}
+            onSuggested={(suggestion) => {
+              setDescription(suggestion.description);
+              setRubric(suggestion.rubric);
+              setIterations(
+                suggestion.maxIterations !== null && suggestion.maxIterations <= MAX_ITERATIONS_LIMIT
+                  ? String(suggestion.maxIterations)
+                  : "",
+              );
+              setIterationsError(null);
+            }}
+          />
+        ) : null}
         <Field label="Описание" hint="Что должна выдать сессия.">
           <Textarea
             autoFocus
@@ -139,6 +158,7 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
   { action: "Переключить разговор и трейс", keys: ["T"] },
   { action: "Свернуть вызов, затем снять выбор", keys: ["Esc"] },
   { action: "Показать это окно", keys: ["?"] },
+  { action: "Открыть или закрыть ассистента", keys: ["Ctrl", "I"] },
 ];
 
 export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose(): void }) {

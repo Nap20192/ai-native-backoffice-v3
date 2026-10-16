@@ -79,7 +79,7 @@ export async function connectHttpMcpClient(
 
     async callTool(input, callOptions) {
       const result = await client.callTool(
-        { name: input.name, arguments: input.arguments },
+        { name: input.name, arguments: input.arguments, ...(input._meta && { _meta: input._meta }) },
         requestOptions(callOptions, options.timeoutMs),
       );
       return result as unknown as McpToolResult;

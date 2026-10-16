@@ -1,10 +1,11 @@
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArchiveIcon, PencilIcon, TriangleAlertIcon } from "lucide-react";
+import { ArchiveIcon, PencilIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import { useApi } from "../lib/api";
 import { useApiQuery, useQueryClient } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
+import { useOptionalAssistant } from "../components/assistant/AssistantProvider";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
 import { Page } from "../components/Page";
@@ -31,6 +32,7 @@ export function AgentDetail() {
   const nav = useNavigate();
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  const assistant = useOptionalAssistant();
 
   const [showEdit, setShowEdit] = useState(false);
   const [askArchive, setAskArchive] = useState(false);
@@ -170,6 +172,12 @@ export function AgentDetail() {
           description={agent.description || undefined}
           actions={
             <>
+              {!archived && assistant && (
+                <Button variant="outline" onClick={() => assistant.setOpen(true)} aria-keyshortcuts="Control+I">
+                  <SparklesIcon />
+                  Править с ассистентом
+                </Button>
+              )}
               {!archived && (
                 <Button variant="outline" onClick={() => setShowEdit(true)}>
                   <PencilIcon />

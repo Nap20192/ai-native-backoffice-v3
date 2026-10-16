@@ -135,8 +135,30 @@ function snakeCaseRuntimeValue(value: unknown): unknown {
   );
 }
 
+// A tool input is model data, not runtime fields: its keys stay as the model
+// wrote them in both directions, so a confirmed call runs with the same
+// arguments and the model sees its own call in the history.
+const TOOL_USE_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "agent.tool_use",
+  "agent.mcp_tool_use",
+  "agent.custom_tool_use",
+]);
+
+function withRawToolInput(
+  source: Record<string, unknown>,
+  converted: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof source.type === "string" && TOOL_USE_EVENT_TYPES.has(source.type) && "input" in source) {
+    converted.input = source.input;
+  }
+  return converted;
+}
+
 export function encodeRuntimeHistoryEvent(event: SessionEventView): object {
-  return snakeCaseRuntimeValue(event) as object;
+  return withRawToolInput(
+    event as unknown as Record<string, unknown>,
+    snakeCaseRuntimeValue(event) as Record<string, unknown>,
+  );
 }
 
 function normalizeRuntimeError(value: unknown): object {
@@ -231,7 +253,7 @@ export function decodeRuntimeEvent(
   ) return [];
   if (!OFFICIAL_RUNTIME_EVENT_TYPES.has(raw.type)) return [];
 
-  const decoded = camelCaseRuntimeValue(raw) as Record<string, unknown>;
+  const decoded = withRawToolInput(raw, camelCaseRuntimeValue(raw) as Record<string, unknown>);
   // event_start/event_delta use the runtime's stable block ids. Preserve the
   // same id on the eventual committed event so SDK consumers can atomically
   // replace their in-flight projection instead of guessing from arrival order.

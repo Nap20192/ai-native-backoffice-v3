@@ -31,8 +31,28 @@ function textResult(
   return { content: [{ type: "text", text }], isError };
 }
 
+/** An MCP `CallToolResult`: text blocks and `isError` go to the event as they are. */
+function mcpResult(value: unknown): ManagedNodeConfirmedToolExecutionResult | null {
+  if (value === null || typeof value !== "object") return null;
+  const { content, isError } = value as { content?: unknown; isError?: unknown };
+  if (!Array.isArray(content)) return null;
+  const texts = content.filter(
+    (block): block is { type: "text"; text: string } =>
+      typeof block === "object" && block !== null &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string",
+  );
+  if (texts.length !== content.length) return null;
+  return {
+    content: texts.map((block) => ({ type: "text", text: block.text })),
+    isError: isError === true,
+  };
+}
+
 function successfulResult(value: unknown): ManagedNodeConfirmedToolExecutionResult {
   if (typeof value === "string") return textResult(value, false);
+  const mcp = mcpResult(value);
+  if (mcp !== null) return mcp;
   if (value === undefined) return textResult("", false);
   try {
     return textResult(JSON.stringify(value), false);

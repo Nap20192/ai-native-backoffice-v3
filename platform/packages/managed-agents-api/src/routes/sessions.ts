@@ -13,6 +13,7 @@ import {
   sessionUpdateBodySchema,
 } from "../contracts/sessions";
 import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import { setRevisionETag } from "../if-match";
 import {
   toCreateSessionCommand,
   toListSessionsQuery,
@@ -121,6 +122,7 @@ export function buildSessionRoutes(
       return c.json(apiError("Application returned an invalid session resource"), 500);
     }
 
+    setRevisionETag(c, result.revision);
     return c.json(session, 200);
   });
 

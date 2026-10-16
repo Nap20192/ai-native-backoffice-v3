@@ -106,6 +106,9 @@ export function toCreateDeploymentCommand(
             },
     }),
     ...(body.vault_ids !== undefined && { vaultIds: body.vault_ids }),
+    ...(body._oma !== undefined && {
+      initialStatus: body._oma.paused ? "paused" : "active",
+    }),
   };
 }
 

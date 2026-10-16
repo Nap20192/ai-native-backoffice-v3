@@ -52,7 +52,7 @@ export interface HarnessCardPage {
 /** An error the routes turn into `{"error": message, "field": field}`. */
 export class HarnessCardError extends Error {
   constructor(
-    readonly status: 400 | 404 | 409 | 501,
+    readonly status: 400 | 404 | 409 | 412 | 501,
     message: string,
     readonly field: string | null = null,
   ) {

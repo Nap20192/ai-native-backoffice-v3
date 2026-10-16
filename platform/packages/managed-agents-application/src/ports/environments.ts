@@ -76,6 +76,11 @@ export interface UpdateEnvironmentCommand {
   metadata?: Record<string, string | null>;
   name?: string | null;
   scope?: "organization" | "account" | null;
+  /**
+   * Write only over this stored revision (the `If-Match` header). A different
+   * revision gives `precondition_failed` and writes nothing.
+   */
+  expectedRevision?: number;
 }
 
 export interface ListEnvironmentsQuery {
@@ -98,16 +103,17 @@ export interface ArchiveEnvironmentCommand {
 }
 
 export type CreateEnvironmentResult =
-  | { type: "created"; environment: EnvironmentView }
+  | { type: "created"; environment: EnvironmentView; revision?: number }
   | { type: "invalid_request"; message: string };
 
 export type RetrieveEnvironmentResult =
-  | { type: "found"; environment: EnvironmentView }
+  | { type: "found"; environment: EnvironmentView; revision?: number }
   | { type: "not_found" };
 
 export type UpdateEnvironmentResult =
-  | { type: "updated"; environment: EnvironmentView }
+  | { type: "updated"; environment: EnvironmentView; revision?: number }
   | { type: "invalid_request"; message: string }
+  | { type: "precondition_failed"; message: string }
   | { type: "version_conflict"; message: string }
   | { type: "not_found" };
 

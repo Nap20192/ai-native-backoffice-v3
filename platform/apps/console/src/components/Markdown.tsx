@@ -72,13 +72,22 @@ function MarkdownLink({ href, children, node: _node, ...props }: ComponentProps<
   );
 }
 
-export function Markdown({ children }: { children: string }) {
+/**
+ * Картинка без загрузки: вместо `<img>` только подпись. Так адрес картинки
+ * никуда не уходит, в какой бы форме разметки он ни был.
+ */
+function ImageAsText({ alt }: ComponentProps<"img"> & { node?: unknown }) {
+  return alt ? <span>{`[${alt}]`}</span> : null;
+}
+
+export function Markdown({ children, images = true }: { children: string; images?: boolean }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       urlTransform={keepOutputUrl}
       components={{
         a: MarkdownLink,
+        ...(images ? {} : { img: ImageAsText }),
         pre: ({ children }) => (
           <pre className="my-2 overflow-x-auto rounded-xl border border-ddc-border bg-ddc-surface-muted p-3 text-sm">
             {children}

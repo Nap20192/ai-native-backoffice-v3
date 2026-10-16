@@ -58,6 +58,13 @@ export interface ModelCardUpdateFields {
    */
   isDefault?: boolean;
   updatedAt: number;
+  /**
+   * Epoch ms of `updated_at` (or `created_at` for a card without edits) the
+   * caller saw. When set, the repo writes only while the row still has that
+   * revision, inside the same UPDATE, and otherwise throws
+   * {@link ModelCardPreconditionFailedError} without writing anything.
+   */
+  expectedUpdatedAt?: number;
 }
 
 export interface ModelCardRepo {

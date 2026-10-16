@@ -1,6 +1,6 @@
 import { generateModelCardId } from "@open-managed-agents/shared";
 import { paginateVia } from "@open-managed-agents/shared";
-import { ModelCardNotFoundError } from "./errors";
+import { ModelCardNotFoundError, ModelCardPreconditionFailedError } from "./errors";
 import type {
   Clock,
   Crypto,
@@ -119,9 +119,27 @@ export class ModelCardService {
     apiKey?: string;
     /** Atomically clears other defaults if true (per partial UNIQUE). */
     isDefault?: boolean;
+    /**
+     * The revision the caller saw (`If-Match`): ISO `updated_at`, or
+     * `created_at` for a card without edits. Another stored revision throws
+     * {@link ModelCardPreconditionFailedError} and writes nothing.
+     */
+    expectedUpdatedAt?: string;
   }): Promise<ModelCardRow> {
-    await this.requireCard(opts);
-    const update: ModelCardUpdateFields = { updatedAt: this.clock.nowMs() };
+    const current = await this.requireCard(opts);
+    const currentRevision = Date.parse(current.updated_at ?? current.created_at);
+    let expectedUpdatedAt: number | undefined;
+    if (opts.expectedUpdatedAt !== undefined) {
+      expectedUpdatedAt = Date.parse(opts.expectedUpdatedAt);
+      if (expectedUpdatedAt !== currentRevision) {
+        throw new ModelCardPreconditionFailedError();
+      }
+    }
+    // The revision is updated_at: it always moves, even within one millisecond.
+    const update: ModelCardUpdateFields = {
+      updatedAt: Math.max(this.clock.nowMs(), currentRevision + 1),
+      ...(expectedUpdatedAt !== undefined && { expectedUpdatedAt }),
+    };
     if (opts.provider !== undefined) update.provider = opts.provider;
     if (opts.modelId !== undefined) update.modelId = opts.modelId;
     if (opts.model !== undefined) update.model = opts.model;

@@ -196,3 +196,18 @@ export const TAG_LABELS: Record<string, string> = {
 export function tagLabel(tag: string): string {
   return TAG_LABELS[tag] ?? tag;
 }
+
+/**
+ * Шаблон «Конструктор» (раздел 1.5 плана builder-agent). Это не заготовка формы:
+ * «Использовать шаблон» ставит в пространство окружение «Ассистент» и агента с
+ * MCP-сервером платформы. Поэтому карточка лежит отдельно от AGENT_TEMPLATES, а
+ * тело агента и группы инструментов приходят с сервера
+ * (`GET /v1/oma/platform-mcp/builder-bundle`).
+ */
+export const BUILDER_TEMPLATE = {
+  id: "builder",
+  name: "Конструктор",
+  description:
+    "Ассистент, который настраивает платформу: собирает агентов, окружения и навыки, читает сессии и предлагает правки. Любую запись подтверждает человек.",
+  badge: "Управляет платформой",
+} as const;

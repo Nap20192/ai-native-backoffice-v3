@@ -122,7 +122,7 @@ export class SkillsApplicationService implements SkillsApplicationPort {
     });
     return record === null
       ? { type: "not_found" }
-      : { type: "found", skill: record.skill };
+      : { type: "found", skill: record.skill, revision: record.revision };
   }
 
   async listSkills(query: ListSkillsQuery): Promise<ListSkillsResult> {

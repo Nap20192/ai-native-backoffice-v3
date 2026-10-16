@@ -17,6 +17,7 @@ import { resolveNodeProcessMode, validateNodeProcessEnvironment, type NodeProces
 import { resolveRealtimeFanout, type RealtimeFanoutConfig } from "./realtime-fanout.js";
 import { parseAllowHosts } from "./lib/skill-sources.js";
 import { normalizeSandboxGatewayBaseUrl } from "./lib/sandbox-hosted-inference.js";
+import { PLATFORM_MCP_ENDPOINT_PATH } from "@open-managed-agents/auth";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -109,6 +110,12 @@ export interface NodeConfig {
     apiKey: string | undefined;
   };
   tunnels: { domainSuffix: string };
+  /**
+   * Platform MCP server of the assistant (docs/plans/builder-agent.md, 2.1).
+   * PLATFORM_MCP_URL: an agent with an MCP server at this address is the
+   * assistant. Default: <PUBLIC_BASE_URL>/v1/oma/platform-mcp.
+   */
+  platformMcp: { url: string };
   skillSources: {
     /**
      * SKILL_SOURCES_ALLOW_HOSTS: hosts the control plane may fetch skill
@@ -279,6 +286,20 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
   };
 
   const skillSourceAllowHosts = attempt<string[]>([], () => parseAllowHosts(env.SKILL_SOURCES_ALLOW_HOSTS));
+  const platformMcpUrl = attempt<string>("", () => {
+    const fallback = `${(env.PUBLIC_BASE_URL ?? `http://localhost:${env.PORT?.trim() || "8787"}`).replace(/\/+$/, "")}${PLATFORM_MCP_ENDPOINT_PATH}`;
+    const raw = optional("PLATFORM_MCP_URL") ?? fallback;
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`PLATFORM_MCP_URL must be an http(s) URL; received ${JSON.stringify(raw)}`);
+    }
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.pathname !== PLATFORM_MCP_ENDPOINT_PATH || url.search || url.hash) {
+      throw new Error(`PLATFORM_MCP_URL must be an http(s) URL with the path ${PLATFORM_MCP_ENDPOINT_PATH}; received ${JSON.stringify(raw)}`);
+    }
+    return url.toString();
+  });
   const sandboxGatewayBaseUrl = attempt<string | undefined>(
     undefined,
     () => normalizeSandboxGatewayBaseUrl(env.SANDBOX_GATEWAY_BASE_URL) ?? undefined,
@@ -338,6 +359,7 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
       apiKey: env.API_KEY,
     },
     tunnels: { domainSuffix: env.TUNNEL_DOMAIN_SUFFIX ?? "tunnels.localhost" },
+    platformMcp: { url: platformMcpUrl },
     skillSources: { allowHosts: skillSourceAllowHosts },
     integrationsInternalToken: env.INTEGRATIONS_INTERNAL_TOKEN,
     email,

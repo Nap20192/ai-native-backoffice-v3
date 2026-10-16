@@ -93,6 +93,7 @@ import { NodeSessionExecutionWorker } from "../lib/node-session-execution-worker
 import { createNodeMcpProxyBinding, type NodeMcpProxyTarget } from "../lib/http-mcp-proxy.js";
 import { createNodeAccessLossRuntime } from "../lib/mcp-access-loss.js";
 import { createNodeTraceWiring, withTracePhases } from "../lib/trace/node-wiring.js";
+import { createNodeKnownSecretSources, createPlatformMcpNode } from "../lib/platform-mcp/node-wiring.js";
 
 import { Disposables } from "../lifecycle.js";
 import type { NodeComponents } from "../components.js";
@@ -138,11 +139,41 @@ export async function createManagedNodeRuntime(
     modelCards: modelCardsService,
   });
 
+  // Platform MCP server of the assistant (docs/plans/builder-agent.md, BS3).
+  // The known-secret sources read the stores below lazily, on each answer.
+  const platformMcp = createPlatformMcpNode({
+    sql,
+    platformMcpUrl: config.platformMcp.url,
+    ...(config.http.publicBaseUrl === undefined ? {} : { consoleUrl: config.http.publicBaseUrl }),
+    loadSession: (workspaceId, sessionId) => new SqlSessionSource(sql).find({ workspaceId, sessionId }),
+    displayNameOf: async (userId) => (await foundation.auth?.findUser(userId))?.name ?? null,
+    knownSecretSources: createNodeKnownSecretSources({
+      sql,
+      vaults: new SqlVaultStore(sql),
+      credentials: { list: (query) => managedCredentialStore.list(query) },
+      deployments: { list: (query) => new SqlDeploymentStore(sql, managedDeploymentCipher).list(query) },
+      tunnels: new SqlTunnelStore(sql),
+      tunnelToken: async (workspaceId, tunnel) => {
+        const revealed = await managedTunnelTokens.reveal({ workspaceId, tunnel: tunnel as never });
+        return revealed.type === "available" ? revealed.token.token : null;
+      },
+      modelCards: modelCardsService,
+      openSessionSecret: async (sealed) => {
+        if (managedResourceCipher === null) throw new Error("PLATFORM_ROOT_SECRET is required for session resource secrets");
+        return managedResourceCipher.decrypt(sealed);
+      },
+    }),
+  });
+
   async function resolveNodeMcpProxyTarget(input: {
     tenantId: string;
     sessionId: string;
     serverName: string;
   }): Promise<NodeMcpProxyTarget | null> {
+    // The platform server gets a one-time token and app.fetch; any other
+    // server keeps the vault lookup below.
+    const platformTarget = await platformMcp.resolveProxyTarget(input);
+    if (platformTarget !== undefined) return platformTarget;
     const managedContext = await managedRuntimeReaders.executionContext.find({
       workspaceId: input.tenantId,
       sessionId: input.sessionId,
@@ -577,7 +608,7 @@ export async function createManagedNodeRuntime(
     }),
     buildModel: ({ workspaceId, session }) =>
       buildNodeLanguageModel(workspaceId, session.agent.model),
-    buildTools: async ({ workspaceId, session, environment, sandbox, subagents, delegateToAgent }) => {
+    buildTools: async ({ workspaceId, session, environment, sandbox, subagents, delegateToAgent, broadcastEvent }) => {
       const agent = toLegacyHarnessAgentConfig(session);
       const creds = await resolveNodeModelCreds(workspaceId, agent.model);
       const auxiliary = await resolveNodeManagedAuxiliaryToolModel(
@@ -596,6 +627,13 @@ export async function createManagedNodeRuntime(
         auxModelInfo: auxiliary?.modelInfo,
         auxProviderOptions: auxiliary?.providerOptions,
         delegateToAgent,
+        // Only warnings go into the session: other tool events (aux.model_call)
+        // are not in the event contract of the API.
+        broadcastEvent: broadcastEvent
+          ? (event) => {
+              if (event.type === "session.warning") broadcastEvent(event);
+            }
+          : undefined,
       });
       if (subagents && (await readManagedSessionMappingMetadata(session, openAIAgentsSecrets))?.agent.multi_agent?.enabled) {
         for (const [name, definition] of Object.entries(buildOpenAISubagentTools(subagents))) {
@@ -1264,6 +1302,7 @@ export async function createManagedNodeRuntime(
   );
 
   return {
+    platformMcp,
     resolveNodeMcpProxyTarget,
     resolveNodeInferenceUpstream,
     managedRuntimeRunner,

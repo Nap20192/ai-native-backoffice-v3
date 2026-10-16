@@ -11,6 +11,7 @@ import {
   skillResponseSchema,
 } from "../contracts/skills";
 import { apiError, invalidRequest, notFound } from "../errors";
+import { setRevisionETag } from "../if-match";
 import {
   toCreateSkillCommand,
   toDeleteSkillCommand,
@@ -109,6 +110,7 @@ export function buildSkillRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid skill"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 

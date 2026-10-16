@@ -159,6 +159,7 @@ describe("MemoryStoresApplicationService", () => {
     });
     expect(updated).toEqual({
       type: "updated",
+      revision: 2,
       memoryStore: {
         id: "memstore_01",
         name: "Project memory",
@@ -171,7 +172,7 @@ describe("MemoryStoresApplicationService", () => {
     await expect(
       service.retrieveMemoryStore({ memoryStoreId: "memstore_01" }),
     ).resolves.toEqual(updated.type === "updated"
-      ? { type: "found", memoryStore: updated.memoryStore }
+      ? { type: "found", memoryStore: updated.memoryStore, revision: 2 }
       : { type: "not_found" });
   });
 

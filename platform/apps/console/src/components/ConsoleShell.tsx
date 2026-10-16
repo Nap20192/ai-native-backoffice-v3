@@ -8,10 +8,14 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { MenuIcon, PanelLeftOpenIcon } from "lucide-react";
+import { MenuIcon, PanelLeftOpenIcon, SparklesIcon } from "lucide-react";
 import { useLocation } from "react-router";
 
 import { useIsMobile } from "@/hooks/use-mobile";
+import { usePhoneLayout } from "@/hooks/use-phone-layout";
+import { AssistantPanel } from "./assistant/AssistantPanel";
+import { AssistantProvider, useAssistant } from "./assistant/AssistantProvider";
+import { ASSISTANT_OPEN_EVENT } from "./assistant/use-assistant-shortcut";
 import { useI18n } from "../i18n";
 
 interface ConsoleShellProps {
@@ -27,13 +31,41 @@ const MAX_SIDEBAR_WIDTH = 320;
 const COLLAPSE_THRESHOLD = 170;
 
 /** Постоянный каркас консоли, не зависящий от маршрута. Вход и маршрутизация
- * живут в AppShell, а здесь только пять состояний бокового меню и геометрия
- * слотов. */
-export function ConsoleShell({
-  sidebar,
-  breadcrumb,
-  children,
-}: ConsoleShellProps) {
+ * живут в AppShell, а здесь пять состояний бокового меню, геометрия слотов и
+ * третья колонка с панелью ассистента. Провайдер ассистента стоит здесь, внутри
+ * маршрутизатора: контекст страницы он берёт из адреса. */
+export function ConsoleShell(props: ConsoleShellProps) {
+  return (
+    <AssistantProvider>
+      <ConsoleShellFrame {...props} />
+    </AssistantProvider>
+  );
+}
+
+function AssistantButton() {
+  const assistant = useAssistant();
+  return (
+    <Button
+      variant="ghost"
+      type="button"
+      className="console-assistant-button"
+      aria-label="Ассистент"
+      aria-pressed={assistant.open}
+      aria-keyshortcuts="Control+I"
+      title="Ассистент (Ctrl I)"
+      onClick={assistant.toggle}
+    >
+      <SparklesIcon aria-hidden="true" />
+      <span className="console-assistant-button-label">Ассистент</span>
+    </Button>
+  );
+}
+
+function ConsoleShellFrame({ sidebar, breadcrumb, children }: ConsoleShellProps) {
+  const assistant = useAssistant();
+  const phone = usePhoneLayout();
+  const setAssistantOpen = assistant.setOpen;
+  const assistantState = !assistant.open ? "closed" : phone ? "sheet" : "open";
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const { pathname } = useLocation();
@@ -89,6 +121,13 @@ export function ConsoleShell({
     setPreviewOpen(false);
     setSidebarOpen(true);
   }, []);
+
+  // Командная палитра стоит вне оболочки и просит открыть панель событием.
+  useEffect(() => {
+    const onOpen = () => setAssistantOpen(true);
+    window.addEventListener(ASSISTANT_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(ASSISTANT_OPEN_EVENT, onOpen);
+  }, [setAssistantOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -166,6 +205,7 @@ export function ConsoleShell({
       className="console-shell ddc-app-shell"
       data-console-shell
       data-sidebar-state={sidebarState}
+      data-assistant={assistantState}
       style={{ "--shell-sidebar-current-w": `${sidebarWidth}px` } as CSSProperties}
     >
       <div
@@ -273,6 +313,7 @@ export function ConsoleShell({
             </Button>
           )}
           {breadcrumb}
+          <AssistantButton />
         </header>
 
         <section
@@ -282,6 +323,8 @@ export function ConsoleShell({
           {children}
         </section>
       </div>
+
+      <AssistantPanel />
     </div>
   );
 }

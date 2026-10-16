@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   decodeRuntimeEvent,
   decodeRuntimeProducedSessionEvent,
+  encodeRuntimeHistoryEvent,
   encodeRuntimeSessionEvent,
   encodeRuntimeSessionStart,
   RuntimeEventStreamDecoder,
@@ -13,6 +14,21 @@ import type {
 import * as runtimeCodec from "../src";
 
 describe("Managed session runtime codec", () => {
+  it("keeps the keys of a tool input as the model wrote them", () => {
+    // The input is model data, not runtime fields: a confirmed call must run
+    // with the same arguments (docs/plans/builder-agent.md, 2.5).
+    const input = { environment_id: "env_1", agent: { id: "agent_1" }, filePath: "/a", nested: { memory_store_id: "m" } };
+    for (const type of ["agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"] as const) {
+      const [decoded] = decodeRuntimeEvent(
+        { type, id: "toolu_01", name: "x", input, mcp_server_name: "platform", evaluated_permission: "ask", processed_at: "2026-10-16T00:00:00.000Z" },
+        new Set(),
+      );
+      expect((decoded as { input?: unknown }).input, type).toEqual(input);
+      expect(decoded).toMatchObject(type === "agent.mcp_tool_use" ? { mcpServerName: "platform", evaluatedPermission: "ask" } : {});
+      expect((encodeRuntimeHistoryEvent(decoded as SessionEventView) as { input?: unknown }).input, type).toEqual(input);
+    }
+  });
+
   it("encodes accepted application events without API or SDK DTO dependencies", () => {
     expect(
       encodeRuntimeSessionEvent({

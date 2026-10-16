@@ -449,7 +449,7 @@ export class SessionsApplicationService
     });
     return record === null
       ? { type: "not_found" }
-      : { type: "found", session: record.session };
+      : { type: "found", session: record.session, revision: record.revision };
   }
 
   async updateSession(command: UpdateSessionCommand): Promise<UpdateSessionResult> {

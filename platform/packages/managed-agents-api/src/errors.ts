@@ -6,6 +6,7 @@ export interface AnthropicErrorEnvelope {
           | "invalid_request_error"
           | "not_found_error"
           | "conflict_error"
+          | "precondition_failed_error"
           | "api_error";
         message: string;
       }
@@ -56,6 +57,17 @@ export function conflict(message: string): AnthropicErrorEnvelope {
     type: "error",
     error: {
       type: "conflict_error",
+      message,
+    },
+  };
+}
+
+/** 412: `If-Match` names another revision than the stored one. */
+export function preconditionFailed(message: string): AnthropicErrorEnvelope {
+  return {
+    type: "error",
+    error: {
+      type: "precondition_failed_error",
       message,
     },
   };

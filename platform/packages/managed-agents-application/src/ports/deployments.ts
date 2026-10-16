@@ -65,6 +65,11 @@ export interface CreateDeploymentCommand {
   resources?: DeploymentResourceInput[];
   schedule?: DeploymentScheduleInput | null;
   vaultIds?: string[];
+  /**
+   * `paused` inserts the deployment already paused with a manual reason, in
+   * the same single insert. It is never active. Default `active`.
+   */
+  initialStatus?: "active" | "paused";
 }
 
 export interface RetrieveDeploymentQuery {
@@ -83,6 +88,11 @@ export interface UpdateDeploymentCommand {
   resources?: DeploymentResourceInput[] | null;
   schedule?: DeploymentScheduleInput | null;
   vaultIds?: string[] | null;
+  /**
+   * Write only over this stored revision (the `If-Match` header). A different
+   * revision gives `precondition_failed` and writes nothing.
+   */
+  expectedRevision?: number;
 }
 
 export interface ListDeploymentsQuery {
@@ -102,21 +112,24 @@ export interface DeploymentsPage {
 
 export interface DeploymentCommand {
   deploymentId: string;
+  /** Archive, pause and unpause only over this stored revision. */
+  expectedRevision?: number;
 }
 
 export type CreateDeploymentResult =
-  | { type: "created"; deployment: DeploymentView }
+  | { type: "created"; deployment: DeploymentView; revision?: number }
   | { type: "invalid_request"; message: string }
   | { type: "dependency_not_found"; message: string };
 
 export type RetrieveDeploymentResult =
-  | { type: "found"; deployment: DeploymentView }
+  | { type: "found"; deployment: DeploymentView; revision?: number }
   | { type: "not_found" };
 
 export type UpdateDeploymentResult =
-  | { type: "updated"; deployment: DeploymentView }
+  | { type: "updated"; deployment: DeploymentView; revision?: number }
   | { type: "invalid_request"; message: string }
   | { type: "dependency_not_found"; message: string }
+  | { type: "precondition_failed"; message: string }
   | { type: "version_conflict"; message: string }
   | { type: "not_found" };
 
@@ -125,8 +138,9 @@ export type ListDeploymentsResult =
   | { type: "invalid_request"; message: string };
 
 export type ChangeDeploymentStateResult =
-  | { type: "changed"; deployment: DeploymentView }
+  | { type: "changed"; deployment: DeploymentView; revision?: number }
   | { type: "not_found" }
+  | { type: "precondition_failed"; message: string }
   | { type: "conflict"; message: string };
 
 export type RunDeploymentResult =

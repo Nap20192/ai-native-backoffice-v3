@@ -6,6 +6,7 @@ import {
   ModelCardDefaultConflictError,
   ModelCardDuplicateModelIdError,
   ModelCardNotFoundError,
+  ModelCardPreconditionFailedError,
 } from "./errors";
 import type {
   Clock,
@@ -160,6 +161,12 @@ export class InMemoryModelCardRepo implements ModelCardRepo {
   ): Promise<ModelCardRow> {
     const row = this.byId.get(cardId);
     if (!row || row.tenant_id !== tenantId) throw new ModelCardNotFoundError();
+    if (
+      update.expectedUpdatedAt !== undefined &&
+      (row.updated_at ?? row.created_at) !== update.expectedUpdatedAt
+    ) {
+      throw new ModelCardPreconditionFailedError();
+    }
 
     // UNIQUE(tenant_id, model_id) check on rename
     if (update.modelId !== undefined && update.modelId !== row.model_id) {

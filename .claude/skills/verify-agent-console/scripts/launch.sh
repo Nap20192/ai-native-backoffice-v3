@@ -143,7 +143,8 @@ fi
 # --- 2. Фейковая модель ------------------------------------------------------------
 if [ "$MODE" = fake ]; then
   ( exec nice -n 15 "$VAC_NODE_BIN" "$VAC_SCRIPTS/fake-model.mjs" \
-      --port "$VERIFY_FAKE_PORT" --log "$RUN_DIR/logs/fake-model-requests.jsonl" ) \
+      --port "$VERIFY_FAKE_PORT" --log "$RUN_DIR/logs/fake-model-requests.jsonl" \
+      --canary-file "$RUN_DIR/state/canaries.json" --oracle-file "$RUN_DIR/state/oracle.json" ) \
     > "$RUN_DIR/logs/fake-model.log" 2>&1 < /dev/null &
   vac_record_pid fake-model "$!"
   for _ in $(seq 1 50); do curl -fsS "$FAKE_URL/health" >/dev/null 2>&1 && break; sleep 0.2; done

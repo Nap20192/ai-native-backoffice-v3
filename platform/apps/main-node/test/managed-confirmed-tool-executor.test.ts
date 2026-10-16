@@ -47,6 +47,36 @@ const environment: Environment = {
 };
 
 describe("NodeManagedConfirmedToolExecutor", () => {
+  it("keeps the text blocks and the error flag of an MCP tool result", async () => {
+    const executor = new NodeManagedConfirmedToolExecutor({
+      buildExecutableTools: async () => ({
+        mcp__platform__create_agent: {
+          execute: async () => ({ content: [{ type: "text", text: "Объект изменился" }], isError: true }),
+        },
+        mcp__platform__list: {
+          execute: async () => ({ content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] }),
+        },
+      }),
+    });
+    const run = (name: string) => executor.execute({
+      workspaceId: "workspace_01",
+      session,
+      environment,
+      sandbox: {} as SandboxExecutor,
+      confirmation: { id: "event_02", type: "user.tool_confirmation", result: "allow", toolUseId: "toolu_01" } as never,
+      toolUse: { id: "toolu_01", type: "agent.mcp_tool_use", name, input: {}, mcpServerName: "platform" } as never,
+      abortSignal: new AbortController().signal,
+    });
+    await expect(run("mcp__platform__create_agent")).resolves.toEqual({
+      content: [{ type: "text", text: "Объект изменился" }],
+      isError: true,
+    });
+    await expect(run("mcp__platform__list")).resolves.toEqual({
+      content: [{ type: "text", text: "a" }, { type: "text", text: "b" }],
+      isError: false,
+    });
+  });
+
   it("executes the confirmed tool with its original input and abort signal", async () => {
     const calls: unknown[] = [];
     const executor = new NodeManagedConfirmedToolExecutor({

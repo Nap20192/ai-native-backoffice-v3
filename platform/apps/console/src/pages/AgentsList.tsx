@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, ArrowRightIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArrowRightIcon, PencilIcon, PlusIcon, SparklesIcon } from "lucide-react";
 
 import { useApi } from "../lib/api";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
+import { useOptionalAssistant } from "../components/assistant/AssistantProvider";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
@@ -32,6 +33,7 @@ export function AgentsList() {
   const managedApi = useManagedApi();
   const nav = useNavigate();
   const { t } = useI18n();
+  const assistant = useOptionalAssistant();
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [customSkills, setCustomSkills] = useState<
     Array<{ id: string; name: string; description: string }>
@@ -148,6 +150,19 @@ export function AgentsList() {
   const getAgentActions = (agent: Agent): RowAction[] => {
     const archived = Boolean(agent.archived_at);
     return [
+      ...(assistant && !archived
+        ? [
+            {
+              label: "Править с ассистентом",
+              icon: <SparklesIcon className="size-4" />,
+              onSelect: () => {
+                // Контекст панели берётся из адреса, поэтому сначала страница агента.
+                nav(`/agents/${agent.id}`);
+                assistant.setOpen(true);
+              },
+            },
+          ]
+        : []),
       {
         label: t.agents.editAgent,
         icon: <PencilIcon className="size-4" />,
@@ -272,6 +287,12 @@ export function AgentsList() {
       subtitle="Агенты выполняют задачи по вашим инструкциям: у каждого своя модель, навыки и набор инструментов."
       createLabel={t.agents.newAgent}
       onCreate={() => setShowCreate(true)}
+      headerActions={
+        <Button variant="outline" onClick={() => nav("/agents/new")}>
+          <SparklesIcon />
+          Описать агента
+        </Button>
+      }
       searchPlaceholder={t.agents.searchAgents}
       searchValue={search}
       onSearchChange={setSearch}

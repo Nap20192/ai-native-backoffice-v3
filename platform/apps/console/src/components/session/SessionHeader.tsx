@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { PlainButton } from "@/components/ui/plain-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SessionTotals } from "../../lib/session-stats";
+import { useOptionalAssistant } from "../assistant/AssistantProvider";
 import { AgentChip, EnvironmentChip } from "../../pages/session-detail/Panels";
 import { StatusPill } from "../Badge";
 import { ClockIcon, DurationIcon } from "../icons";
@@ -55,6 +56,38 @@ export interface SessionHeaderProps {
   onDownloadEvents(): void;
   onDownloadTrace(): void;
   onShowShortcuts(): void;
+}
+
+/** Открывает панель ассистента: контекст сессии он берёт из адреса страницы.
+ *  Вне провайдера (отдельные тесты и страницы) кнопка выключена. */
+function AskAssistantButton() {
+  const assistant = useOptionalAssistant();
+  if (!assistant) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="sm" aria-disabled="true" aria-label="Спросить помощника" className="opacity-60">
+            <MessageCircleQuestionIcon aria-hidden="true" />
+            <span className="max-sm:hidden">Спросить помощника</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Ассистент недоступен на этой странице</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      aria-label="Спросить помощника"
+      title="Спросить помощника (Ctrl I)"
+      aria-keyshortcuts="Control+I"
+      onClick={() => assistant.setOpen(true)}
+    >
+      <MessageCircleQuestionIcon aria-hidden="true" />
+      <span className="max-sm:hidden">Спросить помощника</span>
+    </Button>
+  );
 }
 
 /** Текущее время, которое обновляется само: возраст последней активности
@@ -297,21 +330,7 @@ export function SessionHeader({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  aria-disabled="true"
-                  aria-label="Спросить помощника"
-                  className="opacity-60"
-                >
-                  <MessageCircleQuestionIcon aria-hidden="true" />
-                  <span className="max-sm:hidden">Спросить помощника</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Скоро</TooltipContent>
-            </Tooltip>
+            <AskAssistantButton />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="Ещё" title="Ещё">

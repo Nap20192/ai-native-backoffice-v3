@@ -78,6 +78,7 @@ import { resolveSandboxInferenceBearer, sandboxInferenceCipher } from "../lib/sa
 import { buildNodeHttpMcpProxyRoutes } from "../lib/http-mcp-proxy.js";
 import { createNodeAccessLossRuntime } from "../lib/mcp-access-loss.js";
 import { buildTraceRoutes } from "../lib/trace/routes.js";
+import { mountPlatformMcpMiddleware, mountPlatformMcpRoutes } from "../lib/platform-mcp/node-wiring.js";
 
 import { Disposables } from "../lifecycle.js";
 
@@ -147,6 +148,7 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     managedUserProfilesRoutes,
     services,
     apiKeyStorage,
+    platformMcp,
   } = runtime;
   let feishuRunner: { stop: () => Promise<void> } | null = null;
   // ─── HTTP ───────────────────────────────────────────────────────────────
@@ -243,6 +245,10 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       };
     },
     resolveBearerToken: async ({ token, method, path }) => {
+      // A one-time token of the platform MCP server (oma-mcp-v1.) opens one
+      // request; any other token gives null here (builder-agent.md, 3.3).
+      const platformMcpActor = await platformMcp.tokens.resolve({ token, method, path });
+      if (platformMcpActor !== null) return platformMcpActor;
       // A sandbox inference token (oma_sbx_) opens only its session's
       // inference proxy; any other token gives null here without decryption.
       if (secrets !== null) {
@@ -304,6 +310,10 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     };
   }>();
   v1.use("*", authMw);
+  // Platform MCP server of the assistant: the token guard and the session
+  // guard run before every route (docs/plans/builder-agent.md, BS3).
+  mountPlatformMcpMiddleware(v1, platformMcp, { sql });
+  mountPlatformMcpRoutes(v1, platformMcp);
 
   v1.post("/oma/sessions/:sessionId/runtime-events", async (c) => {
     const credential = c.get("auth_credential");
@@ -1059,6 +1069,9 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     });
     logger.info({ op: "main-node.console_ui", dir: consoleDir, cwd_rel: rootRel }, "console UI served");
   }
+
+  // Nested requests of the platform MCP server never leave the process.
+  platformMcp.bindApp((request) => Promise.resolve(app.fetch(request)));
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

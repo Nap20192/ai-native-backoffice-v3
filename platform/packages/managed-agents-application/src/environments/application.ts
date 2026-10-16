@@ -182,7 +182,7 @@ export class EnvironmentsApplicationService
       workspaceId: this.dependencies.workspaceId,
       environment,
     });
-    return { type: "created", environment: record.environment };
+    return { type: "created", environment: record.environment, revision: record.revision };
   }
 
   async retrieveEnvironment(
@@ -194,7 +194,7 @@ export class EnvironmentsApplicationService
     });
     return record === null
       ? { type: "not_found" }
-      : { type: "found", environment: record.environment };
+      : { type: "found", environment: record.environment, revision: record.revision };
   }
 
   async updateEnvironment(
@@ -205,6 +205,15 @@ export class EnvironmentsApplicationService
       environmentId: command.environmentId,
     });
     if (current === null) return { type: "not_found" };
+    if (
+      command.expectedRevision !== undefined &&
+      command.expectedRevision !== current.revision
+    ) {
+      return {
+        type: "precondition_failed",
+        message: `Environment ${command.environmentId} is at revision ${current.revision}, not ${command.expectedRevision}`,
+      };
+    }
     if (current.environment.archivedAt !== null) {
       return {
         type: "version_conflict",
@@ -237,7 +246,7 @@ export class EnvironmentsApplicationService
     const replaced = await this.dependencies.store.replace({
       workspaceId: this.dependencies.workspaceId,
       environmentId: command.environmentId,
-      expectedRevision: current.revision,
+      expectedRevision: command.expectedRevision ?? current.revision,
       next,
     });
     if (replaced.type === "not_found") return { type: "not_found" };
@@ -247,7 +256,11 @@ export class EnvironmentsApplicationService
         message: `Environment changed concurrently at revision ${replaced.actualRevision}`,
       };
     }
-    return { type: "updated", environment: replaced.record.environment };
+    return {
+      type: "updated",
+      environment: replaced.record.environment,
+      revision: replaced.record.revision,
+    };
   }
 
   async listEnvironments(

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  PLATFORM_MCP_ENDPOINT_PATH,
   allowsApiKeyRequest,
   createAuthMiddleware,
   type ApiKeyResolution,
@@ -396,5 +397,94 @@ describe('removed workspace members', () => {
     app.get('/v1/agents', c => c.json({ ok: true }));
     const res = await app.request('/v1/agents', { headers: { [header]: header === 'authorization' ? 'Bearer old-key' : 'old-key' } });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("platform MCP actor token", () => {
+  const base = {
+    sessionId: "sesn_assistant",
+    method: "POST",
+    expiresAt: "2026-10-16T12:00:00.000Z",
+  };
+  const endpoint: ApiKeyResolution = {
+    tenantId: "ws_1",
+    userId: "user_owner",
+    credential: { type: "platform_mcp_actor", kind: "endpoint", path: PLATFORM_MCP_ENDPOINT_PATH, ...base },
+  };
+  const route = (path: string, method = "GET"): ApiKeyResolution => ({
+    tenantId: "ws_1",
+    userId: "user_owner",
+    credential: { type: "platform_mcp_actor", kind: "route", issuer: "handler", bodySha256: "0".repeat(64), ...base, method, path },
+  });
+
+  it.each([
+    [PLATFORM_MCP_ENDPOINT_PATH, "bearer", true],
+    [PLATFORM_MCP_ENDPOINT_PATH, "x-api-key", false],
+    ["/v1/oma/platform-mcp/settings", "bearer", false],
+    ["/v1/oma/platform-mcp/confirm", "bearer", false],
+    ["/v1/agents", "bearer", false],
+  ] as const)("an endpoint token on %s through %s: %s", (path, transport, allowed) => {
+    expect(allowsApiKeyRequest(endpoint, { path, transport })).toBe(allowed);
+  });
+
+  it.each([
+    ["/v1/agents", "/v1/agents", true],
+    ["/v1/agents/agent_1?limit=5", "/v1/agents/agent_1", true],
+    ["/v1/agents/agent_1", "/v1/agents/agent_2", false],
+    ["/v1/oma/platform-mcp", "/v1/oma/platform-mcp", false],
+    ["/v1/oma/platform-mcp/settings", "/v1/oma/platform-mcp/settings", false],
+    ["/v1/oma/platform-mcp/preview", "/v1/oma/platform-mcp/preview", false],
+    ["/v1/oma/mcp-proxy/sesn_1/platform", "/v1/oma/mcp-proxy/sesn_1/platform", false],
+    ["/v1/oma/internal/x", "/v1/oma/internal/x", false],
+    ["/v1/oma/api_keys", "/v1/oma/api_keys", false],
+    ["/v1/oma/me/cli-tokens", "/v1/oma/me/cli-tokens", false],
+    ["/v1/oma/tenants/ws_1/members", "/v1/oma/tenants/ws_1/members", false],
+    ["/v1/oma/inference-proxy/sesn_1/v1/messages", "/v1/oma/inference-proxy/sesn_1/v1/messages", false],
+    ["/v1/oma/sessions/sesn_1/exec", "/v1/oma/sessions/sesn_1/exec", false],
+    ["/v1/environments/env_1/work", "/v1/environments/env_1/work", false],
+    ["/v1/tunnels/tun_1/reveal_token", "/v1/tunnels/tun_1/reveal_token", false],
+    ["/metrics", "/metrics", false],
+  ] as const)("a route token for %s on %s: %s", (tokenPath, path, allowed) => {
+    expect(allowsApiKeyRequest(route(tokenPath), { path, transport: "bearer" })).toBe(allowed);
+  });
+
+  it("refuses a route token through x-api-key and a refused token anywhere", () => {
+    expect(allowsApiKeyRequest(route("/v1/agents"), { path: "/v1/agents", transport: "x-api-key" })).toBe(false);
+    const refused: ApiKeyResolution = { tenantId: "", credential: { type: "platform_mcp_actor", kind: "refused", path: "/v1/agents", ...base } };
+    expect(allowsApiKeyRequest(refused, { path: "/v1/agents", transport: "bearer" })).toBe(false);
+  });
+
+  function actorApp(resolution: ApiKeyResolution | null, member = true) {
+    const deps = {
+      ...dependencies(),
+      resolveBearerToken: vi.fn(async () => resolution),
+      resolveApiKey: vi.fn(async () => null),
+      hasMembership: vi.fn(async () => member),
+    };
+    const app = new Hono<{ Variables: { tenant_id: string; user_id?: string; auth_credential?: unknown } }>();
+    app.use("*", createAuthMiddleware(deps));
+    const echo = (c: any) => c.json({ tenant: c.get("tenant_id"), user: c.get("user_id"), credential: c.get("auth_credential") });
+    app.post(PLATFORM_MCP_ENDPOINT_PATH, echo);
+    app.get("/v1/agents", echo);
+    return { app, deps };
+  }
+
+  it("takes the workspace only from the token and ignores x-active-tenant", async () => {
+    const { app, deps } = actorApp(endpoint);
+    const response = await app.request(PLATFORM_MCP_ENDPOINT_PATH, {
+      method: "POST",
+      headers: { authorization: "Bearer oma-mcp-v1.abc", "x-active-tenant": "ws_other" },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ tenant: "ws_1", user: "user_owner", credential: { type: "platform_mcp_actor", kind: "endpoint" } });
+    expect(deps.hasMembership).toHaveBeenCalledWith("user_owner", "ws_1");
+    expect(deps.resolveApiKey).not.toHaveBeenCalled();
+  });
+
+  it("refuses a removed member and a refused token with 403", async () => {
+    const removed = actorApp(route("/v1/agents"), false);
+    expect((await removed.app.request("/v1/agents", { headers: { authorization: "Bearer oma-mcp-v1.abc" } })).status).toBe(403);
+    const refused = actorApp({ tenantId: "", credential: { type: "platform_mcp_actor", kind: "refused", path: "/v1/agents", ...base } });
+    expect((await refused.app.request("/v1/agents", { headers: { authorization: "Bearer oma-mcp-v1.abc" } })).status).toBe(403);
   });
 });

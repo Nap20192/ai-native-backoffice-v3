@@ -32,18 +32,29 @@ export function buildHarnessCardRoutes(deps: HarnessCardRoutesDeps): Hono<{ Vari
   app.post("/", async (c) => {
     const body = await jsonBody(c);
     const card = await deps.store.create(workspaceOf(c)!, body, c.get("user_id") ?? null);
+    c.header("ETag", revisionTag(card));
     return c.json(card, 201);
   });
 
   app.get("/:id", async (c) => {
     const card = await deps.store.get(workspaceOf(c)!, c.req.param("id"));
     if (card === null) throw new HarnessCardError(404, "Harness не найден");
+    c.header("ETag", revisionTag(card));
     return c.json(card, 200);
   });
 
+  // If-Match carries updated_at from ETag (builder-agent.md, 2.5 step 8).
   app.post("/:id", async (c) => {
+    const expectedUpdatedAt = ifMatchTime(c.req.header("If-Match"));
     const body = await jsonBody(c);
-    return c.json(await deps.store.update(workspaceOf(c)!, c.req.param("id"), body), 200);
+    const card = await deps.store.update(
+      workspaceOf(c)!,
+      c.req.param("id"),
+      body,
+      expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt },
+    );
+    c.header("ETag", revisionTag(card));
+    return c.json(card, 200);
   });
 
   app.delete("/:id", async (c) => {
@@ -52,6 +63,22 @@ export function buildHarnessCardRoutes(deps: HarnessCardRoutesDeps): Hono<{ Vari
   });
 
   return app;
+}
+
+function revisionTag(card: { updated_at: string }): string {
+  return `"${card.updated_at}"`;
+}
+
+/** If-Match as one ISO time, quoted or not. `*` and no header: no precondition. */
+function ifMatchTime(header: string | undefined): string | undefined {
+  if (header === undefined || header.trim() === "*") return undefined;
+  const match = /^(?:"([^",]+)"|([^",\s]+))$/.exec(header.trim());
+  const value = match?.[1] ?? match?.[2];
+  const time = value === undefined ? Number.NaN : Date.parse(value);
+  if (Number.isNaN(time) || new Date(time).toISOString() !== value) {
+    throw new HarnessCardError(400, "If-Match: нужно значение ETag этой карточки", "If-Match");
+  }
+  return value;
 }
 
 function workspaceOf(c: Context): string | null {

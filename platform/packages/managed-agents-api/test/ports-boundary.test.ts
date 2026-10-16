@@ -95,7 +95,7 @@ describe("Managed Agents API application port boundary", () => {
             specifier,
             `${path} imports outside its presentation-layer collaborators`,
           ).toMatch(
-            /^\.\.\/(?:application-port-source|beta|contracts\/|errors|mappers\/|ports(?:\/|$))/,
+            /^\.\.\/(?:application-port-source|beta|contracts\/|errors|if-match|mappers\/|ports(?:\/|$))/,
           );
         } else {
           expect(["hono", "hono/streaming"], path).toContain(specifier);

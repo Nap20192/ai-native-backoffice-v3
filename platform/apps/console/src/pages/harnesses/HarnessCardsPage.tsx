@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { CheckIcon, CopyIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -20,6 +21,7 @@ import { LoadError } from "../../components/LoadError";
 import { Page } from "../../components/Page";
 import { PageHeader } from "../../components/PageHeader";
 import { Skeleton } from "../../components/Skeleton";
+import { HARNESS_CARD_DRAFT_STATE_KEY } from "../../lib/assistant/drafts";
 import { useHarnesses, type HarnessEntry } from "../../lib/catalog-api";
 import {
   isHarnessCardsUnsupported,
@@ -199,14 +201,27 @@ export function HarnessCardsPage() {
 
   // Цель окна не сбрасываем при закрытии: текст окна не должен пропасть, пока
   // оно уходит с экрана.
-  const [dialog, setDialog] = useState<{ open: boolean; card: HarnessCard | null }>({
+  const [dialog, setDialog] = useState<{ open: boolean; card: HarnessCard | null; draft?: unknown }>({
     open: false,
     card: null,
   });
+
+  // Черновик ассистента приходит в состоянии маршрута, не в адресе. Окно
+  // фильтрует его ещё раз. После открытия состояние сбрасываем: обновление
+  // страницы не должно открывать окно снова.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const state = location.state as Record<string, unknown> | null;
+    const raw = state?.[HARNESS_CARD_DRAFT_STATE_KEY];
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return;
+    setDialog({ open: true, card: null, draft: raw });
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.state, location.pathname, location.search, navigate]);
   const [deleteTarget, setDeleteTarget] = useState<HarnessCard | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const openCreate = () => setDialog({ open: true, card: null });
+  const openCreate = () => setDialog({ open: true, card: null, draft: undefined });
   const openEdit = (card: HarnessCard) => setDialog({ open: true, card });
   const askDelete = (card: HarnessCard) => {
     setDeleteTarget(card);
@@ -398,6 +413,7 @@ export function HarnessCardsPage() {
       <HarnessCardDialog
         open={dialog.open}
         card={dialog.card}
+        draft={dialog.draft}
         onClose={() => setDialog((current) => ({ ...current, open: false }))}
       />
 

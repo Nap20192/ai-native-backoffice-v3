@@ -15,6 +15,11 @@ export interface NodeMcpProxyTarget {
   accessToken: string;
   refresh?: OauthRefreshMetadata;
   onRefreshed?: (tokens: RefreshedTokens) => Promise<void>;
+  /** In-process fetcher for this target, such as `app.fetch` for the platform
+   * MCP server. A target with a fetcher serves only the in-process binding:
+   * the public HTTP route answers 403, so its one-time token never leaves the
+   * process. */
+  fetcher?: typeof fetch;
 }
 
 export interface NodeHttpMcpProxyDependencies {
@@ -72,7 +77,7 @@ export function createNodeMcpProxyBinding(
         accessToken: target.accessToken,
         refresh: target.refresh,
         onRefreshed: target.onRefreshed,
-        fetcher: dependencies.fetcher,
+        fetcher: target.fetcher ?? dependencies.fetcher,
         onFinal: hooks?.onFinal,
       });
     },
@@ -95,7 +100,7 @@ export function buildNodeHttpMcpProxyRoutes(
       sessionId,
       serverName,
     });
-    if (target === null) {
+    if (target === null || target.fetcher !== undefined) {
       return context.json({ error: "forbidden" }, 403);
     }
 

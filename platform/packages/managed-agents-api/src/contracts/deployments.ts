@@ -12,7 +12,17 @@ import {
 } from "./session-events";
 import { budgetSchema } from "./sessions";
 
-export type DeploymentCreateBody = Omit<DeploymentCreateParams, "betas">;
+/**
+ * OpenMA extension of the create body, like `_oma` of an agent. `paused: true`
+ * creates the deployment already paused by one insert (builder-agent.md, 2.3).
+ */
+export interface OpenMaDeploymentCreateExtensionBody {
+  paused: boolean;
+}
+
+export type DeploymentCreateBody = Omit<DeploymentCreateParams, "betas"> & {
+  _oma?: OpenMaDeploymentCreateExtensionBody;
+};
 export type DeploymentUpdateBody = Omit<DeploymentUpdateParams, "betas">;
 export type DeploymentListQuery = Omit<DeploymentListParams, "betas">;
 
@@ -160,6 +170,7 @@ export const deploymentCreateBodySchema: z.ZodType<DeploymentCreateBody> = z
     resources: z.array(deploymentResourceInputSchema).max(500).optional(),
     schedule: deploymentScheduleInputSchema.nullable().optional(),
     vault_ids: z.array(z.string().min(1)).max(50).optional(),
+    _oma: z.object({ paused: z.boolean() }).strict().optional(),
   })
   .strict();
 

@@ -49,6 +49,10 @@ import {
 import { downloadTrace } from "../lib/trace-api";
 import { SessionHeader } from "../components/session/SessionHeader";
 import {
+  ToolConfirmationRequests,
+  type ConfirmationDecision,
+} from "../components/session/ToolConfirmationRequests";
+import {
   SessionViewTabs,
   parseSessionView,
   type SessionView,
@@ -972,6 +976,24 @@ export function SessionDetail() {
   // mode where a DO eviction killed an in-flight stream and no clean
   // status_idle was ever broadcast.
   const [interrupting, setInterrupting] = useState(false);
+
+  // Решение по вызову с always_ask. Для встроенных и обычных MCP-инструментов это
+  // user.tool_confirmation в потоке, где ждёт вызов. Сбой показывает api() сам,
+  // а блок возвращает кнопки.
+  const decideTool = async (decision: ConfirmationDecision) => {
+    if (!id) return;
+    await managedApi.sessions.events.send(id, {
+      events: [
+        {
+          type: "user.tool_confirmation",
+          tool_use_id: decision.toolUseId,
+          result: decision.result,
+          ...(decision.denyMessage ? { deny_message: decision.denyMessage } : {}),
+          ...(decision.threadId ? { session_thread_id: decision.threadId } : {}),
+        },
+      ],
+    });
+  };
   const canonicalTurns = useMemo(
     () => projectCanonicalChatTurns(events as WireSessionEvent[], { threadId: activeThreadId }),
     [activeThreadId, events],
@@ -1241,6 +1263,7 @@ export function SessionDetail() {
             ? undefined
             : <SessionHistorySkeleton />
       }
+      beforeComposer={<ToolConfirmationRequests events={events} onDecide={decideTool} />}
       sessionId={id}
       turns={canonicalTurns}
       agentName={agentName}
@@ -1297,6 +1320,7 @@ export function SessionDetail() {
         open={dialog === "outcome"}
         onClose={() => setDialog(null)}
         onSubmit={defineOutcome}
+        sessionId={id}
       />
       <ShortcutsDialog open={dialog === "shortcuts"} onClose={() => setDialog(null)} />
       <ConfirmDialog

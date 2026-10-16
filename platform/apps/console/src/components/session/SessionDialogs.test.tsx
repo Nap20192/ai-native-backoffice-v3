@@ -2,6 +2,23 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../assistant/SuggestOutcomeButton", () => ({
+  SuggestOutcomeButton: ({
+    sessionId,
+    onSuggested,
+  }: {
+    sessionId: string;
+    onSuggested: (value: { description: string; rubric: string; maxIterations: number | null }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onSuggested({ description: "План миграции", rubric: "Есть откат", maxIterations: 5 })}
+    >
+      Предложить результат ({sessionId})
+    </button>
+  ),
+}));
+
 import * as dialogs from "./SessionDialogs";
 import { DefineOutcomeDialog, SHORTCUT_ROWS, ShortcutsDialog } from "./SessionDialogs";
 
@@ -12,6 +29,33 @@ describe("SessionDialogs: состав", () => {
     }
     expect(dialogs).toHaveProperty("DefineOutcomeDialog");
     expect(dialogs).toHaveProperty("ShortcutsDialog");
+  });
+});
+
+describe("DefineOutcomeDialog: предложение ассистента", () => {
+  it("без sessionId кнопки «Предложить результат» нет", () => {
+    render(<DefineOutcomeDialog open onClose={() => {}} onSubmit={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /Предложить результат/ })).toBeNull();
+  });
+
+  it("подставляет описание, критерии и итерации, но не отправляет сам", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<DefineOutcomeDialog open onClose={() => {}} onSubmit={onSubmit} sessionId="sesn_1" />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Предложить результат (sesn_1)" }));
+
+    expect(screen.getByRole("textbox", { name: "Описание" })).toHaveValue("План миграции");
+    expect(screen.getByRole("textbox", { name: "Критерии" })).toHaveValue("Есть откат");
+    expect(screen.getByRole("spinbutton", { name: /Максимум итераций/ })).toHaveValue(5);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Задать результат" }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      type: "user.define_outcome",
+      description: "План миграции",
+      rubric: { type: "text", content: "Есть откат" },
+      max_iterations: 5,
+    });
   });
 });
 
@@ -117,17 +161,18 @@ describe("ShortcutsDialog", () => {
       "Переключить разговор и трейс",
       "Свернуть вызов, затем снять выбор",
       "Показать это окно",
+      "Открыть или закрыть ассистента",
     ]) {
       expect(dialog).toHaveTextContent(label);
     }
-    expect(SHORTCUT_ROWS).toHaveLength(8);
+    expect(SHORTCUT_ROWS).toHaveLength(9);
   });
 
   it("клавиши рисуются плашками kbd", () => {
     render(<ShortcutsDialog open onClose={() => {}} />);
 
     const keys = Array.from(document.querySelectorAll("kbd")).map((node) => node.textContent);
-    for (const key of ["↑", "↓", "K", "J", "←", "→", "/", "Enter", "Shift", "D", "T", "Esc", "?"]) {
+    for (const key of ["↑", "↓", "K", "J", "←", "→", "/", "Enter", "Shift", "D", "T", "Esc", "?", "Ctrl", "I"]) {
       expect(keys).toContain(key);
     }
   });

@@ -111,6 +111,13 @@ vi.mock("../lib/api", async (importOriginal) => ({
 
 vi.mock("./agents/AgentFormDialog", () => ({ AgentFormDialog: () => null }));
 
+const assistantMock = vi.hoisted(() => ({
+  current: null as null | { open: boolean; setOpen: (open: boolean) => void; newConversation: () => void },
+}));
+vi.mock("../components/assistant/AssistantProvider", () => ({
+  useOptionalAssistant: () => assistantMock.current,
+}));
+
 function renderDetail() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -351,5 +358,37 @@ describe("AgentDetail: модель и harness", () => {
     expect(await within(rail).findByText("AI SDK (устарел)")).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(within(rail).queryByText("Не найден")).toBeNull();
+  });
+});
+
+describe("AgentDetail: «Править с ассистентом»", () => {
+  it("первой кнопкой в шапке открывает панель с контекстом агента", async () => {
+    const setOpen = vi.fn();
+    assistantMock.current = { open: false, setOpen, newConversation: vi.fn() };
+    renderDetail();
+
+    const button = await screen.findByRole("button", { name: "Править с ассистентом" });
+    const header = button.closest("header")!;
+    expect(within(header).getAllByRole("button")[0]).toBe(button);
+    await userEvent.click(button);
+
+    expect(setOpen).toHaveBeenCalledWith(true);
+    assistantMock.current = null;
+  });
+
+  it("не показывается без провайдера ассистента", async () => {
+    assistantMock.current = null;
+    renderDetail();
+    await screen.findByRole("heading", { level: 1, name: "OpenMA Demo Agent" });
+    expect(screen.queryByRole("button", { name: "Править с ассистентом" })).toBeNull();
+  });
+
+  it("у архивного агента кнопки нет", async () => {
+    assistantMock.current = { open: false, setOpen: vi.fn(), newConversation: vi.fn() };
+    agentResult = { data: { ...agent, archived_at: "2026-10-01T00:00:00Z" } as typeof agent };
+    renderDetail();
+    await screen.findByRole("heading", { level: 1, name: /OpenMA Demo Agent/ });
+    expect(screen.queryByRole("button", { name: "Править с ассистентом" })).toBeNull();
+    assistantMock.current = null;
   });
 });

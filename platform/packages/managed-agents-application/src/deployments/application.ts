@@ -202,6 +202,20 @@ export interface DeploymentsApplicationServiceDependencies {
   };
 }
 
+/** `precondition_failed` when the command names another stored revision. */
+function staleRevision(
+  command: { deploymentId: string; expectedRevision?: number },
+  revision: number,
+): { type: "precondition_failed"; message: string } | null {
+  if (command.expectedRevision === undefined || command.expectedRevision === revision) {
+    return null;
+  }
+  return {
+    type: "precondition_failed",
+    message: `Deployment ${command.deploymentId} is at revision ${revision}, not ${command.expectedRevision}`,
+  };
+}
+
 export class DeploymentsApplicationService
   implements DeploymentsApplicationPort
 {
@@ -325,10 +339,10 @@ export class DeploymentsApplicationService
       initialEvents: structuredClone(command.initialEvents),
       metadata: { ...(command.metadata ?? {}) },
       name: command.name,
-      pausedReason: null,
+      pausedReason: command.initialStatus === "paused" ? { kind: "manual" } : null,
       resources,
       schedule: schedule === null ? null : schedule.schedule,
-      status: "active",
+      status: command.initialStatus === "paused" ? "paused" : "active",
       updatedAt: timestamp,
       vaultIds: [...vaultIds],
       ...(command.budget !== undefined && { budget: command.budget }),
@@ -337,7 +351,11 @@ export class DeploymentsApplicationService
       workspaceId: this.dependencies.workspaceId,
       record: { deployment, resourceSecrets },
     });
-    return { type: "created", deployment: inserted.deployment };
+    return {
+      type: "created",
+      deployment: inserted.deployment,
+      revision: inserted.revision,
+    };
   }
 
   async retrieveDeployment(
@@ -349,7 +367,7 @@ export class DeploymentsApplicationService
     });
     return record === null
       ? { type: "not_found" }
-      : { type: "found", deployment: record.deployment };
+      : { type: "found", deployment: record.deployment, revision: record.revision };
   }
 
   async updateDeployment(
@@ -360,6 +378,8 @@ export class DeploymentsApplicationService
       deploymentId: command.deploymentId,
     });
     if (current === null) return { type: "not_found" };
+    const stale = staleRevision(command, current.revision);
+    if (stale !== null) return stale;
     if (current.deployment.archivedAt !== null) {
       return {
         type: "version_conflict",
@@ -524,7 +544,7 @@ export class DeploymentsApplicationService
     const replaced = await this.dependencies.store.replace({
       workspaceId: this.dependencies.workspaceId,
       deploymentId: command.deploymentId,
-      expectedRevision: current.revision,
+      expectedRevision: command.expectedRevision ?? current.revision,
       next: {
         deployment: next,
         resourceSecrets: structuredClone(resourceSecrets),
@@ -537,7 +557,11 @@ export class DeploymentsApplicationService
         message: `Deployment changed concurrently at revision ${replaced.actualRevision}`,
       };
     }
-    return { type: "updated", deployment: replaced.record.deployment };
+    return {
+      type: "updated",
+      deployment: replaced.record.deployment,
+      revision: replaced.record.revision,
+    };
   }
 
   private async replaceState(
@@ -560,7 +584,11 @@ export class DeploymentsApplicationService
         message: `Deployment changed concurrently at revision ${replaced.actualRevision}`,
       };
     }
-    return { type: "changed", deployment: replaced.record.deployment };
+    return {
+      type: "changed",
+      deployment: replaced.record.deployment,
+      revision: replaced.record.revision,
+    };
   }
 
   private async readinessError(
@@ -626,6 +654,8 @@ export class DeploymentsApplicationService
       deploymentId: command.deploymentId,
     });
     if (current === null) return { type: "not_found" };
+    const stale = staleRevision(command, current.revision);
+    if (stale !== null) return stale;
     if (current.deployment.archivedAt !== null) {
       return {
         type: "conflict",
@@ -650,6 +680,8 @@ export class DeploymentsApplicationService
       deploymentId: command.deploymentId,
     });
     if (current === null) return { type: "not_found" };
+    const stale = staleRevision(command, current.revision);
+    if (stale !== null) return stale;
     if (current.deployment.archivedAt !== null) {
       return {
         type: "conflict",
@@ -679,6 +711,8 @@ export class DeploymentsApplicationService
       deploymentId: command.deploymentId,
     });
     if (current === null) return { type: "not_found" };
+    const stale = staleRevision(command, current.revision);
+    if (stale !== null) return stale;
     if (current.deployment.archivedAt !== null) {
       return {
         type: "conflict",

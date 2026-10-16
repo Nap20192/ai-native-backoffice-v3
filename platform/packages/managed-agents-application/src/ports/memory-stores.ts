@@ -17,6 +17,11 @@ export interface UpdateMemoryStoreCommand {
   description?: string | null;
   metadata?: Record<string, string | null> | null;
   name?: string | null;
+  /**
+   * Write only over this stored revision (the `If-Match` header). A different
+   * revision gives `precondition_failed` and writes nothing.
+   */
+  expectedRevision?: number;
 }
 
 export interface ListMemoryStoresQuery {
@@ -41,16 +46,17 @@ export interface ArchiveMemoryStoreCommand {
 }
 
 export type CreateMemoryStoreResult =
-  | { type: "created"; memoryStore: MemoryStoreView }
+  | { type: "created"; memoryStore: MemoryStoreView; revision?: number }
   | { type: "invalid_request"; message: string };
 
 export type RetrieveMemoryStoreResult =
-  | { type: "found"; memoryStore: MemoryStoreView }
+  | { type: "found"; memoryStore: MemoryStoreView; revision?: number }
   | { type: "not_found" };
 
 export type UpdateMemoryStoreResult =
-  | { type: "updated"; memoryStore: MemoryStoreView }
+  | { type: "updated"; memoryStore: MemoryStoreView; revision?: number }
   | { type: "invalid_request"; message: string }
+  | { type: "precondition_failed"; message: string }
   | { type: "version_conflict"; message: string }
   | { type: "not_found" };
 

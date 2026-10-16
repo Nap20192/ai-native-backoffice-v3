@@ -17,6 +17,11 @@ export interface SkillVersionView {
 export interface CreateSkillVersionCommand {
   skillId: string;
   files: SkillVersionUploadFileInput[];
+  /**
+   * Add the version only over this stored skill revision (the `If-Match`
+   * header). A different revision gives `precondition_failed`.
+   */
+  expectedRevision?: number;
 }
 
 export interface RetrieveSkillVersionQuery {
@@ -52,8 +57,9 @@ export interface DownloadedSkillVersionView {
 }
 
 export type CreateSkillVersionResult =
-  | { type: "created"; version: SkillVersionView }
+  | { type: "created"; version: SkillVersionView; skillRevision?: number }
   | { type: "invalid_request"; message: string }
+  | { type: "precondition_failed"; message: string }
   | { type: "version_conflict"; message: string }
   | { type: "not_found" };
 

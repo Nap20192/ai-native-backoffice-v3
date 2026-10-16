@@ -77,6 +77,18 @@ export async function disposeTools(tools: Record<string, unknown>): Promise<void
 // protocol client itself lives in the runtime-neutral MCP package.
 export { connectHttpMcpClient };
 
+/** Text blocks of an MCP error result, or its JSON when it has none. */
+function mcpErrorText(result: unknown): string {
+  const content = (result as { content?: unknown })?.content;
+  const text = Array.isArray(content)
+    ? content
+        .map((part) => (part && typeof part === "object" && (part as { type?: unknown }).type === "text" ? String((part as { text?: unknown }).text ?? "") : ""))
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  return text || JSON.stringify(result);
+}
+
 function mcpToModelOutput({ output }: { output: unknown }) {
   if (!output || typeof output !== "object" || !("content" in output)) {
     return {
@@ -399,6 +411,15 @@ function getEnabledTools(tools: AgentConfig["tools"]): Set<string> {
   return defaultSet;
 }
 
+/** Builtins selected by config, before runtime capability checks. */
+export function getEnabledBuiltinTools(tools: AgentConfig["tools"]): Set<string> {
+  const enabled = new Set([...getEnabledTools(tools)].filter(name => ALL_TOOLS.includes(name)));
+  if (tools?.some(tool => ["web_search_ddg", "web_search_20250305", "web_search_tavily"].includes(tool.type))) {
+    enabled.add("web_search");
+  }
+  return enabled;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function buildTools(
   agentConfig: AgentConfig,
@@ -477,7 +498,7 @@ export async function buildTools(
     }>;
   }
 ): Promise<Record<string, any>> {
-  const enabled = getEnabledTools(agentConfig.tools);
+  const enabled = getEnabledBuiltinTools(agentConfig.tools);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
 
@@ -1240,8 +1261,9 @@ export async function buildTools(
               },
               execute: async (args, options) => {
                 options?.abortSignal?.throwIfAborted();
-                return mcpClient!.callTool({
+                const result = await mcpClient!.callTool({
                   name: toolName,
+                  _meta: { "oma/tool_use_id": options.toolCallId },
                   arguments:
                     args && typeof args === "object"
                       ? args as Record<string, unknown>
@@ -1250,6 +1272,10 @@ export async function buildTools(
                   signal: options?.abortSignal,
                   timeoutMs: MCP_TOOL_TIMEOUT_MS,
                 });
+                // A refusal of the server (isError) is a tool error: the model
+                // and agent.mcp_tool_result get is_error, as on the confirmed path.
+                if (result?.isError === true) throw new Error(mcpErrorText(result));
+                return result;
               },
               toModelOutput: mcpToModelOutput,
             });
@@ -1268,6 +1294,7 @@ export async function buildTools(
           console.error(`[mcp] ${message}`);
           env.broadcastEvent?.({
             type: "session.warning",
+            source: "mcp_setup",
             message,
           } as SessionEvent);
         }

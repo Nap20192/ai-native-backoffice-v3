@@ -12,6 +12,14 @@ const api = vi.hoisted(() => ({
 
 vi.mock("../../lib/useManagedApi", () => ({ useManagedApi: () => api }));
 
+const assistant = vi.hoisted(() => ({
+  current: null as null | { open: boolean; setOpen: (open: boolean) => void },
+}));
+
+vi.mock("../assistant/AssistantProvider", () => ({
+  useOptionalAssistant: () => assistant.current,
+}));
+
 import { SessionHeader, type SessionHeaderProps } from "./SessionHeader";
 
 beforeAll(() => {
@@ -413,15 +421,28 @@ describe("SessionHeader: меню «⋮»", () => {
 });
 
 describe("SessionHeader: «Спросить помощника»", () => {
-  it("заглушка: кнопка есть, подсказка «Скоро», действия нет", async () => {
+  it("открывает панель ассистента, действий над сессией не делает", async () => {
+    const setOpen = vi.fn();
+    assistant.current = { open: false, setOpen };
     const { props: p } = renderHeader();
+
+    const button = screen.getByRole("button", { name: "Спросить помощника" });
+    expect(button).not.toHaveAttribute("aria-disabled", "true");
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+
+    expect(setOpen).toHaveBeenCalledWith(true);
+    expect(p.onInterrupt).not.toHaveBeenCalled();
+    expect(p.onArchive).not.toHaveBeenCalled();
+  });
+
+  it("без провайдера кнопка выключена и объясняет почему", async () => {
+    assistant.current = null;
+    renderHeader();
 
     const button = screen.getByRole("button", { name: "Спросить помощника" });
     expect(button).toHaveAttribute("aria-disabled", "true");
     await userEvent.hover(button);
-
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Скоро");
-    await userEvent.click(button);
-    expect(p.onInterrupt).not.toHaveBeenCalled();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Ассистент недоступен");
   });
 });

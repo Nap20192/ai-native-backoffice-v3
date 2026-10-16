@@ -3,7 +3,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { PlusIcon, XIcon } from "lucide-react";
 import { useApi } from "../lib/api";
 import { useOmaInfiniteApiQuery } from "../lib/useApiQuery";
@@ -22,6 +23,7 @@ import { toast } from "sonner";
 import type { ModelCard } from "@open-managed-agents/api-types";
 import { cn } from "@/lib/utils";
 import { useI18n } from "../i18n";
+import { MODEL_CARD_DRAFT_STATE_KEY, sanitizeModelCardDraft } from "../lib/assistant/drafts";
 import { LocalDebugOnlyWarning } from "../components/LocalDebugOnlyWarning";
 
 // Common Pi provider presets. The actual provider id is an open string; the
@@ -56,6 +58,8 @@ const INITIAL_FORM = {
 export function ModelCardsList() {
   const { api } = useApi();
   const { t } = useI18n();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...INITIAL_FORM });
@@ -230,6 +234,29 @@ export function ModelCardsList() {
     });
     setEditingId(card.id); setShowCreate(true); setError("");
   };
+
+  // Черновик ассистента приходит в состоянии маршрута, не в адресе. Берём из него
+  // только поля белого списка: ключ, адрес и заголовки вводит пользователь. После
+  // открытия состояние сбрасываем, чтобы обновление страницы не открыло окно снова.
+  useEffect(() => {
+    const state = location.state as Record<string, unknown> | null;
+    const raw = state?.[MODEL_CARD_DRAFT_STATE_KEY];
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return;
+    const draft = sanitizeModelCardDraft(raw);
+    setForm({
+      ...INITIAL_FORM,
+      custom_headers: [{ key: "", value: "" }],
+      ...(draft.provider ? { provider: draft.provider } : {}),
+      model_id: draft.model_id ?? "",
+      model: draft.model ?? "",
+      is_default: draft.is_default ?? false,
+      pi_config: draft.pi_config ? JSON.stringify(draft.pi_config, null, 2) : "",
+    });
+    setEditingId(null);
+    setShowCreate(true);
+    setError("");
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.state, location.pathname, location.search, navigate]);
 
   const closeDialog = () => {
     setShowCreate(false); setEditingId(null); setForm({ ...INITIAL_FORM }); setError("");

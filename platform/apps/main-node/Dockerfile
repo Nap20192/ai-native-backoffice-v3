@@ -56,6 +56,8 @@ COPY apps/agent apps/agent
 COPY apps/console apps/console
 # Platform skills shown in every workspace (OMA_BUILTIN_SKILLS_DIR default).
 COPY skills skills
+# Prompt and search_docs documents of the assistant (docs/plans/builder-agent.md, 4).
+COPY assistant assistant
 COPY tsconfig.json ./
 
 # Build console SPA. Vite produces /app/apps/console/dist; the runtime

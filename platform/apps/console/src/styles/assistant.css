@@ -1,0 +1,75 @@
+/*
+ * Панель ассистента (раздел 1 плана builder-agent). Цвет ассистента берётся из
+ * информационного тона DDC: он отличается от главной кнопки и от тонов статуса.
+ * Размеры и тени остаются на утилитах Tailwind, здесь только токены и то, что
+ * утилитами не задать.
+ */
+
+:root {
+  --assistant-accent: var(--ddc-tone-info-fg);
+  --assistant-accent-bg: var(--ddc-tone-info-bg);
+  --assistant-panel-width: 370px;
+}
+
+.assistant-panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--assistant-panel-width);
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-left: 1px solid var(--ddc-border);
+  background: var(--ddc-surface);
+  color: var(--ddc-text);
+}
+
+/* Нижний лист на телефоне: половина высоты, прокручивается внутри. */
+.assistant-sheet {
+  height: 50dvh;
+  max-height: 50dvh;
+  padding: 0;
+  gap: 0;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+
+.assistant-panel-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.assistant-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--assistant-accent-bg);
+  color: var(--assistant-accent);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.assistant-spark {
+  color: var(--assistant-accent);
+}
+
+.assistant-diff-line {
+  font-variant-ligatures: none;
+}
+
+.assistant-composer textarea {
+  resize: none;
+  max-height: 160px;
+}
+
+@media (max-width: 640px) {
+  .assistant-panel {
+    width: 100%;
+    border-left: 0;
+  }
+}

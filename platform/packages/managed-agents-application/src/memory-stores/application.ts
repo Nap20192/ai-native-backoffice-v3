@@ -158,7 +158,7 @@ export class MemoryStoresApplicationService
       workspaceId: this.dependencies.workspaceId,
       memoryStore,
     });
-    return { type: "created", memoryStore: record.memoryStore };
+    return { type: "created", memoryStore: record.memoryStore, revision: record.revision };
   }
 
   async retrieveMemoryStore(
@@ -170,7 +170,7 @@ export class MemoryStoresApplicationService
     });
     return record === null
       ? { type: "not_found" }
-      : { type: "found", memoryStore: record.memoryStore };
+      : { type: "found", memoryStore: record.memoryStore, revision: record.revision };
   }
 
   async updateMemoryStore(
@@ -181,6 +181,15 @@ export class MemoryStoresApplicationService
       memoryStoreId: command.memoryStoreId,
     });
     if (current === null) return { type: "not_found" };
+    if (
+      command.expectedRevision !== undefined &&
+      command.expectedRevision !== current.revision
+    ) {
+      return {
+        type: "precondition_failed",
+        message: `Memory store ${command.memoryStoreId} is at revision ${current.revision}, not ${command.expectedRevision}`,
+      };
+    }
     if (command.name !== undefined && command.name !== null) {
       const invalidName = validateName(command.name);
       if (invalidName !== null) {
@@ -226,7 +235,7 @@ export class MemoryStoresApplicationService
     const replaced = await this.dependencies.store.replace({
       workspaceId: this.dependencies.workspaceId,
       memoryStoreId: command.memoryStoreId,
-      expectedRevision: current.revision,
+      expectedRevision: command.expectedRevision ?? current.revision,
       next,
     });
     if (replaced.type === "not_found") return { type: "not_found" };
@@ -236,7 +245,11 @@ export class MemoryStoresApplicationService
         message: `Memory store changed concurrently at revision ${replaced.actualRevision}`,
       };
     }
-    return { type: "updated", memoryStore: replaced.record.memoryStore };
+    return {
+      type: "updated",
+      memoryStore: replaced.record.memoryStore,
+      revision: replaced.record.revision,
+    };
   }
 
   async listMemoryStores(

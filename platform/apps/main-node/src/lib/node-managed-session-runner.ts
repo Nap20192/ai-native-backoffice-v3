@@ -28,6 +28,7 @@ import {
 } from "./node-managed-session-runtime.js";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
+import { nodeManagedStopReason, pendingConfirmations } from "./node-managed-stop-reason.js";
 import type { WorkspaceBinding, WorkspacePersistencePort, RuntimeResourceScope } from "@open-managed-agents/runtime-resource-contract";
 import type { NodeManagedWorkspaceCheckpoints } from "./node-managed-workspace-checkpoints.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
@@ -161,7 +162,11 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
   }): Promise<void>;
   buildModel(input: ManagedRunnerContext): Promise<HarnessContext["model"]>;
   buildTools(
-    input: ManagedRunnerContext & ManagedRunnerSubagentContext & { sandbox: SandboxExecutor },
+    input: ManagedRunnerContext & ManagedRunnerSubagentContext & {
+      sandbox: SandboxExecutor;
+      /** Events that tools write into the session, such as an MCP setup warning. */
+      broadcastEvent?: HarnessContext["runtime"]["broadcast"];
+    },
   ): Promise<HarnessContext["tools"]>;
   disposeTools?(tools: HarnessContext["tools"]): Promise<void>;
   buildHarness(): HarnessInterface;
@@ -439,48 +444,57 @@ export class DefaultNodeManagedSessionRunner
     let runFailed = false;
     try {
       if (event.type === "user.tool_confirmation") {
-        const toolUse = findLastMatching(
-          input.historyEvents,
-          (candidate): candidate is ManagedNodeConfirmableToolUse =>
-            (candidate.type === "agent.tool_use" ||
-              candidate.type === "agent.mcp_tool_use") &&
-            candidate.id === event.toolUseId,
-        );
-        if (toolUse === undefined) {
-          throw new Error(
-            `Tool use ${event.toolUseId} was not found in session history`,
+        // Every confirmation of this run, in order: two calls that waited in
+        // one turn may be confirmed together. A call with a result already
+        // never runs again.
+        const waiting = new Set(pendingConfirmations(runtime.history.getEvents()));
+        for (const confirmation of input.events) {
+          if (confirmation.type !== "user.tool_confirmation") continue;
+          const toolUse = findLastMatching(
+            input.historyEvents,
+            (candidate): candidate is ManagedNodeConfirmableToolUse =>
+              (candidate.type === "agent.tool_use" ||
+                candidate.type === "agent.mcp_tool_use") &&
+              candidate.id === confirmation.toolUseId,
+          );
+          if (toolUse === undefined) {
+            throw new Error(
+              `Tool use ${confirmation.toolUseId} was not found in session history`,
+            );
+          }
+          if (!waiting.has(toolUse.id) && confirmation !== event) continue;
+          waiting.delete(toolUse.id);
+          const result = confirmation.result === "deny"
+            ? {
+                content: [{
+                  type: "text" as const,
+                  text: `Denied: ${confirmation.denyMessage ?? "Tool execution was denied by the user."}`,
+                }],
+                isError: true,
+              }
+            : await this.dependencies.confirmedTools.execute({
+                workspaceId: input.workspaceId,
+                session: input.session,
+                environment: input.environment,
+                sandbox,
+                confirmation,
+                toolUse,
+                abortSignal: abortController.signal,
+              });
+          runtime.broadcastProducedEvent(
+            toolUse.type === "agent.mcp_tool_use"
+              ? {
+                  type: "agent.mcp_tool_result",
+                  mcpToolUseId: toolUse.id,
+                  ...result,
+                }
+              : {
+                  type: "agent.tool_result",
+                  toolUseId: toolUse.id,
+                  ...result,
+                },
           );
         }
-        const result = event.result === "deny"
-          ? {
-              content: [{
-                type: "text" as const,
-                text: `Denied: ${event.denyMessage ?? "Tool execution was denied by the user."}`,
-              }],
-              isError: true,
-            }
-          : await this.dependencies.confirmedTools.execute({
-              workspaceId: input.workspaceId,
-              session: input.session,
-              environment: input.environment,
-              sandbox,
-              confirmation: event,
-              toolUse,
-              abortSignal: abortController.signal,
-            });
-        runtime.broadcastProducedEvent(
-          toolUse.type === "agent.mcp_tool_use"
-            ? {
-                type: "agent.mcp_tool_result",
-                mcpToolUseId: toolUse.id,
-                ...result,
-              }
-            : {
-                type: "agent.tool_result",
-                toolUseId: toolUse.id,
-                ...result,
-              },
-        );
       }
       const context = {
         workspaceId: input.workspaceId,
@@ -532,7 +546,7 @@ export class DefaultNodeManagedSessionRunner
         };
       }
       const toolsPromise = this.dependencies
-        .buildTools({ ...context, ...subagentContext, sandbox })
+        .buildTools({ ...context, ...subagentContext, sandbox, broadcastEvent: runtime.broadcast })
         .then((tools) => {
           turnTools = tools;
           return tools;
@@ -583,7 +597,12 @@ export class DefaultNodeManagedSessionRunner
           }
         }
       };
-      await runHarness();
+      // Another call of the turn still waits for its confirmation: the model
+      // would see a tool call without a result, so it resumes only after the
+      // last one (docs/plans/builder-agent.md, 2.5).
+      if (event.type !== "user.tool_confirmation" || pendingConfirmations(runtime.history.getEvents()).length === 0) {
+        await runHarness();
+      }
       if (event.type === "user.define_outcome") {
         const maxIterations = Math.min(
           20,
@@ -752,7 +771,7 @@ export class DefaultNodeManagedSessionRunner
       if (!leaseLost) {
         runtime.broadcastProducedEvent({
           type: "session.status_idle",
-          stopReason: { type: runFailed || finalizationError !== undefined ? "retries_exhausted" : "end_turn" },
+          stopReason: nodeManagedStopReason(runtime.history.getEvents(), runFailed || finalizationError !== undefined),
         });
       }
       try {

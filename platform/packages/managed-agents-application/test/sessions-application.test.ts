@@ -448,6 +448,7 @@ describe("SessionsApplicationService", () => {
     });
     expect(retrieved).toEqual({
       type: "found",
+      revision: 1,
       session: created.type === "created" ? created.session : null,
     });
     expect(lifecycleSignals).toEqual([
@@ -928,6 +929,7 @@ describe("SessionsApplicationService", () => {
     });
     expect(retrieved).toEqual({
       type: "found",
+      revision: 3,
       session: updated.type === "updated" ? updated.session : null,
     });
   });

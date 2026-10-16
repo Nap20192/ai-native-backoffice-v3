@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import {
   ModelCardDuplicateModelIdError,
   ModelCardNotFoundError,
+  ModelCardPreconditionFailedError,
   type ModelCardRow,
   type ModelCardService,
 } from "@open-managed-agents/model-cards-store";
@@ -33,6 +34,31 @@ function toApiShape(card: ModelCardRow) {
     updated_at: card.updated_at ?? undefined,
     archived_at: card.archived_at,
   };
+}
+
+/**
+ * Revision of a card for ETag and If-Match (builder-agent.md, 2.5 step 8):
+ * `updated_at`, for a card without edits `created_at`.
+ */
+function revisionTag(card: ModelCardRow): string {
+  return `"${card.updated_at ?? card.created_at}"`;
+}
+
+/**
+ * If-Match as one ISO time, quoted or not. `*` and no header mean no
+ * precondition. Anything else is invalid.
+ */
+function readIfMatch(
+  header: string | undefined,
+): { type: "absent" } | { type: "time"; value: string } | { type: "invalid" } {
+  if (header === undefined || header.trim() === "*") return { type: "absent" };
+  const match = /^(?:"([^",]+)"|([^",\s]+))$/.exec(header.trim());
+  const value = match?.[1] ?? match?.[2];
+  const time = value === undefined ? Number.NaN : Date.parse(value);
+  if (Number.isNaN(time) || new Date(time).toISOString() !== value) {
+    return { type: "invalid" };
+  }
+  return { type: "time", value };
 }
 
 /**
@@ -181,6 +207,7 @@ export function buildModelCardRoutes(deps: ModelCardRoutesDeps) {
         baseUrl: body.base_url ?? null,
         customHeaders: body.custom_headers ?? null,
       });
+      c.header("ETag", revisionTag(card));
       return c.json({ ...toApiShape(card), probe }, 201);
     } catch (err) {
       if (err instanceof ModelCardDuplicateModelIdError) {
@@ -253,12 +280,17 @@ export function buildModelCardRoutes(deps: ModelCardRoutesDeps) {
       cardId: c.req.param("id"),
     });
     if (!card) return c.json({ error: "Model card not found" }, 404);
+    c.header("ETag", revisionTag(card));
     return c.json(toApiShape(card));
   });
 
   // POST /:id — update
   app.post("/:id", async (c) => {
     const id = c.req.param("id");
+    const precondition = readIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json({ error: "If-Match must be the ETag of this model card" }, 400);
+    }
     const body = await c.req.json<{
       model_id?: string;
       model?: string;
@@ -292,11 +324,18 @@ export function buildModelCardRoutes(deps: ModelCardRoutesDeps) {
         piConfig: body.pi_config,
         apiKey: body.api_key,
         isDefault: body.is_default,
+        ...(precondition.type === "time" && {
+          expectedUpdatedAt: precondition.value,
+        }),
       });
+      c.header("ETag", revisionTag(updated));
       return c.json(toApiShape(updated));
     } catch (err) {
       if (err instanceof ModelCardNotFoundError) {
         return c.json({ error: "Model card not found" }, 404);
+      }
+      if (err instanceof ModelCardPreconditionFailedError) {
+        return c.json({ error: err.message }, 412);
       }
       if (err instanceof ModelCardDuplicateModelIdError) {
         return c.json({ error: err.message }, 409);

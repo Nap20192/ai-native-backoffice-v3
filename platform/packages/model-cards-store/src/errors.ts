@@ -20,6 +20,18 @@ export class ModelCardDuplicateModelIdError extends Error {
 }
 
 /**
+ * `If-Match` names another revision than the stored one: the card changed
+ * after the caller read it. The revision is `updated_at`, for a card without
+ * edits `created_at`. Nothing was written.
+ */
+export class ModelCardPreconditionFailedError extends Error {
+  readonly code = "model_card_precondition_failed";
+  constructor(message = "Model card changed after it was read") {
+    super(message);
+  }
+}
+
+/**
  * Partial UNIQUE(tenant_id) WHERE is_default = 1 violation. Surfaced when a
  * caller tries to insert/update a row to is_default=1 without atomically
  * clearing the previous default first. Indicates a service-layer bug — the

@@ -1680,12 +1680,18 @@ async function stepAgentTurn() {
   cover("session-search");
 
   const filename = `verify-${nonce}.txt`;
-  await check("run.ui_files", `на вкладке «Ресурсы» инспектора есть выходной файл /mnt/session/outputs/${filename} со ссылкой на скачивание`, async () => {
+  // С 19ea4b9 строка файла агента это кнопка просмотра, рядом кнопка «Скачать <имя>» (ResourcesTab.tsx).
+  await check("run.ui_files", `на вкладке «Ресурсы» инспектора есть выходной файл /mnt/session/outputs/${filename}: строка открывает просмотр, «Скачать» отдаёт файл`, async () => {
     await inspectorTab("Ресурсы").click();
-    const link = inspector.getByRole("link", { name: `/mnt/session/outputs/${filename}` });
-    await link.waitFor({ timeout: 15_000 });
-    const href = await link.getAttribute("href");
-    assert(href?.endsWith(`/outputs/${encodeURIComponent(filename)}`), `ссылка ведёт на ${href}`);
+    const row = inspector.getByRole("button", { name: `/mnt/session/outputs/${filename}` });
+    await row.waitFor({ timeout: 15_000 });
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 15_000 }),
+      inspector.getByRole("button", { name: `Скачать ${filename}` }).click(),
+    ]);
+    assert(download.suggestedFilename() === filename, `скачан файл ${download.suggestedFilename()}`);
+    const body = readFileSync(await download.path(), "utf8");
+    assert(body.includes(`VERIFY_OK_${nonce}`), `в скачанном файле «${body.slice(0, 80)}»`);
     return shot("session-files");
   });
   cover("session-files");

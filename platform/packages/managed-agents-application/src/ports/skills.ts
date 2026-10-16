@@ -42,7 +42,7 @@ export type CreateSkillResult =
   | { type: "invalid_request"; message: string };
 
 export type RetrieveSkillResult =
-  | { type: "found"; skill: SkillView }
+  | { type: "found"; skill: SkillView; revision?: number }
   | { type: "not_found" };
 
 export type ListSkillsResult =

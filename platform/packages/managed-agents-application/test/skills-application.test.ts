@@ -226,6 +226,7 @@ describe("Skills application", () => {
 
     await expect(service.retrieveSkill({ skillId: "skill_01" })).resolves.toEqual({
       type: "found",
+      revision: 3,
       skill,
     });
     const firstPage = await service.listSkills({

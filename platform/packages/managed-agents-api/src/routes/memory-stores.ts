@@ -12,7 +12,18 @@ import {
   memoryStoreResponseSchema,
   memoryStoreUpdateBodySchema,
 } from "../contracts/memory-stores";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import {
+  apiError,
+  conflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import {
+  expectedRevisionOf,
+  readRevisionIfMatch,
+  setRevisionETag,
+} from "../if-match";
 import {
   toArchiveMemoryStoreCommand,
   toCreateMemoryStoreCommand,
@@ -58,6 +69,7 @@ export function buildMemoryStoreRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid memory store"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 201);
   });
 
@@ -102,6 +114,7 @@ export function buildMemoryStoreRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid memory store"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 
@@ -112,13 +125,21 @@ export function buildMemoryStoreRoutes(
     } catch {
       return c.json(invalidRequest("Request body must be valid JSON"), 400);
     }
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     const parsed = memoryStoreUpdateBodySchema.safeParse(body);
     if (!parsed.success) return c.json(invalidField(parsed.error), 400);
-    const result = await resolveApplicationPort(source, c).updateMemoryStore(
-      toUpdateMemoryStoreCommand(c.req.param("memoryStoreId"), parsed.data),
-    );
+    const result = await resolveApplicationPort(source, c).updateMemoryStore({
+      ...toUpdateMemoryStoreCommand(c.req.param("memoryStoreId"), parsed.data),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "invalid_request") {
       return c.json(invalidRequest(result.message), 400);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     if (result.type === "version_conflict") {
       return c.json(conflict(result.message), 409);
@@ -135,6 +156,7 @@ export function buildMemoryStoreRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid memory store"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 

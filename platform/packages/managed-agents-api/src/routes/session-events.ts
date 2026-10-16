@@ -13,7 +13,14 @@ import {
   sessionEventStreamQuerySchema,
   sessionStreamEventResponseSchema,
 } from "../contracts/session-events";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import {
+  apiError,
+  conflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import { expectedRevisionOf, readRevisionIfMatch } from "../if-match";
 import {
   toListSessionEventsQuery,
   toSendSessionEventsCommand,
@@ -176,6 +183,13 @@ export function buildSessionEventRoutes(
       return c.json(invalidRequest("Request body must be valid JSON"), 400);
     }
 
+    // If-Match carries the session revision from ETag of GET /v1/sessions/:id.
+    // The events are appended only while the session is at that revision.
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+
     const parsed = sessionEventSendBodySchema.safeParse(body);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -191,10 +205,14 @@ export function buildSessionEventRoutes(
       {
         ...toSendSessionEventsCommand(c.req.param("sessionId"), parsed.data),
         ...(c.req.header("Idempotency-Key") === undefined ? {} : { idempotencyKey: c.req.header("Idempotency-Key") }),
+        ...expectedRevisionOf(precondition),
       },
     );
     if (result.type === "invalid_request") {
       return c.json(invalidRequest(result.message), 400);
+    }
+    if (result.type === "version_conflict" && precondition.type === "revision") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     if (result.type === "version_conflict" || result.type === "idempotency_conflict") {
       return c.json(conflict(result.message), 409);

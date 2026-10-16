@@ -12,7 +12,18 @@ import {
   deploymentUpdateBodySchema,
 } from "../contracts/deployments";
 import { deploymentRunResponseSchema } from "../contracts/deployment-runs";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import {
+  apiError,
+  conflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import {
+  expectedRevisionOf,
+  readRevisionIfMatch,
+  setRevisionETag,
+} from "../if-match";
 import { toDeploymentRunResponse } from "../mappers/deployment-runs";
 import {
   toCreateDeploymentCommand,
@@ -68,6 +79,7 @@ export function buildDeploymentRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid deployment"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 201);
   });
 
@@ -113,6 +125,7 @@ export function buildDeploymentRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid deployment"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 
@@ -121,14 +134,22 @@ export function buildDeploymentRoutes(
     if (body.type === "invalid") {
       return c.json(invalidRequest("Request body must be valid JSON"), 400);
     }
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     const parsed = deploymentUpdateBodySchema.safeParse(body.body);
     if (!parsed.success) return c.json(invalidField(parsed.error), 400);
 
-    const result = await resolveApplicationPort(source, c).updateDeployment(
-      toUpdateDeploymentCommand(c.req.param("deploymentId"), parsed.data),
-    );
+    const result = await resolveApplicationPort(source, c).updateDeployment({
+      ...toUpdateDeploymentCommand(c.req.param("deploymentId"), parsed.data),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "invalid_request") {
       return c.json(invalidRequest(result.message), 400);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     if (result.type === "version_conflict") {
       return c.json(conflict(result.message), 409);
@@ -146,6 +167,7 @@ export function buildDeploymentRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid deployment"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 
@@ -170,10 +192,14 @@ export function buildDeploymentRoutes(
       if (result.type === "conflict") {
         return c.json(conflict(result.message), 409);
       }
+      if (result.type === "precondition_failed") {
+        return c.json(preconditionFailed(result.message), 412);
+      }
       const response = serializeDeployment(result.deployment);
       if (!response.success) {
         return c.json(apiError("Application returned an invalid deployment"), 500);
       }
+      setRevisionETag(c, result.revision);
       return c.json(response.data, 200);
     });
   };

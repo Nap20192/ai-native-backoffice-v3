@@ -23,8 +23,22 @@ export interface HarnessCardStore {
   /** A card by harness_id, archived ones too. A turn of an old agent needs it. */
   findByHarnessId(workspaceId: string, harnessId: string): Promise<HarnessCard | null>;
   create(workspaceId: string, body: unknown, createdBy?: string | null): Promise<HarnessCard>;
-  update(workspaceId: string, id: string, body: unknown): Promise<HarnessCard>;
+  /**
+   * With `expectedUpdatedAt` (the `If-Match` value) the UPDATE goes through
+   * only while `updated_at` is still that value, otherwise 412 and no write.
+   */
+  update(
+    workspaceId: string,
+    id: string,
+    body: unknown,
+    options?: HarnessCardUpdateOptions,
+  ): Promise<HarnessCard>;
   archive(workspaceId: string, id: string): Promise<HarnessCard>;
+}
+
+export interface HarnessCardUpdateOptions {
+  /** ISO time of `updated_at` the caller saw. */
+  expectedUpdatedAt?: string;
 }
 
 export interface HarnessCardStoreOptions {
@@ -192,9 +206,14 @@ export function createHarnessCardStore(
       });
     },
 
-    async update(workspaceId, id, body) {
+    async update(workspaceId, id, body, updateOptions = {}) {
       const patch = validateHarnessCardInput(body, { mode: "update" });
       const row = await existing(workspaceId, id);
+      const expected =
+        updateOptions.expectedUpdatedAt === undefined ? null : Date.parse(updateOptions.expectedUpdatedAt);
+      if (expected !== null && (Number.isNaN(expected) || expected !== Number(row.updated_at))) {
+        throw stale(row.name);
+      }
       if (row.archived_at !== null) {
         throw new HarnessCardError(409, `Harness «${row.name}» удалён, изменить его нельзя`);
       }
@@ -209,11 +228,12 @@ export function createHarnessCardStore(
         protocols: patch.protocols ?? current.protocols,
         allowed_env: patch.allowed_env ?? current.allowed_env,
       };
-      const time = now();
-      await sql
+      // The revision is updated_at: it always moves, even within one millisecond.
+      const time = Math.max(now(), Number(row.updated_at) + 1);
+      const result = await sql
         .prepare(
           `UPDATE harness_cards SET name = ?, command = ?, args_json = ?, cwd = ?, install_json = ?, protocols_json = ?, allowed_env_json = ?, updated_at = ?
-           WHERE workspace_id = ? AND id = ?`,
+           WHERE workspace_id = ? AND id = ?${expected === null ? "" : " AND updated_at = ?"}`,
         )
         .bind(
           next.name,
@@ -226,8 +246,10 @@ export function createHarnessCardStore(
           time,
           workspaceId,
           id,
+          ...(expected === null ? [] : [expected]),
         )
         .run();
+      if (expected !== null && result.meta.changes === 0) throw stale(row.name);
       return { ...current, ...next, updated_at: new Date(time).toISOString() };
     },
 
@@ -243,6 +265,10 @@ export function createHarnessCardStore(
       return { ...toCard(row), archived_at: iso, updated_at: iso };
     },
   };
+}
+
+function stale(name: string): HarnessCardError {
+  return new HarnessCardError(412, `Harness «${name}» изменили после чтения. Откройте его заново`);
 }
 
 function duplicate(harnessId: string): HarnessCardError {

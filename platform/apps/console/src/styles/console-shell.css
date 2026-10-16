@@ -20,7 +20,7 @@
   width: 100%;
   height: 100svh;
   height: 100dvh;
-  grid-template-columns: var(--shell-sidebar-current-w) minmax(0, 1fr);
+  grid-template-columns: var(--shell-sidebar-current-w) minmax(0, 1fr) var(--shell-assistant-w, 0px);
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   color: var(--ddc-text);
@@ -73,7 +73,51 @@
 .console-shell[data-sidebar-state="desktop-hidden"],
 .console-shell[data-sidebar-state="desktop-preview"],
 .console-shell[data-sidebar-state^="mobile-"] {
-  grid-template-columns: 0 minmax(0, 1fr);
+  grid-template-columns: 0 minmax(0, 1fr) var(--shell-assistant-w, 0px);
+}
+
+/* Третья колонка: панель ассистента. Закрытая или нижний лист на телефоне
+ * места не занимают. */
+.console-shell[data-assistant="open"] {
+  --shell-assistant-w: var(--assistant-panel-width, 370px);
+}
+
+.console-shell > .assistant-panel {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.console-assistant-button {
+  display: inline-flex;
+  height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ddc-ghost-text);
+  font-size: 14px;
+  transition: background-color 150ms ease;
+}
+
+.console-assistant-button:hover,
+.console-assistant-button[aria-pressed="true"] {
+  background: var(--ddc-ghost-hover);
+}
+
+.console-assistant-button svg {
+  width: 16px;
+  height: 16px;
+  color: var(--assistant-accent, currentColor);
+}
+
+@media (max-width: 640px) {
+  .console-assistant-button-label {
+    display: none;
+  }
 }
 
 /* Скрытое меню и его превью: колонка на всю высоту поверх страницы. Скрытое

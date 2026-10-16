@@ -48,6 +48,8 @@ export interface NodeConfig {
     /** Missing means "generate a per-process secret and warn", as before. */
     secret: string | undefined;
     cookieDomain: string | undefined;
+    /** Extra origins allowed to sign in, beyond PUBLIC_BASE_URL (for example a console dev server). */
+    trustedOrigins: string[];
     requireEmailVerify: boolean;
     google: { clientId: string | undefined; clientSecret: string | undefined };
     github: { clientId: string | undefined; clientSecret: string | undefined };
@@ -263,6 +265,7 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
       databasePath: env.AUTH_DATABASE_PATH ?? "./data/auth.db",
       secret: env.BETTER_AUTH_SECRET,
       cookieDomain: env.AUTH_COOKIE_DOMAIN,
+      trustedOrigins: (env.AUTH_TRUSTED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean),
       requireEmailVerify: flag("AUTH_REQUIRE_EMAIL_VERIFY"),
       google: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET },
       github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET },

@@ -76,6 +76,8 @@ export interface BuildBetterAuthOpts {
   secret: string;
   /** Public origin (used for redirect URLs + cookie domain). */
   baseURL?: string;
+  /** Extra origins allowed to call the auth routes besides baseURL. */
+  trustedOrigins?: string[];
   /** Email sender; null disables every email-bearing better-auth flow.
    *  CF prod always passes a real sender; self-host without SMTP passes
    *  null. */
@@ -212,7 +214,7 @@ export function buildBetterAuth(opts: BuildBetterAuthOpts) {
     ...(emailVerification ? { emailVerification } : {}),
     plugins: plugins as never,
     socialProviders,
-    trustedOrigins: opts.baseURL ? [opts.baseURL] : ["*"],
+    trustedOrigins: opts.baseURL ? [opts.baseURL, ...(opts.trustedOrigins ?? [])] : ["*"],
     ...(opts.cookieDomain
       ? {
           advanced: {

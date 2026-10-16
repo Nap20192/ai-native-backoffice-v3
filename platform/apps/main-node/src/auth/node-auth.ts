@@ -74,6 +74,7 @@ export async function createBetterAuthComponent(
     sender: email,
     secret,
     baseURL: config.http.publicBaseUrl,
+    trustedOrigins: config.auth.trustedOrigins,
     googleClientId: config.auth.google.clientId,
     googleClientSecret: config.auth.google.clientSecret,
     githubClientId: config.auth.github.clientId,

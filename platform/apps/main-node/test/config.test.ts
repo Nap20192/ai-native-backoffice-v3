@@ -129,6 +129,14 @@ describe("loadNodeConfig", () => {
     expect(loadNodeConfig({ ...minimal, PUBLIC_BASE_URL: "https://pub" }).http.gatewayOrigin).toBe("https://pub");
   });
 
+  it("reads extra trusted sign-in origins for a console served from another origin", () => {
+    expect(loadNodeConfig(minimal).auth.trustedOrigins).toEqual([]);
+    expect(loadNodeConfig({
+      ...minimal,
+      AUTH_TRUSTED_ORIGINS: " http://localhost:5174 , ,https://console.example ",
+    }).auth.trustedOrigins).toEqual(["http://localhost:5174", "https://console.example"]);
+  });
+
   it("reports every configuration problem at once", () => {
     let error: Error | undefined;
     try {

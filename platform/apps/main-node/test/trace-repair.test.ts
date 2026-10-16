@@ -212,3 +212,88 @@ describe("trace repair from history (plan 3.3)", () => {
     expect(spans.filter((span) => span.kind === "event")).toHaveLength(1);
   });
 });
+
+describe("trace repair against a newer attempt of the same execution", () => {
+  const NEW_ATTEMPT = "attempt_newer_owner";
+
+  // The execution came back to the queue and a new attempt (generation 2)
+  // took it: the coordinator row and the live trace of that attempt.
+  async function reclaim(ctx: Awaited<ReturnType<typeof setup>>, clock: number) {
+    await ctx.sql.prepare(
+      `UPDATE managed_session_executions SET attempt_id = ?, generation = 2, state = 'running',
+         claimed_at_ms = ?, lease_expires_at_ms = ?, settled_at_ms = NULL WHERE id = ?`,
+    ).bind(NEW_ATTEMPT, clock, clock + 60_000, ctx.fixture.execution!.id).run();
+    const [started, attempt] = ctx.fixture.inputs as TraceProjectorInput[];
+    if (started?.kind !== "execution_started") throw new Error("fixture starts without execution_started");
+    await live(ctx.store, ctx.scope, [
+      { ...started, atMs: clock, fence: { executionId: ctx.fixture.execution!.id, attemptId: NEW_ATTEMPT, generation: 2 } },
+      { ...attempt!, atMs: clock } as TraceProjectorInput,
+    ]);
+  }
+
+  async function newerAttemptState(ctx: Awaited<ReturnType<typeof setup>>) {
+    const turn = await ctx.store.readTurn(ctx.scope, ctx.fixture.execution!.id);
+    const sandbox = (await ctx.store.readSessionSpans(ctx.scope, null, 100))
+      .filter((span) => span.kind === "sandbox" && span.attempt_id === NEW_ATTEMPT);
+    return {
+      owner: turn === null ? null : [turn.attempt_id, turn.attempt_generation, turn.state],
+      sandbox: sandbox.map((span) => [span.status, span.end_ms]),
+    };
+  }
+
+  it("a repair with the execution of an older attempt does not take the turn", async () => {
+    const ctx = await setup("interrupted-turn-frames.json", {
+      state: "running", settled_at_ms: null, lease_expires_at_ms: 1792108976229, failure: null,
+    });
+    // The repair read the execution while the lease of attempt 1 had expired.
+    const stale = (await ctx.executions.find(ctx.scope, ctx.fixture.execution!.id))!;
+    await reclaim(ctx, 1792500000000);
+
+    expect(await ctx.repair.repairTurn(ctx.scope, stale)).toBe("skipped");
+    expect(await newerAttemptState(ctx)).toEqual({
+      owner: [NEW_ATTEMPT, 2, "open"],
+      sandbox: [["running", null]],
+    });
+  });
+
+  it("closeOpenSpans with an owner that no longer holds the turn closes nothing", async () => {
+    const ctx = await setup("interrupted-turn-frames.json", {
+      state: "running", settled_at_ms: null, lease_expires_at_ms: 1792108976229, failure: null,
+    });
+    await reclaim(ctx, 1792500000000);
+    const closed = await ctx.store.closeOpenSpans(ctx.scope, ctx.fixture.execution!.id, {
+      atMs: 1792500000000,
+      endReason: "process_lost",
+      owner: { attemptId: ctx.fixture.execution!.attempt_id as string, generation: 1 },
+    });
+    expect(closed).toBe(0);
+    expect((await newerAttemptState(ctx)).sandbox).toEqual([["running", null]]);
+  });
+
+  it("a repair stops when a newer attempt takes the turn while it writes", async () => {
+    const ctx = await setup("interrupted-turn-frames.json", {
+      state: "running", settled_at_ms: null, lease_expires_at_ms: 1792108976229, failure: null,
+    });
+    const execution = (await ctx.executions.find(ctx.scope, ctx.fixture.execution!.id))!;
+    let raced = false;
+    const racingStore: TraceStore = Object.create(ctx.store) as TraceStore;
+    racingStore.apply = async (scope, batch) => {
+      const result = await ctx.store.apply(scope, batch);
+      if (!raced) {
+        raced = true;
+        await reclaim(ctx, 1792500000000);
+      }
+      return result;
+    };
+    const repair = createTraceRepair({
+      store: racingStore, executions: ctx.executions, history: ctx.history, now: () => 1792500000000,
+    });
+
+    expect(await repair.repairTurn(ctx.scope, execution)).toBe("skipped");
+    expect(raced).toBe(true);
+    expect(await newerAttemptState(ctx)).toEqual({
+      owner: [NEW_ATTEMPT, 2, "open"],
+      sandbox: [["running", null]],
+    });
+  });
+});

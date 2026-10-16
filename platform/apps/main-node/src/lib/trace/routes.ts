@@ -288,6 +288,10 @@ export function buildTraceRoutes(options: TraceRoutesOptions): Hono<TraceEnv> {
       const after = c.req.query("after");
       if (after !== undefined) {
         const cursor = readChangesCursor(after);
+        // As the overview: a stopped turn whose final records never came is
+        // rebuilt before the read, so the feed carries it closed and polling
+        // does not end on an open turn.
+        await repairEntries(scope, (await loadEntries(scope)).slice(-2));
         const spans = await backend.store.readChanges(scope, { u: cursor.u, s: cursor.s }, CHANGES_PAGE + 1);
         const turnRows = await backend.store.readTurnChanges(scope, { u: cursor.tu, t: cursor.tt }, CHANGES_PAGE + 1);
         const spansMore = spans.length > CHANGES_PAGE;
@@ -303,6 +307,7 @@ export function buildTraceRoutes(options: TraceRoutesOptions): Hono<TraceEnv> {
         const turnKey = turnsMore && lastTurn !== undefined
           ? { u: lastTurn.updated_at, s: lastTurn.turn_id }
           : laterKey({ u: cursor.tu, s: cursor.tt }, { u: lag.tu, s: lag.tt });
+        // Read after the changes: a turn in the page has its row here.
         const entries = await loadEntries(scope);
         const changedTurns = new Set(turnPage.map((row) => row.turn_id));
         return c.json({

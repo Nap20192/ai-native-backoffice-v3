@@ -85,7 +85,7 @@ import {
   NodeManagedSessionInputPreparer,
 } from "../lib/node-managed-session-inputs.js";
 import { applyVaultEnvironment } from "../lib/node-managed-vault-env.js";
-import { acpTurnAgent, createModelsHarnessWiring, prepareAcpTurnInference } from "../lib/models-harness-wiring.js";
+import { acpTurnAgent, acpTurnEnv, createModelsHarnessWiring, prepareAcpTurnInference } from "../lib/models-harness-wiring.js";
 import { harnessUserMessage } from "../lib/node-managed-harness-user-message.js";
 import { runHarnessForTurn } from "../lib/node-managed-harness-turn.js";
 import { NodeManagedMemorySnapshotMaterializer } from "../lib/node-managed-memory-snapshots.js";
@@ -628,7 +628,7 @@ export async function createManagedNodeRuntime(
           upstream: creds,
         })
         : null;
-      if (acpInference !== null) agent = acpTurnAgent(agent, acpInference);
+      if (acpInference !== null) agent = acpTurnAgent(agent);
       const modelSettings = readHarnessAgentModelSettings(agent.model);
       const pi = createPiModelRuntime({
         model: creds.wireModel,
@@ -678,7 +678,7 @@ export async function createManagedNodeRuntime(
         env: {
           ANTHROPIC_API_KEY: creds.apiKey,
           ANTHROPIC_BASE_URL: creds.baseURL,
-          ...(acpInference?.kind === "builtin" && { hostedInference: acpInference.hostedInference }),
+          ...(acpInference !== null && acpTurnEnv(acpInference)),
         },
         runtime: input.runtime,
       } satisfies HarnessContext;

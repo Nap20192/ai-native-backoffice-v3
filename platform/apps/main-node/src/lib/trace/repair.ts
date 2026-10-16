@@ -48,11 +48,13 @@ export function createTraceRepair(options: TraceRepairOptions): TraceRepair {
    * not written yet (the turn of the tool call was not built: search builds
    * newest turns first) builds that earlier turn when it needs a repair, then
    * goes again, as the live recorder does (plan 1.4). A complete earlier turn
-   * stays as it is. `visiting` stops a loop between turns.
+   * stays as it is. `visiting` stops a loop between turns. Returns true when
+   * the store refused the spans of the turn: another attempt holds it.
    */
-  const applyResolving = async (scope: TraceScope, batch: TraceApplyBatch, visiting: Set<string>): Promise<void> => {
+  const applyResolving = async (scope: TraceScope, batch: TraceApplyBatch, visiting: Set<string>): Promise<boolean> => {
     const result = await options.store.apply(scope, batch);
-    if (result.missing.length === 0) return;
+    if (result.fenced) return true;
+    if (result.missing.length === 0) return false;
     for (const key of new Set(result.missing.map((item) => item.key_event_id))) {
       const ownerId = await options.history.executionOfEvent(scope, key);
       if (ownerId === null || visiting.has(ownerId)) continue;
@@ -63,7 +65,8 @@ export function createTraceRepair(options: TraceRepairOptions): TraceRepair {
     const again = batch.ops.filter((op) =>
       (op.op === "patch" && missing.has(op.span_id)) ||
       (op.op === "upsert" && op.inherit_from !== undefined && missing.has(op.span.span_id)));
-    if (again.length > 0) await options.store.apply(scope, { ...batch, ops: again });
+    if (again.length > 0) return (await options.store.apply(scope, { ...batch, ops: again })).fenced;
+    return false;
   };
 
   const repairTurn: TraceRepair["repairTurn"] = (scope, execution, repairOptions = {}) =>
@@ -76,14 +79,19 @@ export function createTraceRepair(options: TraceRepairOptions): TraceRepair {
     visiting: Set<string>,
   ): Promise<"repaired" | "skipped"> => {
     visiting.add(execution.id);
-    const existing = await options.store.readTurn(scope, execution.id);
-    if (!repairOptions.force && !needsRepair(existing, execution)) return "skipped";
-    const full = execution.events.length > 0 ? execution : await options.executions.find(scope, execution.id) ?? execution;
+    // The row as it is now, not the caller's snapshot: the execution may have
+    // gone back to the queue and a new attempt may hold it.
+    const full = await options.executions.find(scope, execution.id);
+    if (full === null) return "skipped";
+    const existing = await options.store.readTurn(scope, full.id);
+    if (!repairOptions.force && !needsRepair(existing, full)) return "skipped";
     const info = await options.sessions?.read(scope) ?? null;
     const harness = info?.harness ?? null;
     const projector = createTraceProjector({ sessionId: scope.sessionId, harness, mode: "history" });
     const attemptId = full.attempt_id ?? existing?.attempt_id ?? null;
-    const generation = Math.max(full.generation, existing?.attempt_generation ?? 0);
+    // The generation of the execution as it is. A higher one would let this
+    // repair take the turn from the attempt that wrote it (claim checks <=).
+    const generation = full.generation;
     const ops: TraceOp[] = [];
     ops.push(...projector.push({
       kind: "execution_started",
@@ -98,8 +106,8 @@ export function createTraceRepair(options: TraceRepairOptions): TraceRepair {
     const writer = projector.attemptId() ?? "";
     if (!executionStopped(full, now())) {
       // Forced build of a turn that still runs (MySQL in-memory trace): it stays open.
-      await applyResolving(scope, { turnId, attemptId: writer, ops }, visiting);
-      return "repaired";
+      const fenced = await applyResolving(scope, { turnId, attemptId: writer, ops }, visiting);
+      return fenced ? "skipped" : "repaired";
     }
     const { outcome, endReason } = outcomeOf(full);
     const endAt = full.settled_at_ms ?? full.lease_expires_at_ms ?? now();
@@ -109,9 +117,17 @@ export function createTraceRepair(options: TraceRepairOptions): TraceRepair {
       outcome,
       ...(full.failure !== null && { reason: full.failure }),
     }));
-    await applyResolving(scope, { turnId, attemptId: writer, ops }, visiting);
-    // Live rows the history cannot see (Pi execution frames, sandbox phases) close here.
-    await options.store.closeOpenSpans(scope, turnId, { atMs: endAt, endReason });
+    if (await applyResolving(scope, { turnId, attemptId: writer, ops }, visiting)) return "skipped";
+    // A newer attempt took the turn after the write: its spans stay open.
+    const owner = await options.store.readTurn(scope, turnId);
+    if (owner === null || (owner.attempt_id ?? "") !== writer || owner.attempt_generation !== generation) return "skipped";
+    // Live rows the history cannot see (Pi execution frames, sandbox phases)
+    // close here, while this attempt still holds the turn.
+    await options.store.closeOpenSpans(scope, turnId, {
+      atMs: endAt,
+      endReason,
+      owner: { attemptId: writer, generation },
+    });
     const lost = ["sandbox_phases", ...(expectedHarnessLevel(harness) >= 2 ? ["harness_timing", "ttft", "tool_exec"] : [])];
     await options.store.finalizeTurn(scope, {
       turnId,

@@ -129,6 +129,13 @@ export interface TraceApplyResult {
   missing: Array<{ span_id: string; key_event_id: string }>;
 }
 
+export interface TraceCloseOpenSpansInput {
+  atMs: number;
+  endReason: string;
+  exceptAttemptId?: string | null;
+  owner?: { attemptId: string | null; generation: number };
+}
+
 export interface TraceStore {
   readonly dialect: TraceSqlDialect;
   ensureSchema(): Promise<void>;
@@ -142,8 +149,12 @@ export interface TraceStore {
     framesLost?: boolean;
   }): Promise<boolean>;
   markFramesLost(scope: TraceScope, turnId: string, attemptId: string | null): Promise<void>;
-  /** Closes open spans of a turn as interrupted, except waiting ones and the turn span. */
-  closeOpenSpans(scope: TraceScope, turnId: string, input: { atMs: number; endReason: string; exceptAttemptId?: string | null }): Promise<number>;
+  /**
+   * Closes open spans of a turn as interrupted, except waiting ones and the
+   * turn span. With `owner` it closes only while that attempt and generation
+   * hold the turn: a repair must not close what a newer attempt writes.
+   */
+  closeOpenSpans(scope: TraceScope, turnId: string, input: TraceCloseOpenSpansInput): Promise<number>;
   /** Session stop, archive or delete: waiting tools get cancelled, open confirmed executions interrupted. */
   cancelWaiting(scope: TraceScope, atMs: number): Promise<number>;
   markDeleted(scope: TraceScope, spanId: string): Promise<void>;
@@ -577,7 +588,7 @@ class SqlTraceStore implements TraceStore {
     await this.turns.markFramesLost(scope, turnId, attemptId, this.now());
   }
 
-  async closeOpenSpans(scope: TraceScope, turnId: string, input: { atMs: number; endReason: string; exceptAttemptId?: string | null }): Promise<number> {
+  async closeOpenSpans(scope: TraceScope, turnId: string, input: TraceCloseOpenSpansInput): Promise<number> {
     await this.ensureSchema();
     const now = this.now();
     const turnSpan = turnSpanIdFor(scope.sessionId, turnId);
@@ -589,13 +600,26 @@ class SqlTraceStore implements TraceStore {
          ${exceptAttempt === null ? "" : "AND COALESCE(attempt_id, '') <> ?"}`,
     ).bind(...[scope.workspaceId, scope.sessionId, turnId, turnSpan, ...(exceptAttempt === null ? [] : [exceptAttempt])])
       .all<{ span_id: string; start_ms: number | string; attrs: string; version: number | string }>();
+    const owner = input.owner;
+    // The owner check goes into each UPDATE: a claim between the SELECT and
+    // the write then leaves the spans of the new attempt open.
+    const ownerClause = owner === undefined ? "" : `AND EXISTS (SELECT 1 FROM trace_turns t
+           WHERE t.workspace_id = ? AND t.session_id = ? AND t.turn_id = ?
+             AND COALESCE(t.attempt_id, '') = ? AND t.attempt_generation = ?)`;
+    const ownerValues = owner === undefined
+      ? []
+      : [scope.workspaceId, scope.sessionId, turnId, owner.attemptId ?? "", owner.generation];
     const statements = (rows.results ?? []).map((row) => {
       const attrs = parseObject(row.attrs);
       attrs.end_reason = input.endReason;
       return this.sql.prepare(
         `UPDATE trace_spans SET status = 'interrupted', end_ms = ?, attrs = ?, version = version + 1, updated_at = ?
-         WHERE workspace_id = ? AND session_id = ? AND span_id = ? AND version = ? AND end_ms IS NULL`,
-      ).bind(Math.max(input.atMs, Number(row.start_ms)), JSON.stringify(attrs), now, scope.workspaceId, scope.sessionId, row.span_id, Number(row.version));
+         WHERE workspace_id = ? AND session_id = ? AND span_id = ? AND version = ? AND end_ms IS NULL
+         ${ownerClause}`,
+      ).bind(
+        Math.max(input.atMs, Number(row.start_ms)), JSON.stringify(attrs), now,
+        scope.workspaceId, scope.sessionId, row.span_id, Number(row.version), ...ownerValues,
+      );
     });
     if (statements.length === 0) return 0;
     const results = await this.sql.batch([...statements, this.turns.recount(scope, turnId, now)]);

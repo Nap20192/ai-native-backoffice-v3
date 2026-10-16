@@ -326,6 +326,13 @@ export interface HarnessContext {
         }[];
       };
     };
+    /**
+     * Variables laid over the env of the ACP process this turn starts: the
+     * inference proxy of a harness card with a token for this turn only.
+     * They stay out of the ACP checkpoint key, so a new token resumes the
+     * ACP session of the previous turn.
+     */
+    acpLaunchEnv?: Record<string, string>;
     environmentConfig?: { networking?: { type: string; allowed_hosts?: string[] } };
     /** Register a background task for completion notification (CC-style task_notification). */
     watchBackgroundTask?: (taskId: string, pid: string, outputFile: string, proc: ProcessHandle | null) => void;

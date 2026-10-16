@@ -121,6 +121,39 @@ describe("GET /v1/oma/sessions/:id/trace", () => {
     expect(decodeCursor(changes.cursor).u).toBeLessThanOrEqual(1792300000000 - 2000);
   });
 
+  it("the change feed rebuilds a turn whose process died after the overview, so polling ends with it closed", async () => {
+    const sql = await createHistoryDb();
+    const fixture = loadTraceFixture("interrupted-turn-frames.json");
+    const scope = { workspaceId: WS, sessionId: fixture.scope.sessionId };
+    const leaseEnd = 1792108976229;
+    await loadFixtureHistory(sql, WS, fixture, { state: "running", settled_at_ms: null, lease_expires_at_ms: leaseEnd, failure: null });
+    let clock = 1792108950000;
+    const store = createTraceStore({ sql, dialect: "sqlite", now: () => clock });
+    // The live write stops after the model request start: the final records never come.
+    const recorder = createTraceRecorder({ store });
+    const observer = createTraceObserver({ recorder });
+    const cut = fixture.inputs.findIndex((input) => input.kind === "frame" && (input.frame as { type?: string }).type === "span.model_request_start");
+    await drive(observer, scope, fixture.inputs.slice(0, cut + 1));
+    await recorder.flush(scope);
+    const app = appFor(buildTraceRoutes({ sql, dialect: "sqlite", store, now: () => clock }) as never);
+    const root = `/v1/oma/sessions/${scope.sessionId}/trace`;
+
+    const overview = await (await app.request(root)).json() as { cursor: string; collecting: boolean; turns: Array<{ state: string }> };
+    expect(overview.collecting).toBe(true);
+    expect(overview.turns.map((turn) => turn.state)).toEqual(["open"]);
+
+    // The lease ran out long ago, past the grace of an open turn.
+    clock = leaseEnd + 60_000;
+    const changes = await (await app.request(`${root}?after=${encodeURIComponent(overview.cursor)}`)).json() as {
+      collecting: boolean;
+      turns: Array<{ state: string; turn: { turn_id: string } }>;
+      spans: Array<{ kind: string; status: string }>;
+    };
+    expect(changes.turns.map((turn) => [turn.turn.turn_id, turn.state])).toEqual([[fixture.execution!.id, "repaired"]]);
+    expect(changes.spans.filter((span) => span.status === "running")).toEqual([]);
+    expect(changes.collecting).toBe(false);
+  });
+
   it("downloads the trace as one OTLP JSON request", async () => {
     const { app, root, scope } = await confirmationSession();
     const response = await app.request(`${root}/otlp.json`);

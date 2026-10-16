@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   acpTurnAgent,
+  acpTurnEnv,
   type AcpTurnAgent,
   type AcpTurnInference,
 } from "../src/lib/models-harness-wiring";
@@ -55,7 +56,7 @@ describe("acpTurnAgent", () => {
     const agent = agentWithEnv({ ...OLD_KEYS, OMA_CLAUDE_SETTINGS: "{}", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" });
     const before = structuredClone(agent);
 
-    const turn = acpTurnAgent(agent, builtin);
+    const turn = acpTurnAgent(agent);
 
     expect(turn.acp?.agent.env).toEqual({ OMA_CLAUDE_SETTINGS: "{}", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" });
     expect(turn.acp?.agent).toMatchObject({ id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"] });
@@ -63,19 +64,21 @@ describe("acpTurnAgent", () => {
     expect(agent).toEqual(before);
   });
 
-  it("lays the card variables over an env without the old keys", () => {
+  it("keeps the card variables out of the agent config, so a new token keeps the ACP checkpoint key", () => {
     const agent = agentWithEnv({ ...OLD_KEYS, AIDER_AUTO_COMMITS: "false" }, "aider-local");
 
-    const turn = acpTurnAgent(agent, card);
+    const turn = acpTurnAgent(agent);
 
-    expect(turn.acp?.agent.env).toEqual({ AIDER_AUTO_COMMITS: "false", ...CARD_ENV });
-    expect(JSON.stringify(turn)).not.toMatch(/sk-ant-oat01-old|sk-ant-api03-old|old-auth-token|sk-old-openai|AIza-old/);
+    expect(turn.acp?.agent.env).toEqual({ AIDER_AUTO_COMMITS: "false" });
+    expect(JSON.stringify(turn)).not.toMatch(/sk-ant-oat01-old|sk-ant-api03-old|old-auth-token|sk-old-openai|AIza-old|oma_sbx_turn/);
+    expect(acpTurnEnv(card)).toEqual({ acpLaunchEnv: CARD_ENV });
+    expect(acpTurnEnv(builtin)).toEqual({ hostedInference: builtin.hostedInference });
   });
 
   it("returns the same config when there is nothing to drop, so the ACP checkpoint still matches", () => {
     const clean = agentWithEnv({ OMA_CLAUDE_SETTINGS: "{}" });
     const bare = agentWithEnv();
-    expect(acpTurnAgent(clean, builtin)).toBe(clean);
-    expect(acpTurnAgent(bare, builtin)).toBe(bare);
+    expect(acpTurnAgent(clean)).toBe(clean);
+    expect(acpTurnAgent(bare)).toBe(bare);
   });
 });

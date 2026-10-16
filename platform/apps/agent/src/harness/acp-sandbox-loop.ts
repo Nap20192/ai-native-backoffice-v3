@@ -49,6 +49,8 @@ interface AcpSandboxCheckpoint {
 export class AcpSandboxHarness implements HarnessInterface {
   #session: AcpSession | null = null;
   #configKey: string | null = null;
+  /** ctx.env.acpLaunchEnv of the live process; not part of the checkpoint key. */
+  #launchEnvKey: string | null = null;
   #resumeAcpSessionId: string | null = null;
   #checkpointLoadedForKey: string | null = null;
   #runtime: HarnessRuntime | null = null;
@@ -101,6 +103,7 @@ export class AcpSandboxHarness implements HarnessInterface {
     });
     const stateBinding = preparation.binding;
     const configKey = JSON.stringify({ config, stateAdapter: stateBinding.adapterId });
+    const launchEnvKey = JSON.stringify(ctx.env.acpLaunchEnv ?? {});
     await materializeAcpSandboxAgentState(runtime.sandbox, preparation);
     if (!this.#session && this.#checkpointLoadedForKey !== configKey) {
       this.#checkpointLoadedForKey = configKey;
@@ -111,7 +114,10 @@ export class AcpSandboxHarness implements HarnessInterface {
         stateBinding.checkpointPath,
       );
     }
-    if (this.#session && (this.#configKey !== configKey || !this.#session.isAlive())) {
+    if (
+      this.#session &&
+      (this.#configKey !== configKey || this.#launchEnvKey !== launchEnvKey || !this.#session.isAlive())
+    ) {
       this.#resumeAcpSessionId = this.#configKey === configKey
         ? this.#session.acpSessionId || null
         : null;
@@ -182,6 +188,7 @@ export class AcpSandboxHarness implements HarnessInterface {
           await materializeHostedInferenceConfigFiles(runtime.sandbox, hosted.files);
           launchEnv = hosted.env;
         }
+        if (ctx.env.acpLaunchEnv) launchEnv = { ...launchEnv, ...ctx.env.acpLaunchEnv };
         const mcpServers = projectAcpSandboxMcpServers({
           sessionId: ctx.session_id,
           ...(managedMcpProxy === null ? {} : {
@@ -211,6 +218,7 @@ export class AcpSandboxHarness implements HarnessInterface {
           ...(mcpServers.length === 0 ? {} : { mcpServers }),
         });
         this.#configKey = configKey;
+        this.#launchEnvKey = launchEnvKey;
         this.#preparation = preparation;
         this.#resumeAcpSessionId = this.#session.acpSessionId || null;
         await this.#saveCheckpoint(
@@ -298,6 +306,7 @@ export class AcpSandboxHarness implements HarnessInterface {
     const preparation = this.#preparation;
     this.#session = null;
     this.#configKey = null;
+    this.#launchEnvKey = null;
     this.#resumeAcpSessionId = null;
     this.#checkpointLoadedForKey = null;
     this.#runtime = null;

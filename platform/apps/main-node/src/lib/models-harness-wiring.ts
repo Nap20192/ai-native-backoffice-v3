@@ -9,6 +9,7 @@
 // - prepareAcpTurnInference: section 5.8, what an acp-sandbox turn needs to
 //   reach its model through the inference proxy.
 // - acpTurnAgent: the agent config of that turn, without model keys in env.
+// - acpTurnEnv: the inference of that turn for HarnessContext.env.
 import { Hono } from "hono";
 import { resolveOverlayAgent } from "@open-managed-agents/acp-runtime/known-agents";
 import {
@@ -218,35 +219,33 @@ export async function prepareAcpTurnInference(input: {
   };
 }
 
-/** The agent config of the turn with card variables laid over its env. A copy:
- * the session's agent stays as stored. */
-export function withAcpAgentEnv<T extends AcpTurnAgent>(agent: T, env: Record<string, string>): T {
-  if (agent.acp === undefined) return agent;
-  return {
-    ...agent,
-    acp: {
-      ...agent.acp,
-      agent: { ...agent.acp.agent, env: { ...(agent.acp.agent.env ?? {}), ...env } },
-    },
-  };
-}
-
 /**
  * The agent config an acp-sandbox turn runs with (5.7). Model keys leave the
- * ACP env first: the guard checks only new saves, and a snapshot saved before
- * it can still hold CLAUDE_CODE_OAUTH_TOKEN or a provider key, which the
- * built-in adapters do not all drop and a card would pass on as is. A card
- * then gets its proxy variables on top. Without anything to change the same
- * object comes back, so the ACP checkpoint key of the session stays valid.
+ * ACP env: the guard checks only new saves, and a snapshot saved before it
+ * can still hold CLAUDE_CODE_OAUTH_TOKEN or a provider key, which the
+ * built-in adapters do not all drop and a card would pass on as is. Without
+ * a key the same object comes back. The inference of the turn goes through
+ * acpTurnEnv, not this config: the config makes the ACP checkpoint key, and
+ * the token changes every turn.
  */
-export function acpTurnAgent<T extends AcpTurnAgent>(agent: T, inference: AcpTurnInference): T {
+export function acpTurnAgent<T extends AcpTurnAgent>(agent: T): T {
   const env = agent.acp?.agent.env;
-  let next = agent;
-  if (next.acp !== undefined && env !== undefined && Object.keys(env).some((name) => MODEL_KEY_ENV_NAMES.has(name))) {
-    const kept = Object.fromEntries(Object.entries(env).filter(([name]) => !MODEL_KEY_ENV_NAMES.has(name)));
-    next = { ...next, acp: { ...next.acp, agent: { ...next.acp.agent, env: kept } } };
+  if (agent.acp === undefined || env === undefined || !Object.keys(env).some((name) => MODEL_KEY_ENV_NAMES.has(name))) {
+    return agent;
   }
-  return inference.kind === "card" ? withAcpAgentEnv(next, inference.env) : next;
+  const kept = Object.fromEntries(Object.entries(env).filter(([name]) => !MODEL_KEY_ENV_NAMES.has(name)));
+  return { ...agent, acp: { ...agent.acp, agent: { ...agent.acp.agent, env: kept } } };
+}
+
+/** The part of HarnessContext.env that carries the inference of an
+ * acp-sandbox turn: hostedInference of a built-in entry, or the card
+ * variables the harness lays over the env of the ACP process. */
+export function acpTurnEnv(inference: AcpTurnInference):
+  | { hostedInference: SandboxHostedInference }
+  | { acpLaunchEnv: Record<string, string> } {
+  return inference.kind === "builtin"
+    ? { hostedInference: inference.hostedInference }
+    : { acpLaunchEnv: inference.env };
 }
 
 function builtinAcpEntry(id: string): HarnessEntry | null {

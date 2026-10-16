@@ -1,0 +1,318 @@
+{
+  "_provenance": {
+    "source": "platform/apps/main-node/data-preview/oma.db (read-only)",
+    "extracted": "2026-10-16",
+    "note": "Recorded turn interrupted by the user during the first model call (finish_reason aborted, execution cancelled).",
+    "sanitized": "user, agent, thinking, tool input and tool output texts replaced with placeholders"
+  },
+  "scope": {
+    "workspaceId": "ws_fixture",
+    "sessionId": "session_GpoGhQxZILfecRAlYZLPH"
+  },
+  "harness": "pi",
+  "agentName": "agent",
+  "execution": {
+    "id": "sevt_Mamk-2SDtcpx5doG4osCE",
+    "lane_id": "sthr_primary",
+    "admitted_at_ms": 1792108946207,
+    "events": [
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "<user text>"
+          }
+        ],
+        "id": "sevt_Mamk-2SDtcpx5doG4osCE",
+        "processedAt": "2026-10-16T00:02:26.207Z",
+        "type": "user.message"
+      }
+    ],
+    "state": "cancelled",
+    "attempt_id": "attempt_7hXdcMduKnQJIvLE8kwVD",
+    "owner_id": "node:fixture",
+    "generation": 1,
+    "claimed_at_ms": 1792108946229,
+    "lease_expires_at_ms": 1792109216465,
+    "settled_at_ms": 1792109188345,
+    "failure": "interrupted during execution"
+  },
+  "history": [
+    {
+      "id": "sevt_Mamk-2SDtcpx5doG4osCE",
+      "type": "user.message",
+      "processed_at": 1792108946207,
+      "thread_id": null,
+      "document": {
+        "type": "user.message",
+        "content": [
+          {
+            "type": "text",
+            "text": "<user text>"
+          }
+        ],
+        "id": "sevt_Mamk-2SDtcpx5doG4osCE",
+        "processedAt": "2026-10-16T00:02:26.207Z",
+        "source_position": {
+          "revision": 210,
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "sevt_Qr8IYB3f_YUB_PWlhV-8l",
+      "type": "session.status_running",
+      "processed_at": 1792108946258,
+      "thread_id": null,
+      "document": {
+        "type": "session.status_running",
+        "id": "sevt_Qr8IYB3f_YUB_PWlhV-8l",
+        "processedAt": "2026-10-16T00:02:26.258Z",
+        "source_position": {
+          "revision": 211,
+          "index": 0,
+          "execution_id": "sevt_Mamk-2SDtcpx5doG4osCE"
+        }
+      }
+    },
+    {
+      "id": "sevt-bnfej3gosyfikuib",
+      "type": "span.model_request_start",
+      "processed_at": 1792108946295,
+      "thread_id": null,
+      "document": {
+        "type": "span.model_request_start",
+        "id": "sevt-bnfej3gosyfikuib",
+        "model": "Qwen/Qwen3.6-35B-A3B",
+        "processedAt": "2026-10-16T00:02:26.295Z",
+        "source_position": {
+          "revision": 212,
+          "index": 0,
+          "execution_id": "sevt_Mamk-2SDtcpx5doG4osCE"
+        }
+      }
+    },
+    {
+      "id": "sevt-88d9u6imxs7yynqk",
+      "type": "agent.thinking",
+      "processed_at": 1792109188295,
+      "thread_id": null,
+      "document": {
+        "type": "agent.thinking",
+        "thinkingId": "sevt-88d9u6imxs7yynqk",
+        "text": "<thinking>",
+        "providerOptions": {
+          "pi": {
+            "thinkingSignature": "reasoning_content"
+          }
+        },
+        "id": "sevt-88d9u6imxs7yynqk",
+        "processedAt": "2026-10-16T00:06:28.295Z",
+        "source_position": {
+          "revision": 214,
+          "index": 0,
+          "execution_id": "sevt_Mamk-2SDtcpx5doG4osCE"
+        }
+      }
+    },
+    {
+      "id": "sevt_GKL5c_YubQit8WS5U2E-T",
+      "type": "span.model_request_end",
+      "processed_at": 1792109188296,
+      "thread_id": null,
+      "document": {
+        "type": "span.model_request_end",
+        "model": "Qwen/Qwen3.6-35B-A3B",
+        "modelRequestStartId": "sevt-bnfej3gosyfikuib",
+        "providerResponseId": "chatcmpl-91d3decb14a9bffa",
+        "modelUsage": {
+          "cacheCreationInputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "finishReason": "aborted",
+        "finalTextLength": 0,
+        "isError": false,
+        "errorMessage": "Request was aborted",
+        "id": "sevt_GKL5c_YubQit8WS5U2E-T",
+        "processedAt": "2026-10-16T00:06:28.296Z",
+        "source_position": {
+          "revision": 215,
+          "index": 0,
+          "execution_id": "sevt_Mamk-2SDtcpx5doG4osCE"
+        }
+      }
+    },
+    {
+      "id": "sevt_dzUWlqWzXp3342fUqIU4n",
+      "type": "session.usage",
+      "processed_at": 1792109188297,
+      "thread_id": null,
+      "document": {
+        "type": "session.usage",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "id": "sevt_dzUWlqWzXp3342fUqIU4n",
+        "processedAt": "2026-10-16T00:06:28.297Z",
+        "source_position": {
+          "revision": 216,
+          "index": 0,
+          "execution_id": "sevt_Mamk-2SDtcpx5doG4osCE"
+        }
+      }
+    },
+    {
+      "id": "sevt_GA7bZckeCBb8qmu-hzsxJ",
+      "type": "session.status_idle",
+      "processed_at": 1792109188316,
+      "thread_id": null,
+      "document": {
+        "type": "session.status_idle",
+        "stopReason": {
+          "type": "end_turn"
+        },
+        "id": "sevt_GA7bZckeCBb8qmu-hzsxJ",
+        "processedAt": "2026-10-16T00:06:28.316Z",
+        "source_position": {
+          "revision": 217,
+          "index": 0,
+          "execution_id": "sevt_Mamk-2SDtcpx5doG4osCE"
+        }
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "kind": "execution_started",
+      "atMs": 1792108946230,
+      "events": [
+        {
+          "content": [
+            {
+              "type": "text",
+              "text": "<user text>"
+            }
+          ],
+          "id": "sevt_Mamk-2SDtcpx5doG4osCE",
+          "processedAt": "2026-10-16T00:02:26.207Z",
+          "type": "user.message"
+        }
+      ],
+      "fence": {
+        "executionId": "sevt_Mamk-2SDtcpx5doG4osCE",
+        "attemptId": "attempt_7hXdcMduKnQJIvLE8kwVD",
+        "generation": 1
+      }
+    },
+    {
+      "kind": "start_attempt",
+      "attempt": 1,
+      "atMs": 1792108946231
+    },
+    {
+      "kind": "start_attempt_settled",
+      "attempt": 1,
+      "atMs": 1792108946257,
+      "outcome": "ok"
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_running",
+        "id": "sevt_Qr8IYB3f_YUB_PWlhV-8l",
+        "processed_at": "2026-10-16T00:02:26.258Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "span.model_request_start",
+        "id": "sevt-bnfej3gosyfikuib",
+        "model": "Qwen/Qwen3.6-35B-A3B",
+        "processed_at": "2026-10-16T00:02:26.295Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "agent.thinking",
+        "thinking_id": "sevt-88d9u6imxs7yynqk",
+        "text": "<thinking>",
+        "provider_options": {
+          "pi": {
+            "thinking_signature": "reasoning_content"
+          }
+        },
+        "id": "sevt-88d9u6imxs7yynqk",
+        "processed_at": "2026-10-16T00:06:28.295Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "span.model_request_end",
+        "model": "Qwen/Qwen3.6-35B-A3B",
+        "model_request_start_id": "sevt-bnfej3gosyfikuib",
+        "provider_response_id": "chatcmpl-91d3decb14a9bffa",
+        "model_usage": {
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        },
+        "finish_reason": "aborted",
+        "final_text_length": 0,
+        "is_error": false,
+        "error_message": "Request was aborted",
+        "id": "sevt_GKL5c_YubQit8WS5U2E-T",
+        "processed_at": "2026-10-16T00:06:28.296Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.usage",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        },
+        "id": "sevt_dzUWlqWzXp3342fUqIU4n",
+        "processed_at": "2026-10-16T00:06:28.297Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_idle",
+        "stop_reason": {
+          "type": "end_turn"
+        },
+        "id": "sevt_GA7bZckeCBb8qmu-hzsxJ",
+        "processed_at": "2026-10-16T00:06:28.316Z"
+      }
+    },
+    {
+      "kind": "execution_settled",
+      "atMs": 1792109188345,
+      "outcome": "cancelled",
+      "reason": "interrupted during execution"
+    }
+  ],
+  "interrupt": {
+    "id": "sevt_9UCrYL-pCew_u9ShQYH3i",
+    "type": "user.interrupt",
+    "processed_at": 1792109188236,
+    "document": {
+      "type": "user.interrupt",
+      "id": "sevt_9UCrYL-pCew_u9ShQYH3i",
+      "processedAt": "2026-10-16T00:06:28.236Z",
+      "source_position": {
+        "revision": 213,
+        "index": 0
+      }
+    }
+  }
+}

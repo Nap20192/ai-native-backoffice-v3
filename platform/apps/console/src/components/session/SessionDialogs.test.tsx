@@ -114,19 +114,20 @@ describe("ShortcutsDialog", () => {
       "Найти в разговоре",
       "Следующее или предыдущее совпадение (в поле поиска)",
       "Показать или скрыть инспектор",
+      "Переключить разговор и трейс",
       "Свернуть вызов, затем снять выбор",
       "Показать это окно",
     ]) {
       expect(dialog).toHaveTextContent(label);
     }
-    expect(SHORTCUT_ROWS).toHaveLength(7);
+    expect(SHORTCUT_ROWS).toHaveLength(8);
   });
 
   it("клавиши рисуются плашками kbd", () => {
     render(<ShortcutsDialog open onClose={() => {}} />);
 
     const keys = Array.from(document.querySelectorAll("kbd")).map((node) => node.textContent);
-    for (const key of ["↑", "↓", "K", "J", "←", "→", "/", "Enter", "Shift", "D", "Esc", "?"]) {
+    for (const key of ["↑", "↓", "K", "J", "←", "→", "/", "Enter", "Shift", "D", "T", "Esc", "?"]) {
       expect(keys).toContain(key);
     }
   });

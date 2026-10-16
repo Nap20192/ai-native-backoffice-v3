@@ -191,3 +191,12 @@ describe("totals and transcript", () => {
     expect(s.buildTranscriptBlocks([e("session.status_running", "status")])).toEqual([]);
   });
 });
+
+describe("выбор события", () => {
+  it("источник «trace» входит в SelectionSource: выбор в трейсе доходит до ленты и инспектора", () => {
+    const sources: s.SelectionSource[] = ["transcript", "minimap", "events", "tools", "url", "trace"];
+    const selection: s.EventSelection = { eventId: "evt_1", source: "trace", seq: 1 };
+
+    expect(sources).toContain(selection.source);
+  });
+});

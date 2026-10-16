@@ -1,0 +1,1016 @@
+{
+  "_provenance": {
+    "source": "synthetic",
+    "note": "No subagent run is recorded in the preview database. Frames follow ManagedNodeSubagents (node-managed-subagents.ts): thread_created with parent_tool_use_id from create_subagent (openai-subagents.ts), thread_message_sent on the parent thread, child status frames renamed to session.thread_status_*, and session.error exhausted plus thread_status_idle retries_exhausted for a failed child. Turn 1 runs two children in parallel and child B fails. Turn 2 sends to child A again and closes it. Turn 3 resumes child A with a message."
+  },
+  "scope": {
+    "workspaceId": "ws_fixture",
+    "sessionId": "session_fixtureSubagents001"
+  },
+  "harness": "pi",
+  "agentName": "agent",
+  "threads": {
+    "A": "sthr_fixtureChildA",
+    "B": "sthr_fixtureChildB"
+  },
+  "turns": [
+    {
+      "executionId": "sevt_fixtureSubUser000001",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200400001,
+          "events": [
+            {
+              "type": "user.message",
+              "id": "sevt_fixtureSubUser000001",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<user text>"
+                }
+              ],
+              "processedAt": "2026-10-17T01:26:40.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureSubUser000001",
+            "attemptId": "attempt_fixtureSub000001",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200400002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200400009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureSubRun000001",
+            "processed_at": "2026-10-17T01:26:40.011Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-m1",
+            "processed_at": "2026-10-17T01:26:40.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "create_subagent",
+            "input": {
+              "message": "<input>"
+            },
+            "id": "toolu_fixtureSubCreateA",
+            "processed_at": "2026-10-17T01:26:40.500Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "create_subagent",
+            "input": {
+              "message": "<input>"
+            },
+            "id": "toolu_fixtureSubCreateB",
+            "processed_at": "2026-10-17T01:26:40.501Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-m1",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000001",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000001",
+            "processed_at": "2026-10-17T01:26:40.502Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_created",
+            "agent_name": "researcher",
+            "parent_thread_id": "sthr_primary",
+            "parent_tool_use_id": "toolu_fixtureSubCreateA",
+            "id": "sevt_fixtureSubCreatedA1",
+            "processed_at": "2026-10-17T01:26:40.510Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_sent",
+            "to_session_thread_id": "sthr_fixtureChildA",
+            "to_agent_name": "researcher",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubSentA0001",
+            "processed_at": "2026-10-17T01:26:40.511Z",
+            "session_thread_id": "sthr_primary"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_received",
+            "from_session_thread_id": "sthr_primary",
+            "from_agent_name": "agent",
+            "from_message_id": "sevt_fixtureSubSentA0001",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubRecvA0001",
+            "processed_at": "2026-10-17T01:26:40.512Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_running",
+            "agent_name": "researcher",
+            "id": "sevt_fixtureSubRunA00001",
+            "processed_at": "2026-10-17T01:26:40.513Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureSubCreateA",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureSubResCreateA",
+            "processed_at": "2026-10-17T01:26:40.514Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_created",
+            "agent_name": "checker",
+            "parent_thread_id": "sthr_primary",
+            "parent_tool_use_id": "toolu_fixtureSubCreateB",
+            "id": "sevt_fixtureSubCreatedB1",
+            "processed_at": "2026-10-17T01:26:40.515Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_sent",
+            "to_session_thread_id": "sthr_fixtureChildB",
+            "to_agent_name": "checker",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubSentB0001",
+            "processed_at": "2026-10-17T01:26:40.516Z",
+            "session_thread_id": "sthr_primary"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_received",
+            "from_session_thread_id": "sthr_primary",
+            "from_agent_name": "agent",
+            "from_message_id": "sevt_fixtureSubSentB0001",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubRecvB0001",
+            "processed_at": "2026-10-17T01:26:40.517Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_running",
+            "agent_name": "checker",
+            "id": "sevt_fixtureSubRunB00001",
+            "processed_at": "2026-10-17T01:26:40.518Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureSubCreateB",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureSubResCreateB",
+            "processed_at": "2026-10-17T01:26:40.519Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-mA1",
+            "processed_at": "2026-10-17T01:26:40.520Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-mB1",
+            "processed_at": "2026-10-17T01:26:40.521Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-m2",
+            "processed_at": "2026-10-17T01:26:40.530Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "wait_for_subagents",
+            "input": {
+              "ids": [
+                "<input>",
+                "<input>"
+              ]
+            },
+            "id": "toolu_fixtureSubWait0001",
+            "processed_at": "2026-10-17T01:26:40.900Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-m2",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000002",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000002",
+            "processed_at": "2026-10-17T01:26:40.901Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-mB1",
+            "provider_response_id": "resp_sevt_fixtureSubEndB00001",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "error",
+            "final_text_length": 0,
+            "is_error": true,
+            "error_message": "provider request failed",
+            "id": "sevt_fixtureSubEndB00001",
+            "processed_at": "2026-10-17T01:26:41.200Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.error",
+            "error": {
+              "type": "unknown_error",
+              "retry_status": "exhausted",
+              "message": "Pi provider request failed (stop_reason=error)"
+            },
+            "id": "sevt_fixtureSubErrB00001",
+            "processed_at": "2026-10-17T01:26:41.201Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_idle",
+            "agent_name": "checker",
+            "stop_reason": {
+              "type": "retries_exhausted"
+            },
+            "id": "sevt_fixtureSubIdleB0001",
+            "processed_at": "2026-10-17T01:26:41.202Z",
+            "session_thread_id": "sthr_fixtureChildB"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-mA1",
+            "provider_response_id": "resp_sevt_fixtureSubEndA00001",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEndA00001",
+            "processed_at": "2026-10-17T01:26:41.500Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.message",
+            "message_id": "sevt-fixture-sub-msgA1",
+            "content": [
+              {
+                "type": "text",
+                "text": "<agent text>"
+              }
+            ],
+            "id": "sevt-fixture-sub-msgA1",
+            "processed_at": "2026-10-17T01:26:41.501Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_idle",
+            "agent_name": "researcher",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureSubIdleA0001",
+            "processed_at": "2026-10-17T01:26:41.502Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureSubWait0001",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureSubResWait01",
+            "processed_at": "2026-10-17T01:26:41.503Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-m3",
+            "processed_at": "2026-10-17T01:26:41.510Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.message",
+            "message_id": "sevt-fixture-sub-msg3",
+            "content": [
+              {
+                "type": "text",
+                "text": "<agent text>"
+              }
+            ],
+            "id": "sevt-fixture-sub-msg3",
+            "processed_at": "2026-10-17T01:26:41.800Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-m3",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000003",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000003",
+            "processed_at": "2026-10-17T01:26:41.801Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureSubIdle00001",
+            "processed_at": "2026-10-17T01:26:41.810Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200401815,
+          "outcome": "completed"
+        }
+      ]
+    },
+    {
+      "executionId": "sevt_fixtureSubUser000002",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200460001,
+          "events": [
+            {
+              "type": "user.message",
+              "id": "sevt_fixtureSubUser000002",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<user text>"
+                }
+              ],
+              "processedAt": "2026-10-17T01:27:40.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureSubUser000002",
+            "attemptId": "attempt_fixtureSub000002",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200460002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200460009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureSubRun000002",
+            "processed_at": "2026-10-17T01:27:40.011Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-n1",
+            "processed_at": "2026-10-17T01:27:40.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "send_subagent_input",
+            "input": {
+              "id": "<input>",
+              "message": "<input>"
+            },
+            "id": "toolu_fixtureSubSendA001",
+            "processed_at": "2026-10-17T01:27:40.300Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-n1",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000004",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000004",
+            "processed_at": "2026-10-17T01:27:40.301Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_sent",
+            "to_session_thread_id": "sthr_fixtureChildA",
+            "to_agent_name": "researcher",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubSentA0002",
+            "processed_at": "2026-10-17T01:27:40.310Z",
+            "session_thread_id": "sthr_primary"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_received",
+            "from_session_thread_id": "sthr_primary",
+            "from_agent_name": "agent",
+            "from_message_id": "sevt_fixtureSubSentA0002",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubRecvA0002",
+            "processed_at": "2026-10-17T01:27:40.311Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_running",
+            "agent_name": "researcher",
+            "id": "sevt_fixtureSubRunA00002",
+            "processed_at": "2026-10-17T01:27:40.312Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureSubSendA001",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureSubResSendA1",
+            "processed_at": "2026-10-17T01:27:40.313Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-nA1",
+            "processed_at": "2026-10-17T01:27:40.320Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-nA1",
+            "provider_response_id": "resp_sevt_fixtureSubEndA00002",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEndA00002",
+            "processed_at": "2026-10-17T01:27:40.700Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_idle",
+            "agent_name": "researcher",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureSubIdleA0002",
+            "processed_at": "2026-10-17T01:27:40.701Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-n2",
+            "processed_at": "2026-10-17T01:27:40.710Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "close_subagent",
+            "input": {
+              "id": "<input>"
+            },
+            "id": "toolu_fixtureSubCloseA01",
+            "processed_at": "2026-10-17T01:27:40.900Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-n2",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000005",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000005",
+            "processed_at": "2026-10-17T01:27:40.901Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_terminated",
+            "agent_name": "researcher",
+            "id": "sevt_fixtureSubTermA0001",
+            "processed_at": "2026-10-17T01:27:40.910Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureSubCloseA01",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureSubResClose1",
+            "processed_at": "2026-10-17T01:27:40.911Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-n3",
+            "processed_at": "2026-10-17T01:27:40.920Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-n3",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000006",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000006",
+            "processed_at": "2026-10-17T01:27:41.100Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureSubIdle00002",
+            "processed_at": "2026-10-17T01:27:41.110Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200461115,
+          "outcome": "completed"
+        }
+      ]
+    },
+    {
+      "executionId": "sevt_fixtureSubUser000003",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200520001,
+          "events": [
+            {
+              "type": "user.message",
+              "id": "sevt_fixtureSubUser000003",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<user text>"
+                }
+              ],
+              "processedAt": "2026-10-17T01:28:40.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureSubUser000003",
+            "attemptId": "attempt_fixtureSub000003",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200520002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200520009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureSubRun000003",
+            "processed_at": "2026-10-17T01:28:40.011Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-p1",
+            "processed_at": "2026-10-17T01:28:40.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "resume_subagent",
+            "input": {
+              "id": "<input>",
+              "message": "<input>"
+            },
+            "id": "toolu_fixtureSubResumeA1",
+            "processed_at": "2026-10-17T01:28:40.300Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-p1",
+            "provider_response_id": "resp_sevt_fixtureSubEnd000007",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEnd000007",
+            "processed_at": "2026-10-17T01:28:40.301Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_sent",
+            "to_session_thread_id": "sthr_fixtureChildA",
+            "to_agent_name": "researcher",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubSentA0003",
+            "processed_at": "2026-10-17T01:28:40.310Z",
+            "session_thread_id": "sthr_primary"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.thread_message_received",
+            "from_session_thread_id": "sthr_primary",
+            "from_agent_name": "agent",
+            "from_message_id": "sevt_fixtureSubSentA0003",
+            "content": [
+              {
+                "type": "text",
+                "text": "<message>"
+              }
+            ],
+            "id": "sevt_fixtureSubRecvA0003",
+            "processed_at": "2026-10-17T01:28:40.311Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_running",
+            "agent_name": "researcher",
+            "id": "sevt_fixtureSubRunA00003",
+            "processed_at": "2026-10-17T01:28:40.312Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureSubResumeA1",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureSubResResume",
+            "processed_at": "2026-10-17T01:28:40.313Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-sub-pA1",
+            "processed_at": "2026-10-17T01:28:40.320Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-sub-pA1",
+            "provider_response_id": "resp_sevt_fixtureSubEndA00003",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureSubEndA00003",
+            "processed_at": "2026-10-17T01:28:40.600Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.thread_status_idle",
+            "agent_name": "researcher",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureSubIdleA0003",
+            "processed_at": "2026-10-17T01:28:40.601Z",
+            "session_thread_id": "sthr_fixtureChildA"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureSubIdle00003",
+            "processed_at": "2026-10-17T01:28:40.610Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200520615,
+          "outcome": "completed"
+        }
+      ]
+    }
+  ]
+}

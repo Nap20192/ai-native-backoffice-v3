@@ -4,6 +4,7 @@ import { NavLink, useLocation } from "react-router";
 
 import { openCommandPalette } from "./CommandPalette";
 import { NAV_ICONS, type NavIcon } from "./nav-icons";
+import { HARNESS_NAV_ITEM } from "../pages/harnesses/harness-nav";
 import { TenantSwitcher } from "./TenantSwitcher";
 import { UserProfile } from "./UserProfile";
 import { consolePlugins } from "../plugins/registry";
@@ -54,6 +55,7 @@ function useNavGroups(): NavGroup[] {
         { to: "/skills", label: t.nav.skills, icon: NAV_ICONS.skills },
         { to: "/memory", label: t.nav.memoryStores, icon: NAV_ICONS.memory },
         { to: "/model-cards", label: t.nav.modelCards, icon: NAV_ICONS.modelCards },
+        HARNESS_NAV_ITEM,
         { to: "/members", label: t.nav.members, icon: NAV_ICONS.members },
         { to: "/api-keys", label: t.nav.apiKeys, icon: NAV_ICONS.apiKeys },
         { to: "/runtimes", label: t.nav.localRuntimes, icon: NAV_ICONS.runtimes },

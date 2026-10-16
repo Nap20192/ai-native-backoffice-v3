@@ -85,12 +85,14 @@ import {
   NodeManagedSessionInputPreparer,
 } from "../lib/node-managed-session-inputs.js";
 import { applyVaultEnvironment } from "../lib/node-managed-vault-env.js";
+import { acpTurnAgent, createModelsHarnessWiring, prepareAcpTurnInference } from "../lib/models-harness-wiring.js";
 import { harnessUserMessage } from "../lib/node-managed-harness-user-message.js";
 import { runHarnessForTurn } from "../lib/node-managed-harness-turn.js";
 import { NodeManagedMemorySnapshotMaterializer } from "../lib/node-managed-memory-snapshots.js";
 import { NodeSessionExecutionWorker } from "../lib/node-session-execution-worker.js";
 import { createNodeMcpProxyBinding, type NodeMcpProxyTarget } from "../lib/http-mcp-proxy.js";
 import { createNodeAccessLossRuntime } from "../lib/mcp-access-loss.js";
+import { createNodeTraceWiring, withTracePhases } from "../lib/trace/node-wiring.js";
 
 import { Disposables } from "../lifecycle.js";
 import type { NodeComponents } from "../components.js";
@@ -126,6 +128,15 @@ export async function createManagedNodeRuntime(
     buildNodeLanguageModel,
   } = foundation;
   // ─── Official Managed Sessions composition ─────────────────────────────
+
+  // ACP agents in the VM reach their model through the inference proxy
+  // (docs/plans/models-harness.md, 5.8): readiness, harness cards, gateway.
+  const modelsHarness = createModelsHarnessWiring({
+    config,
+    sql,
+    dialect: foundation.dialect,
+    modelCards: modelCardsService,
+  });
 
   async function resolveNodeMcpProxyTarget(input: {
     tenantId: string;
@@ -370,7 +381,11 @@ export async function createManagedNodeRuntime(
     : undefined;
   await workspaceCheckpoints?.ensureSchema();
 
-  const managedRuntimeRunner = new DefaultNodeManagedSessionRunner({
+  // Agent trace (docs/plans/agent-trace.md, TW1): the driver observer and the
+  // sandbox phases of the runner write trace_spans; null on MySQL (3.4).
+  const traceWiring = createNodeTraceWiring({ sql, dialect: foundation.dialect, logger });
+
+  const managedRuntimeRunner = new DefaultNodeManagedSessionRunner(withTracePhases(traceWiring, {
     ...(workspaceCheckpoints === undefined ? {} : { workspaceCheckpoints }),
     subagentThreads: new SqlSessionThreadStore(sql),
     subagentPolicy: ({ session }) => nodeOpenAISubagentPolicy(session, openAIAgentsSecrets),
@@ -473,16 +488,17 @@ export async function createManagedNodeRuntime(
         runtimeGeneration,
       });
       // Vault variables reach the sandbox only for harnesses whose agent CLI
-      // runs there (acp-sandbox); the value is plain in that sandbox.
+      // runs there (acp-sandbox); the value is plain in that sandbox. Model
+      // keys stay out: the agent calls its model through the inference proxy.
       await applyVaultEnvironment({
         harness: session.agent.openma?.harness,
         sandbox,
         credentials: managedCredentialStore,
         workspaceId,
         vaultIds: session.vaultIds,
+        skipModelKeys: true,
         warn: (message, details) => logger.warn({
           ...details,
-          op: "main-node.vault_env.policy_not_enforced",
           sessionId: session.id,
           workspaceId,
         }, message),
@@ -600,8 +616,19 @@ export async function createManagedNodeRuntime(
       }, "harness dispose after the turn failed")),
     }),
     buildHarnessContext: async (input) => {
-      const agent = toLegacyHarnessAgentConfig(input.session);
+      let agent = toLegacyHarnessAgentConfig(input.session);
       const creds = await resolveNodeModelCreds(input.workspaceId, agent.model);
+      const acpInference = agent.harness === "acp-sandbox"
+        ? await prepareAcpTurnInference({
+          wiring: modelsHarness,
+          secrets,
+          workspaceId: input.workspaceId,
+          sessionId: input.session.id,
+          agent,
+          upstream: creds,
+        })
+        : null;
+      if (acpInference !== null) agent = acpTurnAgent(agent, acpInference);
       const modelSettings = readHarnessAgentModelSettings(agent.model);
       const pi = createPiModelRuntime({
         model: creds.wireModel,
@@ -651,6 +678,7 @@ export async function createManagedNodeRuntime(
         env: {
           ANTHROPIC_API_KEY: creds.apiKey,
           ANTHROPIC_BASE_URL: creds.baseURL,
+          ...(acpInference?.kind === "builtin" && { hostedInference: acpInference.hostedInference }),
         },
         runtime: input.runtime,
       } satisfies HarnessContext;
@@ -658,7 +686,7 @@ export async function createManagedNodeRuntime(
     clock: { now: () => new Date() },
     ids: { nextEventId: () => `sevt_${nanoid()}` },
     runtimeGenerations: { next: () => `runtime_${nanoid()}` },
-  });
+  }));
 
   const managedRuntimeReaders = createSqlSessionRuntimeReaders(sql);
   const managedRuntimeEngine = new ApplicationBackedNodeManagedSessionRuntimeEngine({
@@ -677,6 +705,7 @@ export async function createManagedNodeRuntime(
         workspaceId,
         persistence: new SqlSessionRuntimeProjectionPersistence(sql),
       }),
+    ...(traceWiring !== null && { observer: traceWiring.observer, logger }),
   });
   const managedSessionExecutionWorker = new NodeSessionExecutionWorker({
     coordinator: managedSessionExecutionCoordinator,
@@ -761,6 +790,7 @@ export async function createManagedNodeRuntime(
         join(config.paths.sandboxWorkdir, sessionId),
         { recursive: true, force: true },
       );
+      await traceWiring?.deleteSession({ workspaceId, sessionId });
     },
   });
   const managedResourceCipher = secrets === null

@@ -168,10 +168,17 @@ describe("AppSidebar tracks", () => {
       "Навыки",
       "Хранилища памяти",
       "Карточки моделей",
+      "Harness",
       "Участники",
       "API-ключи",
       "Локальные среды",
     ]);
+  });
+
+  it("ведёт пункт «Harness» на страницу своих harness", () => {
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "Навигация по рабочему пространству" });
+    expect(within(sidebar).getByRole("link", { name: "Harness" })).toHaveAttribute("href", "/harnesses");
   });
 
   it("не показывает раздел «Аналитика»: модели внутренние, токены не отслеживаем", () => {

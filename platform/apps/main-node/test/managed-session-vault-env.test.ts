@@ -169,6 +169,118 @@ describe("applyVaultEnvironment", () => {
     expect(applied).toEqual(["ANTHROPIC_API_KEY"]);
     expect(set).toEqual([{ ANTHROPIC_API_KEY: "sk-vault-test" }]);
   });
+
+  it("keeps the W4 behaviour when skipModelKeys is false", async () => {
+    const set: Record<string, string>[] = [];
+    const applied = await applyVaultEnvironment({
+      harness: "acp-sandbox",
+      sandbox: { setEnvVars: async (vars) => { set.push(vars); } },
+      credentials: credentials([]),
+      workspaceId: "tn_1",
+      vaultIds: ["vlt_a"],
+      skipModelKeys: false,
+    });
+    expect(applied).toEqual(["ANTHROPIC_API_KEY"]);
+    expect(set).toEqual([{ ANTHROPIC_API_KEY: "sk-vault-test" }]);
+  });
+});
+
+describe("applyVaultEnvironment with skipModelKeys", () => {
+  const records = [
+    envCredential("c1", "ANTHROPIC_API_KEY", "sk-vault-anthropic"),
+    envCredential("c2", "CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-vault"),
+    envCredential("c3", "ANTHROPIC_BASE_URL", "https://vault-base.example"),
+    envCredential("c4", "OPENAI_API_KEY", "sk-vault-openai"),
+    envCredential("c5", "HOSTED_INFERENCE_TOKEN", "vault-hosted-token"),
+    envCredential("c6", "GITHUB_TOKEN", "ghp_vault_github"),
+  ];
+
+  it("keeps model keys and server inference variables out of the sandbox", async () => {
+    const set: Record<string, string>[] = [];
+    const notices: Array<{ message: string; details: Record<string, unknown> }> = [];
+    const applied = await applyVaultEnvironment({
+      harness: "acp-sandbox",
+      sandbox: { setEnvVars: async (vars) => { set.push(vars); } },
+      credentials: { list: async () => records },
+      workspaceId: "tn_1",
+      vaultIds: ["vlt_a"],
+      skipModelKeys: true,
+      warn: (message, details) => notices.push({ message, details }),
+    });
+
+    expect(applied).toEqual(["GITHUB_TOKEN"]);
+    expect(set).toEqual([{ GITHUB_TOKEN: "ghp_vault_github" }]);
+    expect(notices
+      .map((notice) => notice.details)
+      .filter((details) => details.op === "main-node.vault_env.model_key_skipped")).toEqual([
+      { op: "main-node.vault_env.model_key_skipped", vaultId: "vlt_a", secretName: "ANTHROPIC_API_KEY" },
+      { op: "main-node.vault_env.model_key_skipped", vaultId: "vlt_a", secretName: "CLAUDE_CODE_OAUTH_TOKEN" },
+      { op: "main-node.vault_env.model_key_skipped", vaultId: "vlt_a", secretName: "ANTHROPIC_BASE_URL" },
+      { op: "main-node.vault_env.model_key_skipped", vaultId: "vlt_a", secretName: "OPENAI_API_KEY" },
+      { op: "main-node.vault_env.model_key_skipped", vaultId: "vlt_a", secretName: "HOSTED_INFERENCE_TOKEN" },
+    ]);
+    expect(notices.map((notice) => notice.details.secretName)).toContain("GITHUB_TOKEN");
+    expect(notices[0].message).toContain("ANTHROPIC_API_KEY");
+    expect(JSON.stringify(notices)).not.toMatch(/sk-vault|sk-ant-oat|vault-base|vault-hosted|ghp_vault/);
+  });
+
+  it("skips a model key in every vault and sets nothing when only keys are there", async () => {
+    const set: Record<string, string>[] = [];
+    const notices: Array<Record<string, unknown>> = [];
+    const applied = await applyVaultEnvironment({
+      harness: "acp-sandbox",
+      sandbox: { setEnvVars: async (vars) => { set.push(vars); } },
+      credentials: {
+        list: async ({ vaultId }) => [envCredential(`c_${vaultId}`, "ANTHROPIC_API_KEY", `sk-${vaultId}`)],
+      },
+      workspaceId: "tn_1",
+      vaultIds: ["vlt_a", "vlt_b"],
+      skipModelKeys: true,
+      warn: (_message, details) => notices.push(details),
+    });
+
+    expect(applied).toEqual([]);
+    expect(set).toEqual([]);
+    expect(notices.map((notice) => notice.vaultId)).toEqual(["vlt_a", "vlt_b"]);
+  });
+
+  it("reports a skipped key once, not as an unenforced policy", async () => {
+    const limited = envCredential("c1", "ANTHROPIC_API_KEY", "sk-vault-limited");
+    (limited.credential.auth as Record<string, unknown>).networking = { type: "limited", allowedHosts: ["api.anthropic.com"] };
+    const notices: Array<Record<string, unknown>> = [];
+    await resolveVaultEnvironmentVariables({
+      credentials: { list: async () => [limited] },
+      workspaceId: "tn_1",
+      vaultIds: ["vlt_a"],
+      skipModelKeys: true,
+      warn: (_message, details) => notices.push(details),
+    });
+
+    expect(notices).toEqual([
+      { op: "main-node.vault_env.model_key_skipped", vaultId: "vlt_a", secretName: "ANTHROPIC_API_KEY" },
+    ]);
+  });
+
+  it("tags an unenforced policy with its own op", async () => {
+    const limited = envCredential("c1", "API_TOKEN", "secret-value-1");
+    (limited.credential.auth as Record<string, unknown>).networking = { type: "limited", allowedHosts: ["api.example.com"] };
+    (limited.credential.auth as Record<string, unknown>).injectionLocation = { body: false, header: false };
+    const notices: Array<Record<string, unknown>> = [];
+    await resolveVaultEnvironmentVariables({
+      credentials: { list: async () => [limited] },
+      workspaceId: "tn_1",
+      vaultIds: ["vlt_a"],
+      skipModelKeys: true,
+      warn: (_message, details) => notices.push(details),
+    });
+
+    expect(notices).toEqual([{
+      op: "main-node.vault_env.policy_not_enforced",
+      vaultId: "vlt_a",
+      secretName: "API_TOKEN",
+      ignored: ["networking"],
+    }]);
+  });
 });
 
 const beta = { "anthropic-beta": "managed-agents-2026-04-01" };
@@ -194,13 +306,17 @@ async function controlPlane(overrides: NodeComponentOverrides): Promise<NodeCont
     SESSION_OUTPUTS_DIR: join(dir, "outputs"),
     PLATFORM_ROOT_SECRET: Buffer.alloc(32, 7).toString("base64"),
     ANTHROPIC_API_KEY: "unused",
+    // Claude Code in the sandbox needs a server address for the inference proxy.
+    SANDBOX_GATEWAY_BASE_URL: "http://127.0.0.1:9",
   }), overrides));
   created.push(cp);
   return cp;
 }
 
 describe("managed runner exposes Vault environment variables to the sandbox", () => {
-  it("sets the session's environment_variable credentials on the acp-sandbox sandbox", async () => {
+  // Since the inference proxy (docs/plans/models-harness.md, 5.7) the model
+  // key of a Vault stays out of the sandbox; other variables still arrive.
+  it("sets the session's environment_variable credentials on the acp-sandbox sandbox, without the model key", async () => {
     let resolveEnv!: (env: Record<string, string>) => void;
     const seen = new Promise<Record<string, string>>((resolve) => { resolveEnv = resolve; });
     const env: Record<string, string> = {};
@@ -214,7 +330,7 @@ describe("managed runner exposes Vault environment variables to the sandbox", ()
         writeFile: async (path) => path,
         setEnvVars: async (vars) => {
           Object.assign(env, vars);
-          if (env.ANTHROPIC_API_KEY) resolveEnv({ ...env });
+          if (env.GITHUB_TOKEN) resolveEnv({ ...env });
         },
         sessionOutputMountCapabilities: () => ({ durability: "durable" }),
         mountSessionOutputs: async () => {},
@@ -225,22 +341,26 @@ describe("managed runner exposes Vault environment variables to the sandbox", ()
     const vault = await (await cp.fetch(new Request("http://cp/v1/vaults", post({
       display_name: "claude-code-keys",
     })))).json() as { id: string };
-    const credential = await cp.fetch(new Request(`http://cp/v1/vaults/${vault.id}/credentials`, post({
-      auth: {
-        type: "environment_variable",
-        secret_name: "ANTHROPIC_API_KEY",
-        secret_value: "sk-vault-test",
-        networking: { type: "unrestricted" },
-      },
-    })));
-    expect(credential.status).toBe(201);
+    for (const [name, value] of [["ANTHROPIC_API_KEY", "sk-vault-test"], ["GITHUB_TOKEN", "ghp_vault_test"]]) {
+      const credential = await cp.fetch(new Request(`http://cp/v1/vaults/${vault.id}/credentials`, post({
+        auth: {
+          type: "environment_variable",
+          secret_name: name,
+          secret_value: value,
+          networking: { type: "unrestricted" },
+        },
+      })));
+      expect(credential.status).toBe(201);
+    }
     const environment = await (await cp.fetch(new Request("http://cp/v1/environments", post({
       name: "vault-env", config: { type: "cloud", networking: { type: "unrestricted" } },
     })))).json() as { id: string };
-    const agent = await (await cp.fetch(new Request("http://cp/v1/agents", post({
+    const created = await cp.fetch(new Request("http://cp/v1/agents", post({
       name: "vault-env-agent", model: "claude-sonnet-4-6", system: "hi",
       _oma: { harness: "acp-sandbox", acp: { agent: { id: "claude-acp", command: "claude-agent-acp" } } },
-    })))).json() as { id: string };
+    })));
+    expect(created.status, await created.clone().text()).toBeLessThan(300);
+    const agent = await created.json() as { id: string };
     const session = await (await cp.fetch(new Request("http://cp/v1/sessions", post({
       agent: agent.id, environment_id: environment.id, vault_ids: [vault.id],
     })))).json() as { id: string };
@@ -254,8 +374,9 @@ describe("managed runner exposes Vault environment variables to the sandbox", ()
     ]);
     expect(result).not.toBe("timeout");
     expect(result).toMatchObject({
-      ANTHROPIC_API_KEY: "sk-vault-test",
+      GITHUB_TOKEN: "ghp_vault_test",
       OMA_OUTPUTS_DIR: "/mnt/session/outputs",
     });
+    expect(result).not.toHaveProperty("ANTHROPIC_API_KEY");
   });
 });

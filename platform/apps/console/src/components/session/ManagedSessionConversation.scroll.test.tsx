@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,8 +41,8 @@ function events(): WireSessionEvent[] {
   ];
 }
 
-function renderWith(selection: EventSelection) {
-  return render(
+function renderWith(selection: EventSelection, options: { strict?: boolean } = {}) {
+  const conversation = (
     <MemoryRouter>
       <ManagedSessionConversation
         agentName="Документовед"
@@ -52,8 +53,9 @@ function renderWith(selection: EventSelection) {
         sessionId="session-1"
         turns={projectCanonicalChatTurns(events())}
       />
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  return render(options.strict ? <StrictMode>{conversation}</StrictMode> : conversation);
 }
 
 let scrollIntoView: ReturnType<typeof vi.fn>;
@@ -98,6 +100,16 @@ describe("ManagedSessionConversation: прилипание к низу", () => {
 
     expect(scrollIntoView).not.toHaveBeenCalled();
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+  });
+
+  it("выбор при монтировании прокручивает ленту и тогда, когда StrictMode снимает и ставит эффекты заново", async () => {
+    // Страница открывает ленту уже с выбором («В разговоре» в трейсе, ссылка с
+    // ?event=). StrictMode в режиме разработки сразу после монтирования снимает
+    // эффекты: запланированная прокрутка отменяется и должна встать заново.
+    renderWith({ eventId: "t1", source: "events", seq: 1 }, { strict: true });
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
   });
 

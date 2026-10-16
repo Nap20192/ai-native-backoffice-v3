@@ -371,9 +371,15 @@ export function ManagedSessionConversation({
   // Любая прокрутка ленты к блоку сначала снимает прилипание к низу.
   const stopStickRef = useRef<(() => void) | null>(null);
   const pendingScroll = useRef<number | null>(null);
+  const scrolledKey = useRef<string | null>(null);
   useEffect(
     () => () => {
-      if (pendingScroll.current !== null) cancelAnimationFrame(pendingScroll.current);
+      if (pendingScroll.current === null) return;
+      cancelAnimationFrame(pendingScroll.current);
+      pendingScroll.current = null;
+      // Запланированная прокрутка не сработала (StrictMode снимает эффекты сразу
+      // после монтирования): следующий запуск эффекта выбора поставит её заново.
+      scrolledKey.current = null;
     },
     [],
   );
@@ -422,7 +428,6 @@ export function ManagedSessionConversation({
   // Выбор снаружи прокручивает ленту к событию. Выбор в самой ленте не
   // прокручивает: читатель уже видит блок. Если блока ещё нет (история
   // грузится), ждём его появления.
-  const scrolledKey = useRef<string | null>(null);
   useEffect(() => {
     if (selectedEventId === null) {
       scrolledKey.current = null;

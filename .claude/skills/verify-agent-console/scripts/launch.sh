@@ -89,6 +89,7 @@ BASE_URL=$BASE_URL
 VERIFY_PORT=$VERIFY_PORT
 FAKE_URL=$FAKE_URL
 VERIFY_FAKE_PORT=$VERIFY_FAKE_PORT
+SANDBOX_GATEWAY_BASE_URL=http://host.boxlite.internal:$VERIFY_PORT
 MODEL_MODE=$MODE
 AGENT_MODEL=$VERIFY_AGENT_MODEL
 SANDBOX_IMAGE=$VERIFY_SANDBOX_IMAGE
@@ -177,6 +178,9 @@ start_server() {
   set -a; . "$RUN_DIR/state/secrets.env"; set +a
   export HOME="$server_home" BOXLITE_HOME="$boxlite_home"
   export HOST="$host" PORT="$port" PUBLIC_BASE_URL="$BASE_URL"
+  # Адрес сервера для ACP-агентов в VM (прокси модели): 127.0.0.1 из VM ведёт в саму VM,
+  # а host.boxlite.internal gvproxy BoxLite пересылает на 127.0.0.1 хоста.
+  export SANDBOX_GATEWAY_BASE_URL="http://host.boxlite.internal:$port"
   export DATABASE_PATH="$DATA_DIR/oma.db" AUTH_DATABASE_PATH="$DATA_DIR/auth.db"
   export MEMORY_BLOB_DIR="$DATA_DIR/memory-blobs" FILES_BLOB_DIR="$DATA_DIR/files-blobs"
   export SANDBOX_WORKDIR="$DATA_DIR/sandboxes" SESSION_OUTPUTS_DIR="$DATA_DIR/session-outputs"

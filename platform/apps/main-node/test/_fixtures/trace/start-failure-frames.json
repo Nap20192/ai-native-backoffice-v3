@@ -1,0 +1,172 @@
+{
+  "_provenance": {
+    "source": "synthetic",
+    "note": "No recorded start failure exists in the preview database. Frames follow DefaultNodeManagedSessionRuntimeDriver.projectStartFailure (session.error retrying, session.status_rescheduled, then exhausted and session.status_idle retries_exhausted) with the default three attempts. Observer calls follow plan section 2.1."
+  },
+  "scope": {
+    "workspaceId": "ws_fixture",
+    "sessionId": "session_fixtureStartFailure01"
+  },
+  "harness": "pi",
+  "agentName": "agent",
+  "execution": {
+    "id": "sevt_fixtureStartFailUser01",
+    "lane_id": "sthr_primary",
+    "admitted_at_ms": 1792200000000,
+    "events": [
+      {
+        "type": "user.message",
+        "id": "sevt_fixtureStartFailUser01",
+        "content": [
+          {
+            "type": "text",
+            "text": "<user text>"
+          }
+        ],
+        "processedAt": "2026-10-17T01:20:00.000Z"
+      }
+    ],
+    "state": "failed",
+    "attempt_id": "attempt_fixtureStartFail01",
+    "owner_id": "node:fixture",
+    "generation": 1,
+    "claimed_at_ms": 1792200000000,
+    "lease_expires_at_ms": 1792200040000,
+    "settled_at_ms": 1792200010510,
+    "failure": "LiteBox: pip install failed for verify-trace-missing-1"
+  },
+  "inputs": [
+    {
+      "kind": "execution_started",
+      "atMs": 1792200000001,
+      "events": [
+        {
+          "type": "user.message",
+          "id": "sevt_fixtureStartFailUser01",
+          "content": [
+            {
+              "type": "text",
+              "text": "<user text>"
+            }
+          ],
+          "processedAt": "2026-10-17T01:20:00.000Z"
+        }
+      ],
+      "fence": {
+        "executionId": "sevt_fixtureStartFailUser01",
+        "attemptId": "attempt_fixtureStartFail01",
+        "generation": 1
+      }
+    },
+    {
+      "kind": "start_attempt",
+      "attempt": 1,
+      "atMs": 1792200000002
+    },
+    {
+      "kind": "start_attempt_settled",
+      "attempt": 1,
+      "atMs": 1792200001502,
+      "outcome": "error",
+      "error": "LiteBox: pip install failed for verify-trace-missing-1",
+      "retryInMs": 2000
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.error",
+        "error": {
+          "type": "unknown_error",
+          "message": "LiteBox: pip install failed for verify-trace-missing-1",
+          "retry_status": "retrying"
+        },
+        "id": "sevt_fixtureStartFailErr01",
+        "processed_at": "2026-10-17T01:20:01.503Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_rescheduled",
+        "id": "sevt_fixtureStartFailRsc01",
+        "processed_at": "2026-10-17T01:20:01.504Z"
+      }
+    },
+    {
+      "kind": "start_attempt",
+      "attempt": 2,
+      "atMs": 1792200003503
+    },
+    {
+      "kind": "start_attempt_settled",
+      "attempt": 2,
+      "atMs": 1792200005003,
+      "outcome": "error",
+      "error": "LiteBox: pip install failed for verify-trace-missing-1",
+      "retryInMs": 4000
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.error",
+        "error": {
+          "type": "unknown_error",
+          "message": "LiteBox: pip install failed for verify-trace-missing-1",
+          "retry_status": "retrying"
+        },
+        "id": "sevt_fixtureStartFailErr02",
+        "processed_at": "2026-10-17T01:20:05.004Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_rescheduled",
+        "id": "sevt_fixtureStartFailRsc02",
+        "processed_at": "2026-10-17T01:20:05.005Z"
+      }
+    },
+    {
+      "kind": "start_attempt",
+      "attempt": 3,
+      "atMs": 1792200009004
+    },
+    {
+      "kind": "start_attempt_settled",
+      "attempt": 3,
+      "atMs": 1792200010504,
+      "outcome": "error",
+      "error": "LiteBox: pip install failed for verify-trace-missing-1"
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.error",
+        "error": {
+          "type": "unknown_error",
+          "message": "LiteBox: pip install failed for verify-trace-missing-1",
+          "retry_status": "exhausted"
+        },
+        "id": "sevt_fixtureStartFailErr03",
+        "processed_at": "2026-10-17T01:20:10.505Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_idle",
+        "stop_reason": {
+          "type": "retries_exhausted"
+        },
+        "id": "sevt_fixtureStartFailIdle1",
+        "processed_at": "2026-10-17T01:20:10.506Z"
+      }
+    },
+    {
+      "kind": "execution_settled",
+      "atMs": 1792200010510,
+      "outcome": "failed",
+      "reason": "LiteBox: pip install failed for verify-trace-missing-1"
+    }
+  ]
+}

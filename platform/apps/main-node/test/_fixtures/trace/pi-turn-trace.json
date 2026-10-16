@@ -1,0 +1,287 @@
+{
+  "trace_id": "b5706a3085e1351c6c16159af2466191",
+  "session_id": "session_SnN30KeA8gBY-4j-bOcqm",
+  "turns": [
+    {
+      "turn": {
+        "span_id": "8135e90cef67fbc0",
+        "parent_span_id": null,
+        "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+        "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+        "thread_id": "sthr_primary",
+        "kind": "turn",
+        "name": "turn",
+        "sources": [
+          "events"
+        ],
+        "precision": "measured",
+        "start_ms": 1792097242488,
+        "end_ms": 1792097299500,
+        "status": "ok",
+        "error": null,
+        "harness": "pi",
+        "model": null,
+        "usage": null,
+        "ttft_ms": null,
+        "finish_reason": null,
+        "tool": null,
+        "primary_event_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+        "event_ids": [
+          "sevt_UPI9J7-Aey7VYr-97kAYR",
+          "sevt_0fk9BrGzCg-MSmBRidgDU"
+        ],
+        "attrs": {
+          "queue_ms": 26,
+          "record_end_ms": 1792097299500
+        },
+        "version": 2,
+        "deleted": false,
+        "updated_at": 1792097299601
+      },
+      "state": "complete",
+      "partial": false,
+      "lost": [],
+      "coverage": {
+        "model_calls": "measured",
+        "tools": "measured",
+        "sandbox": "attempts"
+      },
+      "span_count": 6,
+      "error_count": 0,
+      "waiting_count": 0,
+      "version": 6
+    }
+  ],
+  "turns_before": null,
+  "spans": [
+    {
+      "span_id": "8135e90cef67fbc0",
+      "parent_span_id": null,
+      "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+      "thread_id": "sthr_primary",
+      "kind": "turn",
+      "name": "turn",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792097242488,
+      "end_ms": 1792097299500,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "event_ids": [
+        "sevt_UPI9J7-Aey7VYr-97kAYR",
+        "sevt_0fk9BrGzCg-MSmBRidgDU"
+      ],
+      "attrs": {
+        "queue_ms": 26,
+        "record_end_ms": 1792097299500
+      },
+      "version": 2,
+      "deleted": false,
+      "updated_at": 1792097299601
+    },
+    {
+      "span_id": "ca5f78bb06a0f451",
+      "parent_span_id": "8135e90cef67fbc0",
+      "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+      "thread_id": "sthr_primary",
+      "kind": "sandbox",
+      "name": "sandbox",
+      "sources": [
+        "runner"
+      ],
+      "precision": "measured",
+      "start_ms": 1792097242489,
+      "end_ms": 1792097242494,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": null,
+      "event_ids": [],
+      "attrs": {
+        "attempt": 1
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792097299601
+    },
+    {
+      "span_id": "c80ac6c834adbd4a",
+      "parent_span_id": "8135e90cef67fbc0",
+      "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+      "thread_id": "sthr_primary",
+      "kind": "model_call",
+      "name": "Qwen/Qwen3.6-35B-A3B",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792097242512,
+      "end_ms": 1792097243440,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": "Qwen/Qwen3.6-35B-A3B",
+      "usage": {
+        "input": 2825,
+        "output": 139,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "ttft_ms": 488,
+      "finish_reason": "toolUse",
+      "tool": null,
+      "primary_event_id": "sevt-i2havp34duc1fap1",
+      "event_ids": [
+        "sevt-i2havp34duc1fap1",
+        "sevt__thhBfnqX2JWdXVmxf1LX"
+      ],
+      "attrs": {
+        "record_start_ms": 1792097242514,
+        "harness_duration_ms": 928,
+        "provider_response_id": "chatcmpl-900a1bea9c88f225",
+        "record_end_ms": 1792097243449
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792097299601
+    },
+    {
+      "span_id": "9f9e1efcb48b949f",
+      "parent_span_id": "8135e90cef67fbc0",
+      "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+      "thread_id": "sthr_primary",
+      "kind": "tool_call",
+      "name": "bash",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792097243440,
+      "end_ms": 1792097298818,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": {
+        "name": "bash",
+        "call_id": "chatcmpl-tool-ab6ba647636a85b4",
+        "kind": "builtin",
+        "mcp_server": null
+      },
+      "primary_event_id": "chatcmpl-tool-ab6ba647636a85b4",
+      "event_ids": [
+        "chatcmpl-tool-ab6ba647636a85b4",
+        "sevt_oCcwJWaHAOdEyGrVYkzSQ"
+      ],
+      "attrs": {
+        "record_start_ms": 1792097243448,
+        "start_from_model_end": true,
+        "record_end_ms": 1792097298823
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792097299601
+    },
+    {
+      "span_id": "ae86cc89105a0da1",
+      "parent_span_id": "9f9e1efcb48b949f",
+      "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+      "thread_id": "sthr_primary",
+      "kind": "tool_exec",
+      "name": "exec",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792097243452,
+      "end_ms": 1792097298818,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": "chatcmpl-tool-ab6ba647636a85b4",
+      "event_ids": [
+        "sevt_oCcwJWaHAOdEyGrVYkzSQ"
+      ],
+      "attrs": {
+        "record_start_ms": 1792097243452,
+        "harness_duration_ms": 55366,
+        "record_end_ms": 1792097298820
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792097299601
+    },
+    {
+      "span_id": "9594316c182a77a4",
+      "parent_span_id": "8135e90cef67fbc0",
+      "turn_id": "sevt_UPI9J7-Aey7VYr-97kAYR",
+      "attempt_id": "attempt_rlY_zx-uyJlCOD6HCkpNM",
+      "thread_id": "sthr_primary",
+      "kind": "model_call",
+      "name": "Qwen/Qwen3.6-35B-A3B",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792097298829,
+      "end_ms": 1792097299479,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": "Qwen/Qwen3.6-35B-A3B",
+      "usage": {
+        "input": 2869,
+        "output": 58,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "ttft_ms": 271,
+      "finish_reason": "stop",
+      "tool": null,
+      "primary_event_id": "sevt-ljlcx8x37wi3ajvj",
+      "event_ids": [
+        "sevt-ljlcx8x37wi3ajvj",
+        "sevt_K_7KoJIPqNHsZIZqVfszN"
+      ],
+      "attrs": {
+        "record_start_ms": 1792097298831,
+        "harness_duration_ms": 650,
+        "provider_response_id": "chatcmpl-84fe22cc0071b9b3",
+        "record_end_ms": 1792097299489
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792097299601
+    }
+  ],
+  "spans_next": null,
+  "cursor": "eyJ1IjoxNzkyMDk3Mzk4MDAwLCJzIjoiIiwidHUiOjE3OTIwOTczOTgwMDAsInR0IjoiIn0",
+  "collecting": false
+}

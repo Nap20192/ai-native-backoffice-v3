@@ -37,6 +37,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { createStrictlyIncreasingEventStamp } from "./node-managed-harness-runtime.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
+import type { SessionExecutionObserver } from "./trace/types.js";
 
 export type StartNodeManagedSessionRuntime = StartSessionExecution & {
   executionFence?: SessionExecutionFence;
@@ -108,7 +109,15 @@ export interface DefaultNodeManagedSessionRuntimeDriverDependencies {
    * with `retries_exhausted`. Startup has produced no agent side effects.
    * `cancel` aborts the backoff and the in-flight attempt. */
   startRetry?: { attempts: number; delayMs(attempt: number): number };
+  /** Agent trace (docs/plans/agent-trace.md, 2.1): the turn, its start
+   * attempts and every frame before history. Optional; a failing observer
+   * is logged and never changes the turn. */
+  observer?: SessionExecutionObserver;
+  logger?: { warn(obj: Record<string, unknown>, msg: string): void };
 }
+
+/** How long the turn waits for the trace flush in executionSettled. */
+const OBSERVER_SETTLE_TIMEOUT_MS = 2_000;
 
 export interface NodeManagedSessionRunnerAcceptInput
   extends AcceptNodeManagedSessionEvents {
@@ -285,6 +294,15 @@ export class DefaultNodeManagedSessionRuntimeDriver
       sessionId: input.sessionId,
       reason: `session_${input.reason}`,
     });
+    const observer = this.dependencies.observer;
+    if (observer?.sessionStopped !== undefined) {
+      const scope = { workspaceId: input.workspaceId, sessionId: input.sessionId };
+      await this.observeAsync(scope, "session_stopped", () => observer.sessionStopped!({
+        ...scope,
+        atMs: this.observerNow(),
+        reason: input.reason,
+      }));
+    }
     try {
       await this.dependencies.engine.stop(input);
       await this.outputChains.get(input);
@@ -308,6 +326,16 @@ export class DefaultNodeManagedSessionRuntimeDriver
     const abortController = new AbortController();
     this.startAborts.set(input, abortController);
     const signal = abortController.signal;
+    const scope = { workspaceId: input.workspaceId, sessionId: input.sessionId };
+    this.observe(scope, "execution_started", (observer) => observer.executionStarted({
+      ...scope,
+      events: input.events,
+      ...(fence !== undefined && { fence }),
+      atMs: this.observerNow(),
+      agentName: input.session.agent.name,
+      harness: input.session.agent.openma?.harness ?? null,
+    }));
+    let failure: { error: unknown } | undefined;
     try {
       const retry = this.dependencies.startRetry ?? {
         attempts: 3,
@@ -319,6 +347,11 @@ export class DefaultNodeManagedSessionRuntimeDriver
           await this.finishCancelledStart(input, signal, announcedRetry);
           throw abortedError(signal);
         }
+        this.observe(scope, "start_attempt", (observer) => observer.startAttempt({
+          ...scope,
+          attempt,
+          atMs: this.observerNow(),
+        }));
         try {
           await this.start({
             workspaceId: input.workspaceId,
@@ -329,13 +362,35 @@ export class DefaultNodeManagedSessionRuntimeDriver
             ...(fence !== undefined && { executionFence: fence }),
             signal,
           });
+          this.observe(scope, "start_attempt_settled", (observer) => observer.startAttemptSettled({
+            ...scope,
+            attempt,
+            atMs: this.observerNow(),
+            outcome: "ok",
+          }));
           break;
         } catch (error) {
           if (signal.aborted || isAbortError(error)) {
+            this.observe(scope, "start_attempt_settled", (observer) => observer.startAttemptSettled({
+              ...scope,
+              attempt,
+              atMs: this.observerNow(),
+              outcome: "cancelled",
+            }));
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw signal.aborted ? abortedError(signal) : error;
           }
-          if (attempt >= Math.max(1, retry.attempts)) {
+          const exhausted = attempt >= Math.max(1, retry.attempts);
+          const retryInMs = exhausted ? undefined : retry.delayMs(attempt);
+          this.observe(scope, "start_attempt_settled", (observer) => observer.startAttemptSettled({
+            ...scope,
+            attempt,
+            atMs: this.observerNow(),
+            outcome: "error",
+            error: error instanceof Error ? error.message : String(error),
+            ...(retryInMs !== undefined && { retryInMs }),
+          }));
+          if (exhausted) {
             await this.projectStartFailure(input, error, "exhausted");
             throw error;
           }
@@ -345,7 +400,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw abortedError(signal);
           }
-          await abortableDelay(retry.delayMs(attempt), signal);
+          await abortableDelay(retryInMs ?? 0, signal);
           if (signal.aborted) {
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw abortedError(signal);
@@ -362,6 +417,9 @@ export class DefaultNodeManagedSessionRuntimeDriver
         ...(fence !== undefined && { executionFence: fence }),
       });
       await this.outputChains.get(input);
+    } catch (error) {
+      failure = { error };
+      throw error;
     } finally {
       if (this.startAborts.get(input) === abortController) {
         this.startAborts.delete(input);
@@ -369,7 +427,90 @@ export class DefaultNodeManagedSessionRuntimeDriver
       if (fence !== undefined && this.executionFences.get(input) === fence) {
         this.executionFences.delete(input);
       }
+      await this.settleObserver(scope, signal, failure);
     }
+  }
+
+  /** The trace flush runs at most OBSERVER_SETTLE_TIMEOUT_MS; what it misses
+   * the repair from history builds later (plan 3.3). */
+  private async settleObserver(
+    scope: { workspaceId: string; sessionId: string },
+    signal: AbortSignal,
+    failure: { error: unknown } | undefined,
+  ): Promise<void> {
+    const observer = this.dependencies.observer;
+    if (observer === undefined) return;
+    const reason = signal.aborted ? cancellationReason(signal) : undefined;
+    const outcome = reason === "lease_lost"
+      ? "lease_lost"
+      : signal.aborted
+        ? "cancelled"
+        : failure !== undefined ? "failed" : "completed";
+    const failureReason = outcome === "failed" && failure !== undefined
+      ? failure.error instanceof Error ? failure.error.message : String(failure.error)
+      : undefined;
+    const detail = reason ?? failureReason;
+    await this.observeAsync(scope, "execution_settled", () => observer.executionSettled({
+      ...scope,
+      atMs: this.observerNow(),
+      outcome,
+      ...(detail !== undefined && { reason: detail }),
+    }));
+  }
+
+  private observe(
+    scope: { workspaceId: string; sessionId: string },
+    step: string,
+    call: (observer: SessionExecutionObserver) => void,
+  ): void {
+    const observer = this.dependencies.observer;
+    if (observer === undefined) return;
+    try {
+      call(observer);
+    } catch (error) {
+      this.observerFailed(scope, step, error);
+    }
+  }
+
+  private async observeAsync(
+    scope: { workspaceId: string; sessionId: string },
+    step: string,
+    call: () => Promise<void>,
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = Promise.resolve()
+      .then(call)
+      .catch((error: unknown) => this.observerFailed(scope, step, error));
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, OBSERVER_SETTLE_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([settled, timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  private observerFailed(
+    scope: { workspaceId: string; sessionId: string },
+    step: string,
+    error: unknown,
+  ): void {
+    try {
+      this.dependencies.logger?.warn({
+        op: "main-node.trace.observer_failed",
+        workspace_id: scope.workspaceId,
+        session_id: scope.sessionId,
+        step,
+        err: error instanceof Error ? error.message : String(error),
+      }, "trace observer failed; the turn continues");
+    } catch {
+      // Logging must not break the turn either.
+    }
+  }
+
+  private observerNow(): number {
+    return (this.dependencies.clock?.now() ?? new Date()).getTime();
   }
 
   private async finishCancelledStart(
@@ -378,6 +519,12 @@ export class DefaultNodeManagedSessionRuntimeDriver
     announcedRetry: boolean,
   ): Promise<void> {
     const reason = cancellationReason(signal);
+    const scope = { workspaceId: input.workspaceId, sessionId: input.sessionId };
+    this.observe(scope, "start_cancelled", (observer) => observer.startCancelled({
+      ...scope,
+      atMs: this.observerNow(),
+      ...(reason !== undefined && { reason }),
+    }));
     // lease_lost: the new owner re-runs the turn. session_*: the session is
     // going away. Either way a trailing idle from this attempt would race
     // the owner that still holds the session.
@@ -540,6 +687,9 @@ export class DefaultNodeManagedSessionRuntimeDriver
     executionFence?: SessionExecutionFence,
   ): Promise<void> {
     const scope = { workspaceId, sessionId };
+    // The trace sees every raw frame, span.* timing included, before the
+    // public projection drops what is not an official event.
+    this.observe(scope, "frame", (observer) => observer.frame(scope, frame));
     const previous = this.outputChains.get(scope) ?? Promise.resolve();
     const current = previous
       .catch(() => undefined)

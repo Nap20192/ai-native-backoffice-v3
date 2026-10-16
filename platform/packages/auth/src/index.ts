@@ -39,6 +39,13 @@ export interface ApiKeyResolution {
         workId: string;
         claimedAt: string;
         generation: number;
+      }
+    | {
+        /** Short-lived token an ACP agent in the session sandbox uses to call
+         * the model through the hosted inference proxy of that session only. */
+        type: "sandbox_inference";
+        sessionId: string;
+        expiresAt: string;
       };
 }
 
@@ -76,11 +83,30 @@ function environmentWorkPath(environmentId: string): string {
   return `/v1/environments/${encodeURIComponent(environmentId)}/work`;
 }
 
-/** Environment service keys are Bearer-only and cannot escape their Work API. */
+const INFERENCE_PROXY_ROOT = "/v1/oma/inference-proxy/";
+
+/** Session id of an inference proxy path, decoded; null for any other path
+ * or a malformed escape. */
+function inferenceProxySessionOf(path: string): string | null {
+  if (!path.startsWith(INFERENCE_PROXY_ROOT)) return null;
+  const segment = path.slice(INFERENCE_PROXY_ROOT.length).split("/", 1)[0] ?? "";
+  if (segment.length === 0) return null;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/** Environment service keys are Bearer-only and cannot escape their Work API.
+ * A sandbox inference token opens only the inference proxy of its session. */
 export function allowsApiKeyRequest(
   resolution: ApiKeyResolution,
   request: Pick<BearerTokenRequest, "path"> & { transport: "bearer" | "x-api-key" },
 ): boolean {
+  if (resolution.credential?.type === "sandbox_inference") {
+    return inferenceProxySessionOf(request.path) === resolution.credential.sessionId;
+  }
   if (resolution.credential?.type === "environment") {
     if (request.transport !== "bearer") return false;
     const root = environmentWorkPath(resolution.credential.environmentId);

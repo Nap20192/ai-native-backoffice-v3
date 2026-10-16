@@ -1,0 +1,192 @@
+{
+  "_provenance": {
+    "source": "platform/apps/main-node/data-preview/oma.db (read-only)",
+    "extracted": "2026-10-16",
+    "note": "Recorded turn that failed in the runner after the sandbox started (no model card).",
+    "sanitized": "user, agent, thinking, tool input and tool output texts replaced with placeholders"
+  },
+  "scope": {
+    "workspaceId": "ws_fixture",
+    "sessionId": "session_oa1YEMxhINd7WAM3Dhygz"
+  },
+  "harness": "pi",
+  "agentName": "agent",
+  "execution": {
+    "id": "sevt_c_SW6B8WMNeEBUd5DxBFq",
+    "lane_id": "sthr_primary",
+    "admitted_at_ms": 1792068720865,
+    "events": [
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "<user text>"
+          }
+        ],
+        "id": "sevt_c_SW6B8WMNeEBUd5DxBFq",
+        "processedAt": "2026-10-15T12:52:00.865Z",
+        "type": "user.message"
+      }
+    ],
+    "state": "failed",
+    "attempt_id": "attempt_q-GhxdUfg_NAFqTjfp15l",
+    "owner_id": "node:fixture",
+    "generation": 1,
+    "claimed_at_ms": 1792068720881,
+    "lease_expires_at_ms": 1792068750881,
+    "settled_at_ms": 1792068720929,
+    "failure": "No model card matched and ANTHROPIC_API_KEY is unset — configure a model card or set the env var"
+  },
+  "history": [
+    {
+      "id": "sevt_c_SW6B8WMNeEBUd5DxBFq",
+      "type": "user.message",
+      "processed_at": 1792068720865,
+      "thread_id": null,
+      "document": {
+        "type": "user.message",
+        "content": [
+          {
+            "type": "text",
+            "text": "<user text>"
+          }
+        ],
+        "id": "sevt_c_SW6B8WMNeEBUd5DxBFq",
+        "processedAt": "2026-10-15T12:52:00.865Z",
+        "source_position": {
+          "revision": 2,
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "sevt_ZCATZIYKBm2N5j5Xy2d96",
+      "type": "session.status_running",
+      "processed_at": 1792068720896,
+      "thread_id": null,
+      "document": {
+        "type": "session.status_running",
+        "id": "sevt_ZCATZIYKBm2N5j5Xy2d96",
+        "processedAt": "2026-10-15T12:52:00.896Z",
+        "source_position": {
+          "revision": 3,
+          "index": 0,
+          "execution_id": "sevt_c_SW6B8WMNeEBUd5DxBFq"
+        }
+      }
+    },
+    {
+      "id": "sevt_lm73MOh47xay1is7MZxc3",
+      "type": "session.error",
+      "processed_at": 1792068720899,
+      "thread_id": null,
+      "document": {
+        "type": "session.error",
+        "error": {
+          "type": "unknown_error",
+          "message": "No model card matched and ANTHROPIC_API_KEY is unset — configure a model card or set the env var",
+          "retryStatus": "exhausted"
+        },
+        "id": "sevt_lm73MOh47xay1is7MZxc3",
+        "processedAt": "2026-10-15T12:52:00.899Z",
+        "source_position": {
+          "revision": 4,
+          "index": 0,
+          "execution_id": "sevt_c_SW6B8WMNeEBUd5DxBFq"
+        }
+      }
+    },
+    {
+      "id": "sevt_WvWQhq4s4rqpGJK8M7jGG",
+      "type": "session.status_idle",
+      "processed_at": 1792068720908,
+      "thread_id": null,
+      "document": {
+        "type": "session.status_idle",
+        "stopReason": {
+          "type": "retries_exhausted"
+        },
+        "id": "sevt_WvWQhq4s4rqpGJK8M7jGG",
+        "processedAt": "2026-10-15T12:52:00.908Z",
+        "source_position": {
+          "revision": 5,
+          "index": 0,
+          "execution_id": "sevt_c_SW6B8WMNeEBUd5DxBFq"
+        }
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "kind": "execution_started",
+      "atMs": 1792068720882,
+      "events": [
+        {
+          "content": [
+            {
+              "type": "text",
+              "text": "<user text>"
+            }
+          ],
+          "id": "sevt_c_SW6B8WMNeEBUd5DxBFq",
+          "processedAt": "2026-10-15T12:52:00.865Z",
+          "type": "user.message"
+        }
+      ],
+      "fence": {
+        "executionId": "sevt_c_SW6B8WMNeEBUd5DxBFq",
+        "attemptId": "attempt_q-GhxdUfg_NAFqTjfp15l",
+        "generation": 1
+      }
+    },
+    {
+      "kind": "start_attempt",
+      "attempt": 1,
+      "atMs": 1792068720883
+    },
+    {
+      "kind": "start_attempt_settled",
+      "attempt": 1,
+      "atMs": 1792068720895,
+      "outcome": "ok"
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_running",
+        "id": "sevt_ZCATZIYKBm2N5j5Xy2d96",
+        "processed_at": "2026-10-15T12:52:00.896Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.error",
+        "error": {
+          "type": "unknown_error",
+          "message": "No model card matched and ANTHROPIC_API_KEY is unset — configure a model card or set the env var",
+          "retry_status": "exhausted"
+        },
+        "id": "sevt_lm73MOh47xay1is7MZxc3",
+        "processed_at": "2026-10-15T12:52:00.899Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_idle",
+        "stop_reason": {
+          "type": "retries_exhausted"
+        },
+        "id": "sevt_WvWQhq4s4rqpGJK8M7jGG",
+        "processed_at": "2026-10-15T12:52:00.908Z"
+      }
+    },
+    {
+      "kind": "execution_settled",
+      "atMs": 1792068720929,
+      "outcome": "failed",
+      "reason": "No model card matched and ANTHROPIC_API_KEY is unset — configure a model card or set the env var"
+    }
+  ]
+}

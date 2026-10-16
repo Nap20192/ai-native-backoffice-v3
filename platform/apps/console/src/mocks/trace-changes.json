@@ -1,0 +1,440 @@
+{
+  "spans": [
+    {
+      "span_id": "c100000000000010",
+      "parent_span_id": "c100000000000001",
+      "turn_id": "evt_c1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "model_call",
+      "name": "claude-sonnet-4-5",
+      "sources": [
+        "events"
+      ],
+      "precision": "by_events",
+      "start_ms": 1792151602600,
+      "end_ms": 1792151605100,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": "claude-sonnet-4-5",
+      "usage": {
+        "input": 10,
+        "output": 5,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "ttft_ms": 710,
+      "finish_reason": "tool_use",
+      "tool": null,
+      "primary_event_id": "evt_c_mrs1",
+      "event_ids": [
+        "evt_c_mrs1",
+        "evt_c_mre1"
+      ],
+      "attrs": {},
+      "version": 3,
+      "deleted": false,
+      "updated_at": 1792151700100
+    },
+    {
+      "span_id": "b100000000000010",
+      "parent_span_id": "b100000000000001",
+      "turn_id": "evt_b1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "model_call",
+      "name": "claude-sonnet-4-5",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792151501300,
+      "end_ms": 1792151503900,
+      "status": "error",
+      "error": null,
+      "harness": "pi",
+      "model": "stale-model",
+      "usage": {
+        "input": 10,
+        "output": 5,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "ttft_ms": 640,
+      "finish_reason": "tool_use",
+      "tool": null,
+      "primary_event_id": "evt_b_mrs1",
+      "event_ids": [
+        "evt_b_mrs1",
+        "evt_b_mre1"
+      ],
+      "attrs": {
+        "harness_duration_ms": 2600
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792151700110
+    },
+    {
+      "span_id": "b100000000000023",
+      "parent_span_id": "b100000000000022",
+      "turn_id": "evt_b1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "tool_exec",
+      "name": "exec",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792151503960,
+      "end_ms": 1792151504040,
+      "status": "error",
+      "error": {
+        "type": "tool_error",
+        "message": "Команда завершилась с кодом 1"
+      },
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": null,
+      "event_ids": [],
+      "attrs": {},
+      "version": 3,
+      "deleted": true,
+      "updated_at": 1792151700120
+    },
+    {
+      "span_id": "b100000000000050",
+      "parent_span_id": "b100000000000020",
+      "turn_id": "evt_b1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "event",
+      "name": "warning",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792151505000,
+      "end_ms": 1792151505000,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": "evt_b_warn",
+      "event_ids": [
+        "evt_b_warn"
+      ],
+      "attrs": {
+        "source": "bash",
+        "message": "Вывод команды обрезан"
+      },
+      "version": 3,
+      "deleted": false,
+      "updated_at": 1792151700130
+    },
+    {
+      "span_id": "a200000000000001",
+      "parent_span_id": "a100000000000001",
+      "turn_id": "evt_a1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "sandbox",
+      "name": "attempt_1",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792150000010,
+      "end_ms": 1792150000900,
+      "status": "ok",
+      "error": null,
+      "harness": null,
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": null,
+      "event_ids": [],
+      "attrs": {},
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792150000910
+    },
+    {
+      "span_id": "c100000000000040",
+      "parent_span_id": "c100000000000001",
+      "turn_id": "evt_c1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "tool_call",
+      "name": "write",
+      "sources": [
+        "events"
+      ],
+      "precision": "by_events",
+      "start_ms": 1792151633000,
+      "end_ms": null,
+      "status": "running",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": {
+        "name": "write",
+        "call_id": "toolu_c3",
+        "kind": "builtin",
+        "mcp_server": null
+      },
+      "primary_event_id": "evt_c_use3",
+      "event_ids": [
+        "evt_c_use3"
+      ],
+      "attrs": {},
+      "version": 3,
+      "deleted": false,
+      "updated_at": 1792151700060
+    },
+    {
+      "span_id": "c100000000000041",
+      "parent_span_id": "c100000000000040",
+      "turn_id": "evt_c1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "tool_wait",
+      "name": "wait",
+      "sources": [
+        "events"
+      ],
+      "precision": "by_events",
+      "start_ms": 1792151633000,
+      "end_ms": 1792151700050,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": "evt_c_use3",
+      "event_ids": [
+        "evt_c_use3"
+      ],
+      "attrs": {},
+      "version": 3,
+      "deleted": false,
+      "updated_at": 1792151700060
+    },
+    {
+      "span_id": "c100000000000042",
+      "parent_span_id": "c100000000000040",
+      "turn_id": "evt_c1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "tool_exec",
+      "name": "exec",
+      "sources": [
+        "events"
+      ],
+      "precision": "by_events",
+      "start_ms": 1792151700050,
+      "end_ms": null,
+      "status": "running",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": null,
+      "event_ids": [],
+      "attrs": {
+        "executed_in_turn": "evt_d1"
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792151700060
+    },
+    {
+      "span_id": "d100000000000001",
+      "parent_span_id": null,
+      "turn_id": "evt_d1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "turn",
+      "name": "Аналитик отчётов",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792151700000,
+      "end_ms": null,
+      "status": "running",
+      "error": null,
+      "harness": "pi",
+      "model": "claude-sonnet-4-5",
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": "evt_d1",
+      "event_ids": [
+        "evt_d1"
+      ],
+      "attrs": {},
+      "version": 2,
+      "deleted": false,
+      "updated_at": 1792151700010
+    },
+    {
+      "span_id": "d100000000000002",
+      "parent_span_id": "d100000000000001",
+      "turn_id": "evt_d1",
+      "attempt_id": "att_1",
+      "thread_id": "sthr_primary",
+      "kind": "event",
+      "name": "confirmation",
+      "sources": [
+        "events"
+      ],
+      "precision": "measured",
+      "start_ms": 1792151700050,
+      "end_ms": 1792151700050,
+      "status": "ok",
+      "error": null,
+      "harness": "pi",
+      "model": null,
+      "usage": null,
+      "ttft_ms": null,
+      "finish_reason": null,
+      "tool": null,
+      "primary_event_id": "evt_d1",
+      "event_ids": [
+        "evt_d1"
+      ],
+      "attrs": {
+        "link_span_id": "c100000000000040",
+        "result": "allow",
+        "tool_use_id": "toolu_c3"
+      },
+      "version": 1,
+      "deleted": false,
+      "updated_at": 1792151700060
+    }
+  ],
+  "turns": [
+    {
+      "turn": {
+        "span_id": "c100000000000001",
+        "parent_span_id": null,
+        "turn_id": "evt_c1",
+        "attempt_id": "att_1",
+        "thread_id": "sthr_primary",
+        "kind": "turn",
+        "name": "Аналитик отчётов",
+        "sources": [
+          "events"
+        ],
+        "precision": "by_events",
+        "start_ms": 1792151602500,
+        "end_ms": 1792151633100,
+        "status": "ok",
+        "error": null,
+        "harness": "pi",
+        "model": "claude-sonnet-4-5",
+        "usage": null,
+        "ttft_ms": null,
+        "finish_reason": null,
+        "tool": null,
+        "primary_event_id": "evt_c1",
+        "event_ids": [
+          "evt_c1",
+          "evt_c1_idle"
+        ],
+        "attrs": {
+          "stop_reason": "requires_action",
+          "has_error": true
+        },
+        "version": 7,
+        "deleted": false,
+        "updated_at": 1792151700070
+      },
+      "state": "complete",
+      "partial": true,
+      "lost": [
+        "ttft",
+        "tool_exec"
+      ],
+      "coverage": {
+        "model_calls": "by_events",
+        "tools": "by_events",
+        "sandbox": "attempts"
+      },
+      "span_count": 15,
+      "error_count": 2,
+      "waiting_count": 0,
+      "version": 7
+    },
+    {
+      "turn": {
+        "span_id": "d100000000000001",
+        "parent_span_id": null,
+        "turn_id": "evt_d1",
+        "attempt_id": "att_1",
+        "thread_id": "sthr_primary",
+        "kind": "turn",
+        "name": "Аналитик отчётов",
+        "sources": [
+          "events"
+        ],
+        "precision": "measured",
+        "start_ms": 1792151700000,
+        "end_ms": null,
+        "status": "running",
+        "error": null,
+        "harness": "pi",
+        "model": "claude-sonnet-4-5",
+        "usage": null,
+        "ttft_ms": null,
+        "finish_reason": null,
+        "tool": null,
+        "primary_event_id": "evt_d1",
+        "event_ids": [
+          "evt_d1"
+        ],
+        "attrs": {},
+        "version": 2,
+        "deleted": false,
+        "updated_at": 1792151700010
+      },
+      "state": "open",
+      "partial": false,
+      "lost": [],
+      "coverage": {
+        "model_calls": "measured",
+        "tools": "measured",
+        "sandbox": "phases"
+      },
+      "span_count": 2,
+      "error_count": 0,
+      "waiting_count": 0,
+      "version": 2
+    }
+  ],
+  "cursor": "eyJ1IjoxNzkyMTUxNzAwMDcwLCJzIjoiZDEwMDAwMDAwMDAwMDAwMiJ9",
+  "more": false
+}

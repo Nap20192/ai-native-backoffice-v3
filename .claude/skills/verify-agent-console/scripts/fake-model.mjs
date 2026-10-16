@@ -30,12 +30,23 @@
 //      touch <рабочая папка>/bash-ran-<n>.txt: при отказе файла в выводах нет.
 // Второй ход той же сессии (маркер "VERIFY_CLAUDE_CODE nonce=<n> turn=2"):
 //   1) tool_use Bash "ps -eo pid,ppid,args" (процессы VM: сколько живых claude-agent-acp);
-//   2) после результата: "VERIFY_CC_TURN2_<n> acp_processes=<k>". В журнал пишутся
+//   2) tool_use Bash "ps eww -o args= -p <pid>": окружение главного процесса claude-agent-acp
+//      (pid из вывода шага 1). Значения в журнал не пишутся: только имена переменных,
+//      sha256 значений (12 знаков), ANTHROPIC_BASE_URL, ANTHROPIC_MODEL и первые 8 знаков
+//      ANTHROPIC_AUTH_TOKEN (поле env);
+//   3) после результата: "VERIFY_CC_TURN2_<n> acp_processes=<k>". В журнал пишутся
 //      число процессов (acp_processes), их строки и есть ли в истории запроса
 //      реплика первого хода (history_has_turn1: ACP-сессия возобновлена с историей).
 // Служебные запросы Claude Code без инструментов (заголовок, тема) получают
 // короткий текст. В журнал пишутся user-agent, sha256 ключа (12 знаков, не сам
 // ключ), версия anthropic-beta и инструменты запроса.
+// У каждого запроса в журнале есть thinking (тип thinking из тела) и effort
+// (output_config.effort): так видно, дошло ли усилие агента до модели.
+//
+// Свой ACP-агент из карточки harness (acp-echo-agent.cjs) шлёт запрос без потока с
+// маркером "VERIFY_ACP_CARD nonce=<n>" и получает текст "VERIFY_MODEL_SAW_<n>".
+// POST …/chat/completions (проверка ключа карточки модели OpenAI при создании)
+// получает короткий ответ OpenAI.
 //
 // Запуск: node fake-model.mjs --port 8792 --log <файл.jsonl>
 // GET /health -> {"ok":true,"requests":N}. Каждый запрос модели пишется строкой в --log.
@@ -60,7 +71,37 @@ const CC_TURN2 = /VERIFY_CLAUDE_CODE nonce=[a-z0-9]+ turn=2/;
 const ACP_PROCESS = /(^|[\s/])claude-agent-acp(\s|$)/;
 const WORKDIR = /working directory:\s*`?(\/[^\s`]*)/i;
 const COMMAND = /^Команда: (.+)$/m;
+const CARD_MARKER = /VERIFY_ACP_CARD nonce=([a-z0-9]+)/;
 let requestCount = 0;
+const sha12 = (value) => (value ? createHash("sha256").update(String(value)).digest("hex").slice(0, 12) : null);
+
+// Окружение процесса из вывода «ps eww -o args= -p <pid>»: «<команда> NAME=value …».
+// Значение с пробелами режется на первом пробеле. Секретов в журнал не пишем.
+function envFacts(text) {
+  const vars = {};
+  for (const token of String(text ?? "").split(/\s+/)) {
+    const m = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (m && !(m[1] in vars)) vars[m[1]] = m[2];
+  }
+  const auth = vars.ANTHROPIC_AUTH_TOKEN ?? "";
+  return {
+    names: Object.keys(vars).sort(),
+    sha12: Object.fromEntries(Object.entries(vars).map(([name, value]) => [name, sha12(value)])),
+    anthropic_base_url: vars.ANTHROPIC_BASE_URL ?? null,
+    anthropic_model: vars.ANTHROPIC_MODEL ?? null,
+    auth_token_prefix: auth ? auth.slice(0, 8) : null,
+  };
+}
+
+// Запрос своего ACP-агента из карточки harness: маркер в любой реплике пользователя.
+function cardNonce(body) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  for (const m of messages) {
+    const found = m?.role === "user" ? textOf(m.content).match(CARD_MARKER) : null;
+    if (found) return found[1];
+  }
+  return null;
+}
 
 function textOf(content) {
   if (typeof content === "string") return content;
@@ -117,19 +158,32 @@ function decideClaudeCode(body) {
     if (step === 0) {
       return { ...base, decision: "cc2_ps", historyHasTurn1, reply: { tool: "Bash", input: { command: "ps -eo pid,ppid,args", description: "list sandbox processes" } } };
     }
-    const acpLines = lastText.split("\n").filter((line) => ACP_PROCESS.test(line));
-    return {
-      ...base,
-      decision: "cc2_final_text",
+    // Результат 1: вывод ps (процессы). Результат 2: окружение главного claude-agent-acp.
+    const psResult = results[0];
+    const psText = textOf(psResult.content);
+    const acpLines = psText.split("\n").filter((line) => ACP_PROCESS.test(line));
+    const acpPid = acpLines[0]?.trim().split(/\s+/)[0] ?? "";
+    const psFacts = {
       historyHasTurn1,
       acpProcesses: acpLines.length,
       acpLines: acpLines.map((line) => line.trim().slice(0, 200)),
-      toolResultExcerpt: excerpt,
-      reply: {
-        text: last.is_error
-          ? `VERIFY_FAIL_${nonce}: ps не выполнился: ${lastText.slice(0, 200)}`
-          : `VERIFY_CC_TURN2_${nonce} acp_processes=${acpLines.length}`,
-      },
+      // Вывод ps без окружения: в нём нет токена хода.
+      toolResultExcerpt: psText.slice(0, 500),
+    };
+    if (psResult.is_error) {
+      return { ...base, ...psFacts, decision: "cc2_final_text", reply: { text: `VERIFY_FAIL_${nonce}: ps не выполнился: ${psText.slice(0, 200)}` } };
+    }
+    if (step === 1 && /^\d+$/.test(acpPid)) {
+      return { ...base, ...psFacts, decision: "cc2_env", reply: { tool: "Bash", input: { command: `ps eww -o args= -p ${acpPid}`, description: "environment of the ACP process" } } };
+    }
+    const envResult = step >= 2 ? results[1] : null;
+    return {
+      ...base,
+      ...psFacts,
+      decision: "cc2_final_text",
+      env: envResult && !envResult.is_error ? envFacts(textOf(envResult.content)) : null,
+      envError: envResult?.is_error ? textOf(envResult.content).slice(0, 200) : null,
+      reply: { text: `VERIFY_CC_TURN2_${nonce} acp_processes=${acpLines.length}` },
     };
   }
   if (step === 0) {
@@ -278,15 +332,7 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({ input_tokens: 10 }));
     return;
   }
-  if (req.method !== "POST" || !url.pathname.endsWith("/messages")) {
-    record({ path: url.pathname, method: req.method, decision: "not_found" });
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "not_found_error", message: "fake model: unknown path" } }));
-    return;
-  }
-  const n = ++requestCount;
   const model = typeof body.model === "string" ? body.model : "fake";
-  const sha12 = (value) => (value ? createHash("sha256").update(String(value)).digest("hex").slice(0, 12) : null);
   const bearer = /^Bearer (.+)$/i.exec(String(req.headers.authorization ?? ""))?.[1];
   const client = {
     user_agent: req.headers["user-agent"] ?? null,
@@ -295,10 +341,35 @@ const server = createServer(async (req, res) => {
     anthropic_beta: req.headers["anthropic-beta"] ?? null,
     query: url.search || null,
   };
-  if (body.stream !== true) {
-    record({ n, path: url.pathname, stream: false, model, decision: "non_stream_ok", ...client });
+  // Усилие агента: pi-ai шлёт его как output_config.effort при thinking {type: "adaptive"}.
+  const reasoning = {
+    thinking: typeof body.thinking?.type === "string" ? body.thinking.type : null,
+    effort: typeof body.output_config?.effort === "string" ? body.output_config.effort : null,
+  };
+  if (req.method === "POST" && url.pathname.endsWith("/chat/completions")) {
+    record({ path: url.pathname, model, decision: "openai_probe", ...client });
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ id: `msg_verify_${n}`, type: "message", role: "assistant", model, content: [{ type: "text", text: "ok" }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
+    res.end(JSON.stringify({ id: "chatcmpl-verify", object: "chat.completion", created: 0, model, choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+    return;
+  }
+  if (req.method !== "POST" || !url.pathname.endsWith("/messages")) {
+    record({ path: url.pathname, method: req.method, decision: "not_found" });
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "not_found_error", message: "fake model: unknown path" } }));
+    return;
+  }
+  const n = ++requestCount;
+  if (body.stream !== true) {
+    const card = cardNonce(body);
+    record({
+      n, path: url.pathname, stream: false, model,
+      ...(card ? { kind: "ACP_CARD", nonce: card } : {}),
+      decision: card ? "card_reply" : "non_stream_ok",
+      ...reasoning, ...client,
+    });
+    const text = card ? `VERIFY_MODEL_SAW_${card}` : "ok";
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ id: `msg_verify_${n}`, type: "message", role: "assistant", model, content: [{ type: "text", text }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
     return;
   }
   const d = decide(body);
@@ -315,6 +386,8 @@ const server = createServer(async (req, res) => {
     acp_processes: d.acpProcesses ?? null,
     acp_lines: d.acpLines ?? null,
     history_has_turn1: d.historyHasTurn1 ?? null,
+    env: d.env ?? null,
+    env_error: d.envError ?? null,
     tool_result_excerpt: d.toolResultExcerpt ?? null,
     command: d.reply.input?.command ?? null,
     reply_tool: d.reply.tool ?? null,
@@ -324,6 +397,7 @@ const server = createServer(async (req, res) => {
     workdir_hint: d.workdir === "/workspace" ? d.dirHint ?? null : undefined,
     tools: d.toolNames,
     messages: Array.isArray(body.messages) ? body.messages.length : 0,
+    ...reasoning,
     ...client,
   });
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });

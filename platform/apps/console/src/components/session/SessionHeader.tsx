@@ -53,7 +53,7 @@ export interface SessionHeaderProps {
   onArchive(): void;
   onCopyEvents(): void;
   onDownloadEvents(): void;
-  onShowTrajectory(): void;
+  onDownloadTrace(): void;
   onShowShortcuts(): void;
 }
 
@@ -254,7 +254,7 @@ export function SessionHeader({
   onArchive,
   onCopyEvents,
   onDownloadEvents,
-  onShowTrajectory,
+  onDownloadTrace,
   onShowShortcuts,
 }: SessionHeaderProps) {
   const now = useNow(30_000);
@@ -321,7 +321,7 @@ export function SessionHeader({
               <DropdownMenuContent align="end" className="w-64">
                 <DropdownMenuItem onSelect={onCopyEvents}>Копировать все события</DropdownMenuItem>
                 <DropdownMenuItem onSelect={onDownloadEvents}>Скачать все события</DropdownMenuItem>
-                <DropdownMenuItem onSelect={onShowTrajectory}>Траектория</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onDownloadTrace}>Скачать трейс</DropdownMenuItem>
                 <DropdownMenuItem onSelect={onShowShortcuts}>Горячие клавиши</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

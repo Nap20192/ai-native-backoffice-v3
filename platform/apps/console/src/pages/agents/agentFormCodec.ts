@@ -6,8 +6,18 @@
  * tools, MCP stdio, unknown toolsets, metadata, etc.). Full-field UI is
  * tracked separately in #155 — this module only guarantees round-trips.
  */
+import type { EffortLevel, HarnessEntry, ModelOption } from "../../lib/catalog-api";
 import type { AgentRecord as Agent } from "../../types/agent";
 import yaml from "js-yaml";
+import {
+  applyHarness,
+  compatibility,
+  findModel,
+  harnessIdOf,
+  pickDefaultModel,
+  type HarnessTarget,
+} from "./agent-harness";
+import { effortOf } from "./model-format";
 
 export function parseAgentConfigText(
   source: string,
@@ -159,8 +169,14 @@ export type ToolOverride = "default" | "always_allow" | "always_ask" | "disabled
 export type FormState = {
   name: string;
   model: string;
-  /** Preserved from model config objects; not edited in Form UI yet. */
+  /** Усилие модели. Пустая строка: поле `effort` не задаётся. */
+  modelEffort: "" | EffortLevel;
+  /** Скорость модели. Пустая строка и `standard` значат обычную скорость. */
   modelSpeed: "" | "standard" | "fast";
+  /** Id harness: `pi` для встроенного цикла, id записи каталога для ACP. */
+  harness: string;
+  /** Блок `_oma.acp`, который форма запишет при смене harness. `null` у встроенного цикла. */
+  harnessAcp: Record<string, unknown> | null;
   auxiliaryModel: string;
   auxiliaryModelSpeed: "" | "standard" | "fast";
   appendablePrompts: string[];
@@ -179,7 +195,10 @@ export type FormState = {
 export const INITIAL_FORM: FormState = {
   name: "",
   model: "",
+  modelEffort: "",
   modelSpeed: "",
+  harness: "pi",
+  harnessAcp: null,
   auxiliaryModel: "",
   auxiliaryModelSpeed: "",
   appendablePrompts: [],
@@ -203,13 +222,6 @@ const RESPONSE_ONLY_KEYS = new Set([
   "updated_at",
   "archived_at",
 ]);
-
-/** Advanced harness ids (`_oma.harness`). Pi is the platform default; `ai-sdk` is deprecated. */
-export const AGENT_HARNESS_HINT = {
-  default: "Pi agent-core (поле harness не задаётся)",
-  pi: "Pi agent-core (задан явно)",
-  "ai-sdk": "Прежний цикл AI SDK (устарел, лучше использовать Pi по умолчанию)",
-} as const;
 
 const OMA_ONLY_KEYS = new Set([
   "runtime_binding",
@@ -298,7 +310,16 @@ export function configToForm(config: Record<string, unknown>): FormState {
     ...INITIAL_FORM,
     name: String(config.name || ""),
     model: modelIdOf(config.model) || (typeof config.model === "string" ? config.model : ""),
+    modelEffort: effortOf(config.model),
     modelSpeed: modelSpeedOf(config.model),
+    harness: harnessIdOf(config),
+    harnessAcp:
+      openma?.harness === "acp-sandbox" &&
+      openma.acp &&
+      typeof openma.acp === "object" &&
+      !Array.isArray(openma.acp)
+        ? structuredClone(openma.acp as Record<string, unknown>)
+        : null,
     auxiliaryModel: modelIdOf(openma?.aux_model),
     auxiliaryModelSpeed: modelSpeedOf(openma?.aux_model),
     appendablePrompts: Array.isArray(openma?.appendable_prompts)
@@ -358,10 +379,18 @@ export function agentToForm(agent: Agent): FormState {
   return configToForm(agent as unknown as Record<string, unknown>);
 }
 
+/** Форма запишет ACP-агента: усилие и скорость ему не передаются. */
+function isAcpForm(form: FormState): boolean {
+  return form.harnessAcp !== null;
+}
+
 export function buildModelValue(
   form: FormState,
   existingModel?: unknown,
 ): string | Record<string, unknown> {
+  const acp = isAcpForm(form);
+  const effort = acp ? "" : form.modelEffort;
+  const speed = acp ? "" : form.modelSpeed;
   if (
     existingModel &&
     typeof existingModel === "object" &&
@@ -370,16 +399,94 @@ export function buildModelValue(
   ) {
     const model = structuredClone(existingModel as Record<string, unknown>);
     model.id = form.model;
-    if (form.modelSpeed === "standard" || form.modelSpeed === "fast") {
-      model.speed = form.modelSpeed;
+    if (speed === "standard" || speed === "fast") {
+      model.speed = speed;
     } else {
       delete model.speed;
     }
+    // Усилие, которое пользователь не менял, остаётся в том виде, как его
+    // вернул API (`{type}` или строка).
+    if (effort === "") delete model.effort;
+    else if (effortOf(model) !== effort) model.effort = effort;
     return model;
   }
-  return form.modelSpeed === "standard" || form.modelSpeed === "fast"
-    ? { id: form.model, speed: form.modelSpeed }
+  const hasSpeed = speed === "standard" || speed === "fast";
+  return effort !== "" || hasSpeed
+    ? {
+        id: form.model,
+        ...(effort !== "" ? { effort } : {}),
+        ...(hasSpeed ? { speed } : {}),
+      }
     : form.model;
+}
+
+export interface ModelChoiceResult {
+  form: FormState;
+  /** Усилие было задано, а новая модель его не поддерживает. */
+  effortReset: boolean;
+  /** Быстрая скорость была включена, а новая модель её не поддерживает. */
+  speedReset: boolean;
+}
+
+/**
+ * Выбор модели в форме. Усилие и скорость остаются, если новая модель их
+ * поддерживает, иначе сбрасываются, и результат говорит об этом, чтобы форма
+ * написала пояснение под полем.
+ */
+export function applyModelChoice(form: FormState, option: ModelOption): ModelChoiceResult {
+  const effortReset = form.modelEffort !== "" && !option.effort_levels.includes(form.modelEffort);
+  const speedReset = form.modelSpeed === "fast" && !option.speed_fast;
+  return {
+    form: {
+      ...form,
+      model: option.handle,
+      modelCardId: option.card_id ?? "",
+      modelEffort: effortReset ? "" : form.modelEffort,
+      modelSpeed: speedReset ? "" : form.modelSpeed,
+    },
+    effortReset,
+    speedReset,
+  };
+}
+
+export interface HarnessChoiceResult {
+  form: FormState;
+  /** Модель заменена, потому что прежняя не работает с новым harness. */
+  modelReplaced: { from: string; to: string } | null;
+}
+
+/**
+ * Выбор harness в форме. Записывает id и блок ACP из записи каталога. Если
+ * текущая модель из каталога не подходит новому harness, берёт модель по
+ * умолчанию, а пустую модель заполняет ею же. Модель, которой нет в каталоге
+ * (её задали в YAML), остаётся как есть.
+ */
+export function applyHarnessChoice(
+  form: FormState,
+  entry: HarnessEntry,
+  options: ModelOption[] | undefined,
+): HarnessChoiceResult {
+  let next: FormState = {
+    ...form,
+    harness: entry.id,
+    harnessAcp: entry.acp ? structuredClone(entry.acp) : null,
+  };
+  if (!options) return { form: next, modelReplaced: null };
+
+  const current = findModel(options, form.model);
+  if (form.model === "") {
+    const pick = pickDefaultModel(options, entry);
+    if (pick) next = applyModelChoice(next, pick).form;
+    return { form: next, modelReplaced: null };
+  }
+  if (current && !compatibility(entry, current).ok) {
+    const pick = pickDefaultModel(options, entry);
+    if (pick) {
+      next = applyModelChoice(next, pick).form;
+      return { form: next, modelReplaced: { from: form.model, to: pick.handle } };
+    }
+  }
+  return { form: next, modelReplaced: null };
 }
 
 /** Form-managed built-in toolset entry only. */
@@ -734,5 +841,13 @@ export function mergeFormIntoConfig(
     }
   }
 
+  // Harness. Тот же id оставляет блок агента как есть, со своей обёрткой и
+  // своими переменными. Другой id пишет блок из каталога или убирает его.
+  if (form.harness !== harnessIdOf(base)) {
+    const target: HarnessTarget = isAcpForm(form)
+      ? { id: form.harness, runtime_harness: "acp-sandbox", acp: form.harnessAcp as HarnessTarget["acp"] }
+      : { id: form.harness, runtime_harness: null, acp: null };
+    return applyHarness(payload, target, { forUpdate });
+  }
   return payload;
 }

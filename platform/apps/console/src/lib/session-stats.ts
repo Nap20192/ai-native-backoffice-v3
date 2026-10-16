@@ -3,7 +3,7 @@ import { formatShortDurationRu, sessionErrorText } from "../components/session/f
 
 export type SessionEvent = Event;
 
-export type SelectionSource = "transcript" | "minimap" | "events" | "tools" | "url";
+export type SelectionSource = "transcript" | "minimap" | "events" | "tools" | "url" | "trace";
 export interface EventSelection {
   eventId: string | null;
   source: SelectionSource;

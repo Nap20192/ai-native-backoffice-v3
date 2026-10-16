@@ -1,0 +1,450 @@
+{
+  "_provenance": {
+    "source": "synthetic",
+    "note": "No confirmation is recorded in the preview database. Turn 1 and 3 end with requires_action after a bash call with evaluated_permission ask (default-loop.ts emitToolCallEvent). Turn 2 allows it: the runner executes confirmedTools and writes agent.tool_result (node-managed-session-runner.ts). Turn 4 denies: the runner writes an error result with the deny text."
+  },
+  "scope": {
+    "workspaceId": "ws_fixture",
+    "sessionId": "session_fixtureConfirm00001"
+  },
+  "harness": "pi",
+  "agentName": "agent",
+  "turns": [
+    {
+      "executionId": "sevt_fixtureConfirmUser001",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200200001,
+          "events": [
+            {
+              "type": "user.message",
+              "id": "sevt_fixtureConfirmUser001",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<user text>"
+                }
+              ],
+              "processedAt": "2026-10-17T01:23:20.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureConfirmUser001",
+            "attemptId": "attempt_fixtureConfirm001",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200200002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200200009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureConfirmRun001",
+            "processed_at": "2026-10-17T01:23:20.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-confirm-m1",
+            "processed_at": "2026-10-17T01:23:20.030Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "bash",
+            "input": {
+              "command": "<input>"
+            },
+            "evaluated_permission": "ask",
+            "id": "toolu_fixtureConfirmBash1",
+            "processed_at": "2026-10-17T01:23:20.900Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-confirm-m1",
+            "provider_response_id": "resp_sevt_fixtureConfirmEnd001",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureConfirmEnd001",
+            "processed_at": "2026-10-17T01:23:20.901Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "requires_action",
+              "event_ids": [
+                "toolu_fixtureConfirmBash1"
+              ]
+            },
+            "id": "sevt_fixtureConfirmIdle01",
+            "processed_at": "2026-10-17T01:23:20.910Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200200915,
+          "outcome": "completed"
+        }
+      ]
+    },
+    {
+      "executionId": "sevt_fixtureConfirmAllow01",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200260001,
+          "events": [
+            {
+              "type": "user.tool_confirmation",
+              "id": "sevt_fixtureConfirmAllow01",
+              "toolUseId": "toolu_fixtureConfirmBash1",
+              "result": "allow",
+              "processedAt": "2026-10-17T01:24:20.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureConfirmAllow01",
+            "attemptId": "attempt_fixtureConfirm002",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200260002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200260009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureConfirmRun002",
+            "processed_at": "2026-10-17T01:24:20.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureConfirmBash1",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": false,
+            "id": "sevt_fixtureConfirmRes001",
+            "processed_at": "2026-10-17T01:24:20.640Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-confirm-m2",
+            "processed_at": "2026-10-17T01:24:20.650Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.message",
+            "message_id": "sevt-fixture-confirm-msg2",
+            "content": [
+              {
+                "type": "text",
+                "text": "<agent text>"
+              }
+            ],
+            "id": "sevt-fixture-confirm-msg2",
+            "processed_at": "2026-10-17T01:24:21.200Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-confirm-m2",
+            "provider_response_id": "resp_sevt_fixtureConfirmEnd002",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureConfirmEnd002",
+            "processed_at": "2026-10-17T01:24:21.201Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureConfirmIdle02",
+            "processed_at": "2026-10-17T01:24:21.210Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200261215,
+          "outcome": "completed"
+        }
+      ]
+    },
+    {
+      "executionId": "sevt_fixtureConfirmUser003",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200300001,
+          "events": [
+            {
+              "type": "user.message",
+              "id": "sevt_fixtureConfirmUser003",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<user text>"
+                }
+              ],
+              "processedAt": "2026-10-17T01:25:00.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureConfirmUser003",
+            "attemptId": "attempt_fixtureConfirm003",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200300002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200300009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureConfirmRun003",
+            "processed_at": "2026-10-17T01:25:00.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-confirm-m3",
+            "processed_at": "2026-10-17T01:25:00.030Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_use",
+            "name": "bash",
+            "input": {
+              "command": "<input>"
+            },
+            "evaluated_permission": "ask",
+            "id": "toolu_fixtureConfirmBash3",
+            "processed_at": "2026-10-17T01:25:00.700Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-confirm-m3",
+            "provider_response_id": "resp_sevt_fixtureConfirmEnd003",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "toolUse",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureConfirmEnd003",
+            "processed_at": "2026-10-17T01:25:00.701Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "requires_action",
+              "event_ids": [
+                "toolu_fixtureConfirmBash3"
+              ]
+            },
+            "id": "sevt_fixtureConfirmIdle03",
+            "processed_at": "2026-10-17T01:25:00.710Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200300715,
+          "outcome": "completed"
+        }
+      ]
+    },
+    {
+      "executionId": "sevt_fixtureConfirmDeny004",
+      "inputs": [
+        {
+          "kind": "execution_started",
+          "atMs": 1792200360001,
+          "events": [
+            {
+              "type": "user.tool_confirmation",
+              "id": "sevt_fixtureConfirmDeny004",
+              "toolUseId": "toolu_fixtureConfirmBash3",
+              "result": "deny",
+              "denyMessage": "<deny text>",
+              "processedAt": "2026-10-17T01:26:00.000Z"
+            }
+          ],
+          "fence": {
+            "executionId": "sevt_fixtureConfirmDeny004",
+            "attemptId": "attempt_fixtureConfirm004",
+            "generation": 1
+          }
+        },
+        {
+          "kind": "start_attempt",
+          "attempt": 1,
+          "atMs": 1792200360002
+        },
+        {
+          "kind": "start_attempt_settled",
+          "attempt": 1,
+          "atMs": 1792200360009,
+          "outcome": "ok"
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_running",
+            "id": "sevt_fixtureConfirmRun004",
+            "processed_at": "2026-10-17T01:26:00.020Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "agent.tool_result",
+            "tool_use_id": "toolu_fixtureConfirmBash3",
+            "content": [
+              {
+                "type": "text",
+                "text": "<tool output>"
+              }
+            ],
+            "is_error": true,
+            "id": "sevt_fixtureConfirmRes004",
+            "processed_at": "2026-10-17T01:26:00.025Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_start",
+            "model": "fixture-model",
+            "id": "sevt-fixture-confirm-m4",
+            "processed_at": "2026-10-17T01:26:00.030Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "span.model_request_end",
+            "model": "fixture-model",
+            "model_request_start_id": "sevt-fixture-confirm-m4",
+            "provider_response_id": "resp_sevt_fixtureConfirmEnd004",
+            "model_usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            },
+            "finish_reason": "stop",
+            "final_text_length": 0,
+            "is_error": false,
+            "id": "sevt_fixtureConfirmEnd004",
+            "processed_at": "2026-10-17T01:26:00.600Z"
+          }
+        },
+        {
+          "kind": "frame",
+          "frame": {
+            "type": "session.status_idle",
+            "stop_reason": {
+              "type": "end_turn"
+            },
+            "id": "sevt_fixtureConfirmIdle04",
+            "processed_at": "2026-10-17T01:26:00.610Z"
+          }
+        },
+        {
+          "kind": "execution_settled",
+          "atMs": 1792200360615,
+          "outcome": "completed"
+        }
+      ]
+    }
+  ]
+}

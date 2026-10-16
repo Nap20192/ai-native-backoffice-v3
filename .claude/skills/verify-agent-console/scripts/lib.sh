@@ -52,17 +52,30 @@ vac_node24() {
   export PATH="$(dirname "$VAC_NODE_BIN"):$PATH"
 }
 
-# Перед тяжёлой командой: при load1 >= 10 или температуре >= 93°C ждём 60 с, не больше 10 раз.
+# Перед тяжёлой командой ждём 60 с, не больше 10 раз, пока выполнено хоть одно условие:
+# load1 >= 10, CPU >= 93°C, свободной памяти (MemAvailable) меньше VERIFY_MIN_FREE_MB,
+# свободная память вместе со свободным swap меньше VERIFY_MIN_HEADROOM_MB.
+# Память проверяется из-за systemd-oomd: когда и память, и swap заняты больше чем на 90%,
+# он убивает cgroup с самым большим swap. 2026-10-16 в 07:55 так погиб scope Claude вместе
+# с прогоном 20261016-074730. Процент занятого swap сам по себе мало что говорит: ядро
+# выносит в zram простаивающие страницы и при 7 ГБ свободной памяти, поэтому считается весь запас.
+VERIFY_MIN_FREE_MB="${VERIFY_MIN_FREE_MB:-3072}"
+VERIFY_MIN_HEADROOM_MB="${VERIFY_MIN_HEADROOM_MB:-6144}"
 vac_wait_cool() {
-  local i load1 temp
+  local i load1 temp free_mb swap_free_mb swap_pct
   for i in 1 2 3 4 5 6 7 8 9 10; do
     load1="$(cut -d' ' -f1 /proc/loadavg)"
     temp="$(sensors 2>/dev/null | grep 'Package id 0' | grep -oE '\+[0-9]+(\.[0-9]+)?' | head -1 | tr -d '+' || true)"
-    if awk -v l="$load1" -v t="${temp:-0}" 'BEGIN { exit !(l >= 10 || t >= 93) }'; then
-      vac_say "нагрузка высокая: load1=$load1, CPU ${temp:-?}°C; жду 60 с ($i/10)"
+    free_mb="$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)"
+    swap_free_mb="$(awk '/^SwapFree:/ { print int($2 / 1024) }' /proc/meminfo)"
+    swap_pct="$(awk '/^SwapTotal:/ { t = $2 } /^SwapFree:/ { f = $2 } END { print (t > 0) ? int((t - f) * 100 / t) : 0 }' /proc/meminfo)"
+    if awk -v l="$load1" -v t="${temp:-0}" -v m="$free_mb" -v sf="$swap_free_mb" \
+        -v mm="$VERIFY_MIN_FREE_MB" -v mh="$VERIFY_MIN_HEADROOM_MB" \
+        'BEGIN { exit !(l >= 10 || t >= 93 || m < mm || m + sf < mh) }'; then
+      vac_say "нагрузка высокая: load1=$load1, CPU ${temp:-?}°C, свободно ${free_mb} МБ, swap ${swap_pct}% (свободно ${swap_free_mb} МБ); жду 60 с ($i/10)"
       sleep 60
     else
-      vac_say "нагрузка: load1=$load1, CPU ${temp:-нет данных}°C"
+      vac_say "нагрузка: load1=$load1, CPU ${temp:-нет данных}°C, свободно ${free_mb} МБ, swap ${swap_pct}% (свободно ${swap_free_mb} МБ)"
       return 0
     fi
   done

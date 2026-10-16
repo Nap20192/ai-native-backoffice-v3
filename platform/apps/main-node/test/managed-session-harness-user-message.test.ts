@@ -86,7 +86,9 @@ describe("managed runner passes the user message to the harness", () => {
   it("fills ctx.userMessage with the sent text", async () => {
     let resolveSeen!: (ctx: HarnessContext) => void;
     const seen = new Promise<HarnessContext>((resolve) => { resolveSeen = resolve; });
-    registerHarness("test-capture-user-message", () => ({
+    // The agent guard takes only harness values of the catalog, so the
+    // capture harness stands in for the built-in loop of this test file.
+    registerHarness("pi", () => ({
       run: async (ctx: HarnessContext) => { resolveSeen(ctx); },
     }));
     const dir = mkdtempSync(join(tmpdir(), "oma-harness-user-message-"));
@@ -116,7 +118,7 @@ describe("managed runner passes the user message to the harness", () => {
     const agent = await (await cp.fetch(new Request("http://cp/v1/agents", post({
       name: "user-message-agent",
       model: "claude-sonnet-4-6",
-      _oma: { harness: "test-capture-user-message" },
+      _oma: { harness: "pi" },
     })))).json() as { id: string };
     const session = await (await cp.fetch(new Request("http://cp/v1/sessions", post({
       agent: agent.id, environment_id: env.id,

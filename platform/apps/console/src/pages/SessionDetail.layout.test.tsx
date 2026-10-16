@@ -41,6 +41,7 @@ const seen = vi.hoisted(() => ({
   conversation: null as null | Record<string, any>,
   events: null as null | Record<string, any>,
   tools: null as null | Record<string, any>,
+  trace: null as null | Record<string, any>,
 }));
 
 vi.mock("../components/session/ManagedSessionConversation", () => ({
@@ -93,6 +94,41 @@ vi.mock("../components/session/inspector/ToolsTab", () => ({
   },
 }));
 
+/** Вкладка «Трейс» чужая: проверяем, что страница ей отдаёт и что от неё принимает. */
+vi.mock("../components/session/trace/TraceView", () => ({
+  TraceView: (props: Record<string, any>) => {
+    seen.trace = props;
+    return (
+      <div
+        data-testid="trace-view"
+        data-session-id={props.sessionId}
+        data-running={String(props.running)}
+        data-events={props.events.length}
+        data-selected={props.selection?.eventId ?? ""}
+        data-source={props.selection?.source ?? ""}
+        data-seq={props.selection?.seq ?? ""}
+      >
+        <input aria-label="Найти в трейсе" ref={props.searchInputRef} />
+        <button type="button" onClick={() => props.onSelectEvent("evt_2", "trace")}>
+          Выбрать узел
+        </button>
+        <button type="button" onClick={() => props.onSelectEvent(null, "trace")}>
+          Выбрать узел без события
+        </button>
+        <button type="button" onClick={() => props.onShowInTranscript("evt_2")}>
+          Показать узел в разговоре
+        </button>
+        <button type="button" onClick={() => props.onShowInTranscript("evt_w2")}>
+          Показать узел потока в разговоре
+        </button>
+        <button type="button" onClick={() => props.onOpenThread?.("sthr_2")}>
+          Открыть поток узла
+        </button>
+      </div>
+    );
+  },
+}));
+
 import * as eventsTabModule from "../components/session/inspector/EventsTab";
 
 const SESSION = {
@@ -119,6 +155,24 @@ const SESSION = {
   outcome_evaluations: [],
   resources: [],
 };
+
+/** Основной поток и поток сабагента «Проверяющий», в котором идут события evt_ws1 и evt_w2. */
+const THREADS = [
+  {
+    id: "sthr_primary",
+    type: "session_thread",
+    agent: SESSION.agent,
+    status: "idle",
+    parent_thread_id: null,
+  },
+  {
+    id: "sthr_2",
+    type: "session_thread",
+    agent: { id: "agent_w", name: "Проверяющий", version: 1, model: { id: "m2" }, tools: [] },
+    status: "idle",
+    parent_thread_id: "sthr_primary",
+  },
+];
 
 const ISO = (offsetMs: number) => new Date(Date.parse("2026-10-15T12:00:00.000Z") + offsetMs).toISOString();
 
@@ -204,6 +258,7 @@ beforeEach(() => {
   seen.conversation = null;
   seen.events = null;
   seen.tools = null;
+  seen.trace = null;
   for (const fn of Object.values(toast)) fn.mockReset();
   vi.mocked(eventsTabModule.copyEventsToClipboard).mockClear();
   vi.mocked(eventsTabModule.downloadEventsFile).mockClear();
@@ -285,14 +340,17 @@ describe("SessionDetail: шапка", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Новое имя" })).toBeInTheDocument();
   });
 
-  it("старых вкладок «Разговор» и «Хронология» и кнопок «Файлы» и «Траектория» в шапке нет", async () => {
+  it("«Хронологии» и кнопок «Файлы» и «Траектория» в шапке нет, вид переключают вкладки над лентой", async () => {
     openPage();
     await pageReady();
 
-    expect(screen.queryByRole("tab", { name: "Разговор" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Хронология" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Файлы сессии" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Траектория" })).toBeNull();
+    const header = screen.getByRole("banner", { hidden: true });
+    expect(within(header).queryByRole("tablist")).toBeNull();
+    const views = screen.getByRole("tablist", { name: "Вид сессии" });
+    expect(within(views).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Разговор", "Трейс"]);
   });
 
   it("шапка и вкладка «Сессия» не показывают токены, стоимость и бюджет", async () => {
@@ -351,12 +409,13 @@ describe("SessionDetail: загрузка", () => {
     api.sessions.events.list.mockReturnValue(new Promise(() => {}));
     openPage("/sessions/sesn_1?inspector=events");
 
-    const panel = await screen.findByRole("tabpanel");
+    const inspector = await screen.findByRole("complementary", { name: "Инспектор сессии" });
+    const panel = within(inspector).getByRole("tabpanel");
     expect(within(panel).getByRole("status")).toHaveTextContent("Загрузка сессии…");
     expect(screen.queryByTestId("events-tab")).toBeNull();
 
     await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
-    expect(within(screen.getByRole("tabpanel")).getByRole("status")).toBeInTheDocument();
+    expect(within(within(inspector).getByRole("tabpanel")).getByRole("status")).toBeInTheDocument();
     expect(screen.queryByTestId("tools-tab")).toBeNull();
   });
 
@@ -548,22 +607,7 @@ describe("SessionDetail: инспектор", () => {
   });
 
   it("выбор потока во вкладке «Потоки» переключает ленту и вкладку «События»", async () => {
-    state.threads = [
-      {
-        id: "sthr_primary",
-        type: "session_thread",
-        agent: SESSION.agent,
-        status: "idle",
-        parent_thread_id: null,
-      },
-      {
-        id: "sthr_2",
-        type: "session_thread",
-        agent: { id: "agent_w", name: "Проверяющий", version: 1, model: { id: "m2" }, tools: [] },
-        status: "idle",
-        parent_thread_id: "sthr_primary",
-      },
-    ];
+    state.threads = THREADS;
     openPage("/sessions/sesn_1?inspector=thread");
     await pageReady();
 
@@ -578,6 +622,350 @@ describe("SessionDetail: инспектор", () => {
     );
     await userEvent.click(screen.getByRole("tab", { name: "События" }));
     expect(await screen.findByTestId("events-tab")).toHaveAttribute("data-count", "2");
+  });
+});
+
+describe("SessionDetail: вид «Трейс»", () => {
+  const seq = () => Number(screen.getByTestId("trace-view").getAttribute("data-seq"));
+
+  it("по умолчанию открыт разговор, а трейс не монтируется", async () => {
+    openPage();
+    await pageReady();
+
+    expect(screen.getByRole("tab", { name: "Разговор" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Трейс" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tabpanel", { name: "Разговор" })).toContainElement(screen.getByTestId("conversation"));
+    expect(screen.queryByTestId("trace-view")).toBeNull();
+    expect(seen.trace).toBeNull();
+  });
+
+  it("?view=trace открывает трейс на месте разговора, инспектор остаётся справа", async () => {
+    openPage("/sessions/sesn_1?view=trace");
+    await pageReady();
+
+    const trace = await screen.findByTestId("trace-view");
+    expect(screen.getByRole("tab", { name: "Трейс" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Трейс" })).toContainElement(trace);
+    expect(screen.queryByTestId("conversation")).toBeNull();
+    const inspector = screen.getByRole("complementary", { name: "Инспектор сессии" });
+    expect(inspector).toHaveAttribute("data-layout", "side");
+    expect(screen.getByRole("tabpanel", { name: "Трейс" })).not.toContainElement(inspector);
+  });
+
+  it("неизвестное значение view открывает разговор", async () => {
+    openPage("/sessions/sesn_1?view=timeline");
+    await pageReady();
+
+    expect(screen.getByTestId("conversation")).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-view")).toBeNull();
+  });
+
+  it("трейс получает id сессии, все события сессии и признак выполнения", async () => {
+    state.status = "running";
+    openPage("/sessions/sesn_1?view=trace&inspector=events");
+    await pageReady();
+
+    const trace = await screen.findByTestId("trace-view");
+    expect(trace).toHaveAttribute("data-session-id", "sesn_1");
+    expect(trace).toHaveAttribute("data-running", "true");
+    // Трейс несёт и потоки сабагентов, поэтому ему нужны события всех потоков: 6, а не 4 основного.
+    await waitFor(() => expect(screen.getByTestId("trace-view")).toHaveAttribute("data-events", String(HISTORY.length)));
+    expect(await screen.findByTestId("events-tab")).toHaveAttribute("data-count", "4");
+  });
+
+  it("вкладки над лентой пишут ?view= и не трогают остальные параметры", async () => {
+    openPage("/sessions/sesn_1?inspector=events&event=evt_2");
+    await pageReady();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Трейс" }));
+
+    expect(await screen.findByTestId("trace-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation")).toBeNull();
+    expect(location()).toContain("view=trace");
+    expect(location()).toContain("inspector=events");
+    expect(location()).toContain("event=evt_2");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Разговор" }));
+
+    expect(await screen.findByTestId("conversation")).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-view")).toBeNull();
+    expect(location()).toContain("view=conversation");
+    expect(location()).not.toContain("view=trace");
+    expect(location()).toContain("inspector=events");
+    expect(location()).toContain("event=evt_2");
+  });
+
+  it("вкладка инспектора не сбрасывает вид", async () => {
+    openPage("/sessions/sesn_1?view=trace");
+    await pageReady();
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Инструменты" }));
+
+    expect(location()).toContain("view=trace");
+    expect(location()).toContain("inspector=tools");
+    expect(screen.getByTestId("trace-view")).toBeInTheDocument();
+  });
+
+  describe("клавиша T", () => {
+    it("переключает разговор и трейс", async () => {
+      openPage("/sessions/sesn_1?inspector=events");
+      await pageReady();
+      await screen.findByTestId("events-tab");
+
+      await userEvent.keyboard("t");
+      expect(await screen.findByTestId("trace-view")).toBeInTheDocument();
+      expect(location()).toContain("view=trace");
+
+      await userEvent.keyboard("T");
+      expect(await screen.findByTestId("conversation")).toBeInTheDocument();
+      expect(screen.queryByTestId("trace-view")).toBeNull();
+      expect(location()).not.toContain("view=trace");
+    });
+
+    it("работает на русской раскладке: клавишу узнаёт по коду", async () => {
+      openPage();
+      await pageReady();
+
+      fireEvent.keyDown(document.body, { key: "е", code: "KeyT" });
+
+      expect(await screen.findByTestId("trace-view")).toBeInTheDocument();
+    });
+
+    it("не срабатывает в поле ввода", async () => {
+      openPage();
+      await pageReady();
+      await userEvent.click(within(screen.getByRole("heading", { level: 1 })).getByRole("button"));
+
+      await userEvent.type(screen.getByRole("textbox", { name: "Название сессии" }), "tt");
+
+      expect(screen.getByTestId("conversation")).toBeInTheDocument();
+      expect(location()).not.toContain("view=");
+    });
+
+    it("не срабатывает при открытом окне и вместе с Ctrl", async () => {
+      openPage();
+      await pageReady();
+
+      await userEvent.keyboard("{Control>}t{/Control}");
+      expect(screen.queryByTestId("trace-view")).toBeNull();
+
+      await userEvent.keyboard("?");
+      await screen.findByRole("dialog", { name: "Горячие клавиши" });
+      await userEvent.keyboard("t");
+      expect(screen.queryByTestId("trace-view")).toBeNull();
+      expect(location()).not.toContain("view=");
+    });
+  });
+
+  it("клавиша / в трейсе ставит фокус в поле поиска трейса", async () => {
+    openPage("/sessions/sesn_1?view=trace");
+    await pageReady();
+    const field = await screen.findByRole("textbox", { name: "Найти в трейсе" });
+    expect(field).not.toHaveFocus();
+
+    await userEvent.keyboard("/");
+
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue("");
+  });
+
+  describe("общий выбор события", () => {
+    it("узел трейса пишет ?event= и выделяет строку во вкладке «События»", async () => {
+      openPage("/sessions/sesn_1?view=trace&inspector=events");
+      await pageReady();
+      await screen.findByTestId("events-tab");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Выбрать узел" }));
+
+      expect(location()).toContain("event=evt_2");
+      expect(screen.getByTestId("events-tab")).toHaveAttribute("data-selected", "evt_2");
+      expect(seen.events?.selection).toMatchObject({ eventId: "evt_2", source: "trace" });
+      expect(screen.getByTestId("trace-view")).toHaveAttribute("data-selected", "evt_2");
+      expect(screen.getByTestId("trace-view")).toHaveAttribute("data-source", "trace");
+      expect(seq()).toBeGreaterThan(0);
+    });
+
+    it("узел без события снимает выбор и убирает параметр", async () => {
+      openPage("/sessions/sesn_1?view=trace&inspector=events&event=evt_2");
+      await pageReady();
+      await screen.findByTestId("events-tab");
+      expect(screen.getByTestId("events-tab")).toHaveAttribute("data-selected", "evt_2");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Выбрать узел без события" }));
+
+      expect(location()).not.toContain("event=");
+      expect(screen.getByTestId("events-tab")).toHaveAttribute("data-selected", "");
+      expect(screen.getByTestId("trace-view")).toHaveAttribute("data-selected", "");
+    });
+
+    it("выбор в «Событиях» доходит до трейса", async () => {
+      openPage("/sessions/sesn_1?view=trace&inspector=events");
+      await pageReady();
+      await screen.findByTestId("events-tab");
+
+      await userEvent.click(screen.getByRole("button", { name: "Выбрать событие" }));
+
+      expect(screen.getByTestId("trace-view")).toHaveAttribute("data-selected", "evt_2");
+      expect(screen.getByTestId("trace-view")).toHaveAttribute("data-source", "events");
+    });
+
+    it("?event= из адреса доходит до трейса", async () => {
+      openPage("/sessions/sesn_1?view=trace&event=evt_2");
+      await pageReady();
+
+      const trace = await screen.findByTestId("trace-view");
+      expect(trace).toHaveAttribute("data-selected", "evt_2");
+      expect(trace).toHaveAttribute("data-source", "url");
+    });
+
+    it("выбор в ленте переживает переход в трейс", async () => {
+      openPage("/sessions/sesn_1");
+      await pageReady();
+      await screen.findByTestId("conversation");
+      act(() => seen.conversation!.onSelectEvent("evt_s1", "minimap"));
+
+      await userEvent.keyboard("t");
+
+      const trace = await screen.findByTestId("trace-view");
+      expect(trace).toHaveAttribute("data-selected", "evt_s1");
+      expect(trace).toHaveAttribute("data-source", "minimap");
+      expect(location()).toContain("event=evt_s1");
+    });
+
+    it("выбор в трейсе переживает возврат в разговор: лента получает источник «trace» и прокручивается к блоку", async () => {
+      openPage("/sessions/sesn_1?view=trace");
+      await pageReady();
+      await userEvent.click(await screen.findByRole("button", { name: "Выбрать узел" }));
+
+      await userEvent.click(screen.getByRole("tab", { name: "Разговор" }));
+
+      const conversation = await screen.findByTestId("conversation");
+      expect(conversation).toHaveAttribute("data-selected", "evt_2");
+      expect(conversation).toHaveAttribute("data-source", "trace");
+    });
+  });
+
+  describe("«В разговоре»", () => {
+    it("открывает разговор и выбирает то же событие, адрес получает вид и событие одной записью", async () => {
+      openPage("/sessions/sesn_1?view=trace&inspector=events");
+      await pageReady();
+      await screen.findByTestId("events-tab");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Показать узел в разговоре" }));
+
+      const conversation = await screen.findByTestId("conversation");
+      expect(screen.queryByTestId("trace-view")).toBeNull();
+      expect(conversation).toHaveAttribute("data-selected", "evt_2");
+      expect(conversation).toHaveAttribute("data-source", "trace");
+      expect(location()).toContain("view=conversation");
+      expect(location()).toContain("event=evt_2");
+      expect(location()).not.toContain("view=trace");
+      expect(screen.getByTestId("events-tab")).toHaveAttribute("data-selected", "evt_2");
+    });
+
+    it("повторяет выбор уже выбранного узла: seq растёт, и лента прокручивается снова", async () => {
+      openPage("/sessions/sesn_1?view=trace");
+      await pageReady();
+      await userEvent.click(await screen.findByRole("button", { name: "Выбрать узел" }));
+      const before = seq();
+
+      await userEvent.click(screen.getByRole("button", { name: "Показать узел в разговоре" }));
+
+      const conversation = await screen.findByTestId("conversation");
+      expect(Number(conversation.getAttribute("data-seq"))).toBeGreaterThan(before);
+    });
+
+    it("событие сабагента переключает ленту на его поток", async () => {
+      state.threads = THREADS;
+      openPage("/sessions/sesn_1?view=trace");
+      await pageReady();
+      await screen.findByTestId("trace-view");
+
+      await userEvent.click(screen.getByRole("button", { name: "Показать узел потока в разговоре" }));
+
+      const conversation = await screen.findByTestId("conversation");
+      await waitFor(() => expect(conversation).toHaveAttribute("data-agent-name", "Проверяющий"));
+      expect(conversation).toHaveAttribute("data-selected", "evt_w2");
+      expect(conversation).toHaveAttribute("data-source", "trace");
+      expect(location()).toContain("event=evt_w2");
+    });
+
+    it("событие основного потока возвращает ленту и вкладку «События» к основному потоку", async () => {
+      state.threads = THREADS;
+      openPage("/sessions/sesn_1?view=trace&inspector=thread");
+      await pageReady();
+      await userEvent.click(within(await screen.findByRole("table", { name: "Потоки" })).getByText("Проверяющий"));
+      await userEvent.click(screen.getByRole("tab", { name: "События" }));
+      expect(await screen.findByTestId("events-tab")).toHaveAttribute("data-count", "2");
+
+      await userEvent.click(screen.getByRole("button", { name: "Показать узел в разговоре" }));
+
+      const conversation = await screen.findByTestId("conversation");
+      await waitFor(() => expect(conversation).toHaveAttribute("data-agent-name", "Юрист"));
+      expect(screen.getByTestId("events-tab")).toHaveAttribute("data-count", "4");
+    });
+  });
+
+  it("«Открыть поток» открывает разговор с потоком сабагента", async () => {
+    state.threads = THREADS;
+    openPage("/sessions/sesn_1?view=trace");
+    await pageReady();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Открыть поток узла" }));
+
+    const conversation = await screen.findByTestId("conversation");
+    await waitFor(() => expect(conversation).toHaveAttribute("data-agent-name", "Проверяющий"));
+    expect(screen.queryByTestId("trace-view")).toBeNull();
+    expect(location()).toContain("view=conversation");
+  });
+
+  describe("кнопка «Инспектор»", () => {
+    it("в разговоре стоит в строке поиска, а не в строке вкладок", async () => {
+      openPage("/sessions/sesn_1?inspector=tools");
+      await pageReady();
+      await userEvent.click(await screen.findByRole("button", { name: "Закрыть инспектор" }));
+
+      const button = screen.getByRole("button", { name: "Инспектор" });
+
+      expect(button.closest("[data-session-toolbar]")).not.toBeNull();
+      expect(button.closest("[data-session-views]")).toBeNull();
+    });
+
+    it("в трейсе стоит в строке вкладок и возвращает прежнюю вкладку инспектора", async () => {
+      openPage("/sessions/sesn_1?view=trace&inspector=tools");
+      await pageReady();
+      await userEvent.click(await screen.findByRole("button", { name: "Закрыть инспектор" }));
+
+      const button = screen.getByRole("button", { name: "Инспектор" });
+      expect(button.closest("[data-session-views]")).toBe(
+        screen.getByRole("tablist", { name: "Вид сессии" }).closest("[data-session-views]"),
+      );
+      expect(screen.getAllByRole("button", { name: "Инспектор" })).toHaveLength(1);
+
+      await userEvent.click(button);
+
+      expect(await screen.findByTestId("tools-tab")).toBeInTheDocument();
+      expect(location()).toContain("inspector=tools");
+      expect(location()).toContain("view=trace");
+      expect(screen.queryByRole("button", { name: "Инспектор" })).toBeNull();
+    });
+
+    it("на узком экране лист инспектора встаёт поверх трейса, вкладки вида остаются доступны", async () => {
+      state.narrow = true;
+      openPage("/sessions/sesn_1?view=trace");
+      await pageReady();
+      await screen.findByTestId("trace-view");
+      expect(screen.queryByRole("complementary", { name: "Инспектор сессии" })).toBeNull();
+
+      await userEvent.click(screen.getByRole("button", { name: "Инспектор" }));
+
+      const sheet = await screen.findByRole("complementary", { name: "Инспектор сессии" });
+      expect(sheet).toHaveAttribute("data-layout", "sheet");
+      expect(screen.getByRole("tabpanel", { name: "Трейс" })).toContainElement(sheet);
+      expect(sheet.closest("[data-session-overlay]")).not.toBeNull();
+      expect(screen.getByRole("tablist", { name: "Вид сессии" })).not.toContainElement(sheet);
+      expect(screen.getByTestId("trace-view")).toBeInTheDocument();
+    });
   });
 });
 
@@ -675,41 +1063,99 @@ describe("SessionDetail: действия", () => {
     expect(await screen.findByRole("dialog", { name: "Горячие клавиши" })).toBeInTheDocument();
   });
 
-  it("«Траектория» открывает окно и грузит траекторию по запросу", async () => {
-    server.use(
-      http.get("*/v1/sessions/sesn_1/trajectory", () =>
-        HttpResponse.json({
-          schema_version: "oma.trajectory.v1",
-          trajectory_id: "traj_1",
-          session_id: "sesn_1",
-          outcome: "success",
-          events: [],
-        }),
-      ),
-    );
-    openPage();
-    await pageReady();
+  it("в меню «Ещё» нет пункта «Траектория», страница не просит траекторию", async () => {
+    const requested: string[] = [];
+    const onStart = ({ request }: { request: Request }) => {
+      requested.push(new URL(request.url).pathname);
+    };
+    server.events.on("request:start", onStart);
+    try {
+      openPage();
+      await pageReady();
+      await userEvent.click(screen.getByRole("button", { name: "Ещё" }));
+      await screen.findByRole("menuitem", { name: "Скачать трейс" });
+    } finally {
+      server.events.removeListener("request:start", onStart);
+    }
 
-    await userEvent.click(screen.getByRole("button", { name: "Ещё" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Траектория" }));
-
-    expect(await screen.findByRole("dialog", { name: "Траектория" })).toBeInTheDocument();
-    expect(await screen.findByText(/traj_1/, { selector: "pre" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Траектория" })).toBeNull();
+    expect(requested.filter((path) => path.endsWith("/trajectory"))).toEqual([]);
   });
 
-  it("если траектории нет, окно объясняет это", async () => {
-    server.use(
-      http.get("*/v1/sessions/sesn_1/trajectory", () =>
-        HttpResponse.json({ error: { type: "not_found_error", message: "нет" } }, { status: 404 }),
-      ),
-    );
-    openPage();
-    await pageReady();
+  describe("«Скачать трейс»", () => {
+    const originals = new Map<string, PropertyDescriptor | undefined>();
 
-    await userEvent.click(screen.getByRole("button", { name: "Ещё" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Траектория" }));
+    /** jsdom не сохраняет файлы: подменяем адреса blob и щелчок по ссылке. */
+    function stubBrowserDownload() {
+      const created: Blob[] = [];
+      const clicks: Array<{ download: string; href: string }> = [];
+      const replace = (name: "createObjectURL" | "revokeObjectURL", value: unknown) => {
+        if (!originals.has(name)) originals.set(name, Object.getOwnPropertyDescriptor(URL, name));
+        Object.defineProperty(URL, name, { configurable: true, writable: true, value });
+      };
+      replace("createObjectURL", (blob: Blob) => {
+        created.push(blob);
+        return "blob:trace";
+      });
+      replace("revokeObjectURL", () => {});
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+        clicks.push({ download: this.download, href: this.href });
+      });
+      return { created, clicks };
+    }
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Траектория недоступна");
+    afterEach(() => {
+      for (const [name, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(URL, name, descriptor);
+        else Reflect.deleteProperty(URL, name);
+      }
+      originals.clear();
+    });
+
+    async function chooseDownloadTrace() {
+      await userEvent.click(screen.getByRole("button", { name: "Ещё" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Скачать трейс" }));
+    }
+
+    it("берёт весь трейс файлом OTLP и сохраняет его под именем сессии", async () => {
+      const browser = stubBrowserDownload();
+      const requested: string[] = [];
+      const body = { resourceSpans: [{ scopeSpans: [] }] };
+      server.use(
+        http.get("*/v1/oma/sessions/sesn_1/trace/otlp.json", ({ request }) => {
+          requested.push(new URL(request.url).pathname);
+          return HttpResponse.json(body);
+        }),
+      );
+      openPage();
+      await pageReady();
+
+      await chooseDownloadTrace();
+
+      await waitFor(() => expect(browser.clicks).toHaveLength(1));
+      expect(requested).toEqual(["/v1/oma/sessions/sesn_1/trace/otlp.json"]);
+      expect(browser.clicks[0]).toEqual({ download: "trace-sesn_1.otlp.json", href: "blob:trace" });
+      expect(JSON.parse(await browser.created[0]!.text())).toEqual(body);
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("если трейс скачать не удалось, страница сообщает об этом и файл не сохраняет", async () => {
+      const browser = stubBrowserDownload();
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      server.use(
+        http.get("*/v1/oma/sessions/sesn_1/trace/otlp.json", () =>
+          HttpResponse.json({ error: { type: "not_found_error", message: "нет" } }, { status: 404 }),
+        ),
+      );
+      openPage();
+      await pageReady();
+
+      await chooseDownloadTrace();
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Не удалось скачать трейс"));
+      expect(toast.error).toHaveBeenCalledTimes(1);
+      expect(browser.clicks).toEqual([]);
+    });
   });
 });
 

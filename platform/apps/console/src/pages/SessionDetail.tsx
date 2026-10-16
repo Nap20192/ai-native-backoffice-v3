@@ -27,7 +27,6 @@ import { EMPTY_VALUE, formatDateTimeRu, sessionErrorText } from "../components/s
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
-import { TrajectoryViewerModal } from "./session-detail/Trajectory";
 import type { Event } from "../lib/events";
 import {
   reduceManagedDeltaFrame,
@@ -42,12 +41,19 @@ import {
   PRIMARY_THREAD_ID,
   collectOutcomes,
   computeSessionTotals,
+  eventThreadId,
   eventsOfThread,
   type EventSelection,
   type SelectionSource,
 } from "../lib/session-stats";
-import type { Trajectory } from "../lib/trajectory";
+import { downloadTrace } from "../lib/trace-api";
 import { SessionHeader } from "../components/session/SessionHeader";
+import {
+  SessionViewTabs,
+  parseSessionView,
+  type SessionView,
+} from "../components/session/SessionViewTabs";
+import { TraceView } from "../components/session/trace/TraceView";
 import {
   DefineOutcomeDialog,
   ShortcutsDialog,
@@ -221,7 +227,7 @@ export function SessionDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const managedApi = useManagedApi();
-  const { api } = useApi();
+  const { apiRaw } = useApi();
   const [events, setEvents] = useState<Event[]>([]);
   /** In-flight assistant streams keyed by message_id. Each entry holds
    *  the deltas accumulated so far. Wiped on the matching agent.message
@@ -256,11 +262,6 @@ export function SessionDetail() {
   const [vaults, setVaults] = useState<Array<{ id: string; name?: string }>>([]);
   useCrumbName(id, session?.title?.trim());
   const [status, setStatus] = useState("idle");
-  /** Траектория грузится при первом открытии окна. Метки как в EvalRunDetail:
-   *  "loading" пока идёт запрос, "error" если запрос не удался (404, пока
-   *  траектория не построена, или 5xx), чтобы повторное открытие не
-   *  стреляло запросом на каждый показ. */
-  const [trajectory, setTrajectory] = useState<Trajectory | "loading" | "error" | undefined>(undefined);
   /** Потоки сессии, включая основной. Обновляются на `session.thread_created`. */
   const [threads, setThreads] = useState<BetaManagedAgentsSessionThread[]>([]);
   /** Выбранный поток. Фильтрует ленту, вкладки «События» и «Инструменты».
@@ -274,7 +275,6 @@ export function SessionDetail() {
    *  is removed from this map and the canonical user.* event takes its
    *  place in the events array via the regular SSE broadcast. */
   const [pendingByEventId, setPendingByEventId] = useState<Map<string, PendingEntry>>(new Map());
-  const [showTrajectory, setShowTrajectory] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [archiving, setArchiving] = useState(false);
   /** История событий загружена (первая выгрузка завершена). Пока нет, вместо
@@ -304,6 +304,12 @@ export function SessionDetail() {
   const eventParam = searchParams.get("event");
   const eventParamRef = useRef(eventParam);
   eventParamRef.current = eventParam;
+  /** Вид колонки слева: разговор или трейс. Источник правды параметр `view` в адресе. */
+  const view = parseSessionView(searchParams.get("view"));
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  /** Поле поиска вкладки «Трейс»: клавиша «/» ставит в него фокус. */
+  const traceSearchRef = useRef<HTMLInputElement>(null);
 
   const updateParams = useCallback(
     (mutate: (params: URLSearchParams) => void) => {
@@ -358,17 +364,54 @@ export function SessionDetail() {
     [rememberPrefs],
   );
 
-  /** Единственный путь выбора события: лента, мини-карта и вкладки зовут его,
-   *  параметр `event` в адресе остаётся источником правды. */
-  const selectEvent = useCallback(
-    (eventId: string | null, source: SelectionSource) => {
+  /** Единственный путь выбора события: лента, мини-карта, вкладки инспектора и
+   *  трейс зовут его, параметр `event` в адресе остаётся источником правды.
+   *  `alsoParams` правит другие параметры той же записью в адрес: две записи
+   *  подряд из одного обработчика затирают друг друга, потому что вторая
+   *  читает адрес, каким он был при отрисовке. */
+  const commitSelection = useCallback(
+    (eventId: string | null, source: SelectionSource, alsoParams?: (params: URLSearchParams) => void) => {
       setSelection((previous) => ({ eventId, source, seq: previous.seq + 1 }));
       updateParams((params) => {
         if (eventId) params.set("event", eventId);
         else params.delete("event");
+        alsoParams?.(params);
       });
     },
     [updateParams],
+  );
+  const selectEvent = useCallback(
+    (eventId: string | null, source: SelectionSource) => commitSelection(eventId, source),
+    [commitSelection],
+  );
+
+  /** Вид пишется в адрес явно, и `view=conversation` тоже верная ссылка: без параметра открывается разговор. */
+  const changeView = useCallback(
+    (next: SessionView) => updateParams((params) => params.set("view", next)),
+    [updateParams],
+  );
+
+  /** «В разговоре» в деталях узла трейса: открывает разговор и повторяет выбор
+   *  узла, лента прокручивается к его блоку. Событие сабагента лежит в ленте
+   *  его потока, поэтому поток выбирается вместе с видом. */
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+  const showInTranscript = useCallback(
+    (eventId: string) => {
+      const event = eventsRef.current.find((item) => item.id === eventId);
+      if (event) setActiveThreadId(eventThreadId(event));
+      commitSelection(eventId, "trace", (params) => params.set("view", "conversation"));
+    },
+    [commitSelection],
+  );
+
+  /** «Открыть поток» у сабагента: разговор показывает его поток. */
+  const openThread = useCallback(
+    (threadId: string) => {
+      setActiveThreadId(threadId);
+      changeView("conversation");
+    },
+    [changeView],
   );
 
   // Dedup key for SSE re-delivery + initial-fetch overlap. `id` is stamped
@@ -721,7 +764,6 @@ export function SessionDetail() {
     setEnvironment(null);
     setVaults([]);
     setStatus("idle");
-    setTrajectory(undefined);
     setThreads([]);
     setActiveThreadId(PRIMARY_THREAD_ID);
     setSelection({ eventId: eventParamRef.current, source: "url", seq: 0 });
@@ -1001,19 +1043,25 @@ export function SessionDetail() {
     }
   };
 
-  const openTrajectory = () => {
-    setShowTrajectory(true);
-    if (!id || (trajectory !== undefined && trajectory !== "error")) return;
-    setTrajectory("loading");
-    api<Trajectory>(`/v1/sessions/${encodeURIComponent(id)}/trajectory`, { quiet: true })
-      .then(setTrajectory)
-      .catch(() => setTrajectory("error"));
+  /** Весь трейс сессии файлом OTLP JSON. Ошибку запроса показываем сами,
+   *  поэтому запрос идёт без тоста `api`. */
+  const downloadSessionTrace = async () => {
+    if (!id) return;
+    try {
+      await downloadTrace(id, (path) => apiRaw(path, { quiet: true }));
+    } catch {
+      toast.error("Не удалось скачать трейс");
+    }
   };
 
-  // Клавиши страницы: D показывает и прячет инспектор, ? открывает список клавиш.
-  // Остальные клавиши обрабатывают лента и вкладки.
+  // Клавиши страницы: D показывает и прячет инспектор, T переключает разговор и
+  // трейс, ? открывает список клавиш, / в трейсе ищет по нему. Остальные
+  // клавиши обрабатывают лента, трейс и вкладки. Клавишу узнаём и по коду:
+  // на русской раскладке буква другая.
   const toggleInspectorRef = useRef<() => void>(() => {});
   toggleInspectorRef.current = inspectorOpen ? closeInspector : openInspector;
+  const toggleViewRef = useRef<() => void>(() => {});
+  toggleViewRef.current = () => changeView(view === "trace" ? "conversation" : "trace");
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1025,6 +1073,16 @@ export function SessionDetail() {
       } else if (event.key === "d" || event.key === "D" || event.code === "KeyD") {
         event.preventDefault();
         toggleInspectorRef.current();
+      } else if (event.key === "t" || event.key === "T" || event.code === "KeyT") {
+        event.preventDefault();
+        // Удержанная клавиша не должна гонять вид туда и обратно.
+        if (!event.repeat) toggleViewRef.current();
+      } else if (event.key === "/" && viewRef.current === "trace") {
+        const field = traceSearchRef.current;
+        if (!field) return;
+        event.preventDefault();
+        field.focus();
+        field.select();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1117,6 +1175,79 @@ export function SessionDetail() {
     </SessionInspector>
   );
 
+  /** Кнопка открытия закрытого инспектора. В разговоре она стоит в строке поиска, в трейсе в строке вкладок. */
+  const inspectorButton = (
+    <Button variant="outline" size="xs" onClick={openInspector}>
+      <PanelRightOpenIcon aria-hidden="true" />
+      Инспектор
+    </Button>
+  );
+  // Колонка слева на узком экране с отступом 24 px: лист идёт от края до края.
+  const sheetOverlay =
+    layout === "sheet" && inspector ? (
+      <div className="-mx-6 flex h-full min-h-0 flex-col">{inspector}</div>
+    ) : undefined;
+
+  // Монтируется только открытый вид. Своей памяти у вида нет: что выбрано, знает
+  // адрес (`event`), и вид после возврата находит свою строку сам. Трейс получает
+  // события всех потоков, потому что показывает и сабагентов.
+  const traceView = (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Отступ 12 px ставит края водопада под вкладки «Разговор» и «Трейс». */}
+      <div className="flex min-h-0 flex-1 flex-col px-3">
+        <TraceView
+          events={events}
+          onOpenThread={openThread}
+          onSelectEvent={selectEvent}
+          onShowInTranscript={showInTranscript}
+          running={status === "running"}
+          searchInputRef={traceSearchRef}
+          selection={selection}
+          sessionId={id ?? ""}
+        />
+      </div>
+      {sheetOverlay ? (
+        <div className="absolute inset-0 z-30 flex min-h-0 flex-col" data-session-overlay>
+          {sheetOverlay}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const conversationView = (
+    <ManagedSessionConversation
+      afterTurns={transientActivity}
+      composer={<SessionComposer
+        interrupting={interrupting}
+        onError={(error) => toast.error(error.message)}
+        onStop={() => void interrupt()}
+        onSubmit={async ({ text, files }) => {
+          const rawFiles = files
+            .map((file) => file.file)
+            .filter((file): file is File => file instanceof File);
+          await send(text, rawFiles);
+        }}
+        running={status === "running"}
+        sending={sending}
+      />}
+      empty={
+        hasTransientActivity
+          ? transientActivity
+          : historyLoaded
+            ? undefined
+            : <SessionHistorySkeleton />
+      }
+      sessionId={id}
+      turns={canonicalTurns}
+      agentName={agentName}
+      running={status === "running"}
+      selection={selection}
+      onSelectEvent={selectEvent}
+      overlay={sheetOverlay}
+      toolbarTrailing={inspectorOpen ? undefined : inspectorButton}
+    />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 px-6 pt-6 pb-3 md:px-8">
@@ -1134,59 +1265,24 @@ export function SessionDetail() {
           onDownloadEvents={() => {
             if (id) downloadEventsFile(id, events);
           }}
-          onShowTrajectory={openTrajectory}
+          onDownloadTrace={() => void downloadSessionTrace()}
           onShowShortcuts={() => setDialog("shortcuts")}
         />
       </div>
 
-      {/* Рабочая область: слева колонка разговора с поиском, мини-картой и
-          полем ввода, справа инспектор до низа окна. На узком экране
-          инспектор нижний лист поверх колонки. */}
+      {/* Рабочая область: слева колонка с переключателем «Разговор» и «Трейс»,
+          справа инспектор до низа окна. В разговоре колонка несёт поиск,
+          мини-карту, ленту и поле ввода, в трейсе целиком водопад. На узком
+          экране инспектор нижний лист поверх колонки. */}
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col px-6 md:pr-6 md:pl-8">
-          <ManagedSessionConversation
-            afterTurns={transientActivity}
-            composer={<SessionComposer
-              interrupting={interrupting}
-              onError={(error) => toast.error(error.message)}
-              onStop={() => void interrupt()}
-              onSubmit={async ({ text, files }) => {
-                const rawFiles = files
-                  .map((file) => file.file)
-                  .filter((file): file is File => file instanceof File);
-                await send(text, rawFiles);
-              }}
-              running={status === "running"}
-              sending={sending}
-            />}
-            empty={
-              hasTransientActivity
-                ? transientActivity
-                : historyLoaded
-                  ? undefined
-                  : <SessionHistorySkeleton />
-            }
-            sessionId={id}
-            turns={canonicalTurns}
-            agentName={agentName}
-            running={status === "running"}
-            selection={selection}
-            onSelectEvent={selectEvent}
-            overlay={
-              layout === "sheet" && inspector ? (
-                // Колонка разговора на узком экране с отступом 24 px: лист идёт от края до края.
-                <div className="-mx-6 flex h-full min-h-0 flex-col">{inspector}</div>
-              ) : undefined
-            }
-            toolbarTrailing={
-              inspectorOpen ? undefined : (
-                <Button variant="outline" size="xs" onClick={openInspector}>
-                  <PanelRightOpenIcon aria-hidden="true" />
-                  Инспектор
-                </Button>
-              )
-            }
-          />
+          <SessionViewTabs
+            view={view}
+            onViewChange={changeView}
+            trailing={view === "trace" && !inspectorOpen ? inspectorButton : undefined}
+          >
+            {view === "trace" ? traceView : conversationView}
+          </SessionViewTabs>
         </div>
         {layout === "side" && inspector}
       </div>
@@ -1205,12 +1301,6 @@ export function SessionDetail() {
         busy={archiving}
         onConfirm={() => void archive()}
         onCancel={() => setDialog(null)}
-      />
-      <TrajectoryViewerModal
-        open={showTrajectory}
-        onClose={() => setShowTrajectory(false)}
-        sessionId={id ?? ""}
-        trajectory={trajectory}
       />
     </div>
   );

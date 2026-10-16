@@ -4,7 +4,7 @@
     {
       "name": "oma-server-try",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd platform/apps/main-node && eval \"$(fnm env)\" && fnm use 24 >/dev/null && mkdir -p data-preview && set -a && . ../../.env && set +a && unset DATABASE_URL && export DATABASE_PATH=./data-preview/oma.db PORT=8788 PUBLIC_BASE_URL=http://localhost:8788 AUTH_TRUSTED_ORIGINS=http://localhost:5174 LITEBOX_DISK_SIZE_GB=4 && exec nice -n 15 pnpm start"],
+      "runtimeArgs": ["-c", "cd platform/apps/main-node && eval \"$(fnm env)\" && fnm use 24 >/dev/null && mkdir -p data-preview && set -a && . ../../.env && set +a && unset DATABASE_URL && export DATABASE_PATH=./data-preview/oma.db PORT=8788 PUBLIC_BASE_URL=http://localhost:8788 AUTH_TRUSTED_ORIGINS=http://localhost:5174 LITEBOX_DISK_SIZE_GB=4 EVAL_TICK_CRON='0 3 1 1 *' LINEAR_DISPATCH_CRON='0 3 1 1 *' WEBHOOK_EVENTS_RETENTION_CRON='0 3 * * *' && exec nice -n 15 pnpm start"],
       "port": 8788
     },
     {

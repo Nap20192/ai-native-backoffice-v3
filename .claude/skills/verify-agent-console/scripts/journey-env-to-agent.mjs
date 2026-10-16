@@ -56,6 +56,21 @@ const NET_PROBE_URL = "https://example.com";
 // Адреса у него свои, не как у example.com: блокировку и пропуск видно раздельно.
 const NET_ALLOWED_HOST = "example.org";
 const NET_ALLOWED_URL = `https://${NET_ALLOWED_HOST}`;
+// Усилие агента в форме: не «По умолчанию» и не high (его pi-ai ставит сам), чтобы
+// в журнале фейка было видно именно выбор пользователя (output_config.effort).
+const AGENT_EFFORT = { level: "low", label: "Низкое" };
+// Строки YAML под ключом верхнего уровня key (вложенный блок с отступом) или его значение в строке.
+function yamlBlock(text, key) {
+  const lines = String(text ?? "").split("\n");
+  const start = lines.findIndex((line) => line.startsWith(`${key}:`));
+  if (start < 0) return "";
+  const out = [lines[start]];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() !== "" && !/^\s/.test(line)) break;
+    out.push(line);
+  }
+  return out.join("\n");
+}
 
 const newNonce = () => randomBytes(4).toString("hex");
 const nonce = newNonce();
@@ -1023,26 +1038,63 @@ async function stepCreateAgent() {
   cover("agent-template");
   await page.locator("#agent-name").fill(names.agent);
   await page.locator("#agent-system").fill("Ты агент проверки. Выполняй присланную команду инструментом bash и отвечай ровно той строкой, которую просит пользователь.");
-  const noCards = await dialog.getByText("Карточки моделей не настроены").count();
-  const modelGroup = await dialog.getByRole("group", { name: "Модель" }).count();
-  await shot("agent-form-basic");
+  // Модель и усилие задаются в режиме «Форма», без YAML. Список моделей форма берёт из
+  // GET /v1/oma/model_options: модели каталога Pi по ключу сервера и карточки рабочего
+  // пространства (ModelPicker.tsx), поэтому карточки моделей для этого не нужны.
+  const options = await api("GET", "/v1/oma/model_options");
+  saveJson("29-model-options", options);
+  const option = (options.data ?? []).find((o) => o.handle === MODEL);
+  const harnessBox = dialog.getByRole("combobox", { name: "Harness", exact: true });
+  const modelBox = dialog.getByRole("combobox", { name: "Модель", exact: true });
+  const effortBox = dialog.getByRole("combobox", { name: "Усилие", exact: true });
+  await modelBox.click();
+  const modelItem = page.locator(`[data-slot="command-item"][data-value^="${MODEL} "]`).first();
+  await modelItem.waitFor({ timeout: 15_000 });
+  await modelItem.click();
+  await modelBox.filter({ hasText: option?.label ?? MODEL }).waitFor({ timeout: 10_000 });
+  await effortBox.click();
+  await page.getByRole("option", { name: AGENT_EFFORT.label, exact: true }).click();
+  await effortBox.filter({ hasText: AGENT_EFFORT.label }).waitFor({ timeout: 10_000 });
+  const formShot = await shot("agent-form-model-effort");
   cover("agent-form");
-  record("agent.form_without_model_cards", "в режиме «Форма» можно задать модель агента",
-    noCards === 0 && modelGroup > 0 ? "проверено" : "внимание", screens.at(-1).file,
-    noCards === 0 && modelGroup > 0 ? "" : "карточек моделей нет: группы «Модель» в форме нет (AgentFormDialog.tsx:725-736), шаблоны дают model: \"\" (data/templates.ts:17), поэтому агента создать можно только через YAML/JSON или после создания карточки");
+  const okFormModel = await check("agent.form_model_effort", `в режиме «Форма» выбраны модель ${MODEL} (ключ сервера, без карточек моделей) и усилие «${AGENT_EFFORT.label}», harness «Встроенный цикл»`, async () => {
+    assert(option, `модели ${MODEL} нет в GET /v1/oma/model_options: ${(options.data ?? []).map((o) => o.handle).join(", ").slice(0, 300)}`);
+    assert(option.source === "builtin", `источник ${option.source}, ожидался builtin (ключ сервера)`);
+    assert((option.effort_levels ?? []).includes(AGENT_EFFORT.level), `уровни усилия модели: ${JSON.stringify(option.effort_levels)}`);
+    assert((await dialog.getByText("Модели не настроены").count()) === 0, "в форме предупреждение «Модели не настроены»");
+    const harnessText = plain(await harnessBox.textContent());
+    assert(harnessText.includes("Встроенный цикл"), `Harness: «${harnessText}»`);
+    const modelText = plain(await modelBox.textContent());
+    assert(modelText.includes(option.label) && modelText.includes(MODEL), `Модель: «${modelText}»`);
+    const effortText = plain(await effortBox.textContent());
+    assert(effortText === AGENT_EFFORT.label, `Усилие: «${effortText}»`);
+    return `${formShot}, api/29-model-options.json`;
+  });
   await dialog.getByRole("tab", { name: /^Инструменты/ }).click();
   await dialog.getByRole("tabpanel").filter({ hasText: /bash/ }).first().waitFor();
   await shot("agent-form-tools");
   cover("agent-tools");
-  // Без карточек моделей в форме нет поля модели, поэтому модель задаётся в режиме YAML той же формы.
-  await dialog.getByRole("group", { name: "Режим правки" }).getByRole("button", { name: "YAML", exact: true }).click();
+  // YAML той же формы: выбор модели и усилия сериализован, обратный переход его не теряет.
+  // Агент создаётся из режима «Форма».
+  const modeGroup = dialog.getByRole("group", { name: "Режим правки" });
+  await modeGroup.getByRole("button", { name: "YAML", exact: true }).click();
   const editor = dialog.getByRole("textbox", { name: "Конфигурация агента в формате YAML" });
   const yaml = await editor.inputValue();
-  const nextYaml = /^model:.*$/m.test(yaml) ? yaml.replace(/^model:.*$/m, `model: ${MODEL}`) : `model: ${MODEL}\n${yaml}`;
-  await editor.fill(nextYaml);
-  writeFileSync(join(EV, "api", "30-agent-create.yaml"), nextYaml);
+  writeFileSync(join(EV, "api", "30-agent-create.yaml"), yaml);
   await shot("agent-form-yaml");
-  cover("agent-code");
+  await modeGroup.getByRole("button", { name: "Форма", exact: true }).click();
+  await dialog.getByRole("tab", { name: /^Основное/ }).click();
+  await modelBox.waitFor();
+  const okYaml = await check("agent.yaml_roundtrip", `YAML формы несёт model.id ${MODEL} и effort ${AGENT_EFFORT.level}, после возврата в «Форму» модель и усилие на месте`, async () => {
+    const block = yamlBlock(yaml, "model");
+    assert(new RegExp(`^\\s+id: ${MODEL}$`, "m").test(block), `блок model в YAML: ${JSON.stringify(block)}`);
+    assert(new RegExp(`^\\s+effort: ${AGENT_EFFORT.level}$`, "m").test(block), `нет effort: ${AGENT_EFFORT.level} в блоке model: ${JSON.stringify(block)}`);
+    const modelText = plain(await modelBox.textContent());
+    const effortText = plain(await effortBox.textContent());
+    assert(modelText.includes(MODEL) && effortText === AGENT_EFFORT.label, `после возврата: Модель «${modelText}», Усилие «${effortText}»`);
+    return "api/30-agent-create.yaml";
+  });
+  if (okYaml) cover("agent-code");
   await dialog.getByRole("button", { name: "Создать агента", exact: true }).click();
   try {
     await page.waitForURL(/\/agents\/[^/]+$/, { timeout: 30_000 });
@@ -1059,13 +1111,18 @@ async function stepCreateAgent() {
   cover("agent-detail");
   const agent = await api("GET", `/v1/agents/${ids.agent}`);
   saveJson("31-agent", agent);
-  await check("agent.created", "агент сохранён: имя, модель, системный промпт", () => {
+  const okCreated = await check("agent.created", `агент сохранён из формы: имя, модель ${MODEL} с усилием ${AGENT_EFFORT.level}, системный промпт, без _oma.harness`, () => {
     const modelId = typeof agent.model === "string" ? agent.model : agent.model?.id;
     assert(agent.name === names.agent, `name ${agent.name}`);
     assert(modelId === MODEL, `model ${JSON.stringify(agent.model)}`);
+    // API отдаёт усилие объектом {type: <уровень>} (toAgentResponse в packages/managed-agents-api/src/mappers/agents.ts),
+    // на входе принимает и строку, и объект.
+    assert(agent.model?.effort?.type === AGENT_EFFORT.level, `model.effort ${JSON.stringify(agent.model?.effort)}, ожидалось {"type":"${AGENT_EFFORT.level}"}: форма не передала усилие (buildModelValue в pages/agents/agentFormCodec.ts)`);
+    assert(!agent._oma?.harness && !agent._oma?.acp, `_oma ${JSON.stringify(agent._oma)}: встроенный цикл не пишет harness`);
     assert(String(agent.system ?? "").includes("агент проверки"), "system не тот");
     return "api/31-agent.json";
   });
+  if (okFormModel && okCreated) cover("agent-model");
   await check("agent.bash_enabled", "у агента включён набор инструментов и bash не отключён", () => {
     const toolset = (agent.tools ?? []).find((t) => t.type === "agent_toolset_20260401");
     assert(toolset, "нет agent_toolset_20260401");
@@ -1074,9 +1131,13 @@ async function stepCreateAgent() {
     assert(enabled !== false, "bash отключён");
     return "api/31-agent.json";
   });
-  await check("agent.detail_ui", "карточка агента в консоли показывает модель", async () => {
+  await check("agent.detail_ui", `карточка агента в консоли показывает модель, «Усилие: ${AGENT_EFFORT.label.toLowerCase()}» и harness «Встроенный цикл»`, async () => {
     const props = page.getByRole("region", { name: "Свойства агента" }).first();
-    assert((await props.textContent())?.includes(MODEL), "в «Свойства агента» нет модели");
+    await props.getByText(`Усилие: ${AGENT_EFFORT.label.toLowerCase()}`).first().waitFor({ timeout: 10_000 }).catch(() => {});
+    const text = plain(await props.textContent());
+    assert(text.includes(MODEL), "в «Свойства агента» нет модели");
+    assert(text.includes(`Усилие: ${AGENT_EFFORT.label.toLowerCase()}`), `нет «Усилие: ${AGENT_EFFORT.label.toLowerCase()}»: ${text.slice(0, 200)}`);
+    assert(text.includes("Встроенный цикл"), `нет строки Harness «Встроенный цикл»: ${text.slice(0, 200)}`);
     return ariaFile;
   });
   record("agent.no_environment_field", "окружение выбирается в сессии, у агента его нет (поля в форме нет)",
@@ -1707,6 +1768,21 @@ async function stepAgentTurn() {
       assert(reqs[1].tool_result_has_marker === true, "нет маркера в результате");
       return "api/fake-model-requests.jsonl";
     });
+    // Усилие из формы агента доходит до модели: Pi переводит model.effort в уровень
+    // размышлений (thinkingLevel в buildHarnessContext, apps/main-node/src/modules/node-managed.ts),
+    // pi-ai шлёт его как thinking {type: "adaptive"} и output_config.effort. База: технический
+    // агент пробы без усилия, его запросы идут без output_config.effort.
+    const probeReqs = fakeRequests(probeNonce);
+    const okEffort = await check("run.fake_model_effort", `усилие «${AGENT_EFFORT.label}» из формы дошло до модели: в каждом запросе хода output_config.effort=${AGENT_EFFORT.level}, thinking adaptive; у агента пробы без усилия effort нет`, () => {
+      assert(reqs.length > 0, "нет запросов хода в журнале фейка");
+      const seen = reqs.map((r) => `${r.thinking ?? "-"}/${r.effort ?? "-"}`);
+      assert(reqs.every((r) => r.effort === AGENT_EFFORT.level && r.thinking === "adaptive"),
+        `thinking/effort запросов хода: ${seen.join(", ")}; путь: model.effort агента → thinkingLevel (createPiModelRuntime) → pi-ai anthropic-messages`);
+      assert(probeReqs.length > 0 && probeReqs.every((r) => r.effort === null),
+        `у агента пробы без усилия: ${probeReqs.map((r) => r.effort ?? "-").join(", ") || "нет запросов"}`);
+      return `api/fake-model-requests.jsonl: ход ${seen.join(", ")}; проба ${probeReqs.map((r) => `${r.thinking ?? "-"}/${r.effort ?? "-"}`).join(", ")}`;
+    });
+    if (okEffort) cover("agent-effort");
   }
   if (!KEEP_SESSION) {
     await archiveAndProveStop("run", ids.session);
@@ -1754,7 +1830,7 @@ function writeSummary(abortError) {
     "",
     "## Экземпляр",
     "",
-    `- URL: ${BASE}, режим модели: ${run.MODEL_MODE}, модель агента: ${MODEL}, образ песочницы: ${run.SANDBOX_IMAGE}`,
+    `- URL: ${BASE}, режим модели: ${run.MODEL_MODE}, модель агента: ${MODEL} (усилие ${AGENT_EFFORT.level}, задано в форме), образ песочницы: ${run.SANDBOX_IMAGE}`,
     `- git ${run.GIT_REV}, незакоммиченных файлов: консоль ${run.CONSOLE_DIRTY_FILES}, сервер ${run.SERVER_DIRTY_FILES}; хэши изменений: консоль ${run.CONSOLE_TREE_HASH}, сервер ${run.SERVER_TREE_HASH}`,
     `- данные (удаляются cleanup.sh): ${run.DATA_DIR}`,
     `- учётка: ${user.email}, рабочее пространство ${user.tenant_id}`,

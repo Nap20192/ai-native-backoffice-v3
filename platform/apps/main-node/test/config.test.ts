@@ -23,7 +23,11 @@ describe("loadNodeConfig", () => {
     expect(config.execution.concurrency).toBe(8);
     expect(config.workspace).toEqual({ strategy: "ephemeral", checkpointIntervalMs: 60_000 });
     expect(config.execution.ownerId).toMatch(/^node:\d+:/);
-    expect(config.paths).toEqual({ sandboxWorkdir: "./data/sandboxes", sessionOutputs: "./data/session-outputs" });
+    expect(config.paths).toEqual({
+      sandboxWorkdir: "./data/sandboxes",
+      sessionOutputs: "./data/session-outputs",
+      builtinSkills: expect.stringMatching(/platform\/skills\/builtin$/),
+    });
     expect(config.http).toEqual({ host: "0.0.0.0", port: 8787, gatewayOrigin: "http://localhost:8787", publicBaseUrl: undefined, consoleDir: undefined, metricsToken: undefined, apiKey: undefined });
     expect(loadNodeConfig({ ...minimal, HOST: "127.0.0.1", PORT: "18787" }).http).toMatchObject({ host: "127.0.0.1", port: 18787 });
     expect(loadNodeConfig({ ...minimal, PORT: "0" }).http.port).toBe(0);
@@ -159,6 +163,25 @@ describe("loadNodeConfig", () => {
     }
   });
 
+  it("reads SANDBOX_GATEWAY_BASE_URL as the origin the session VM calls", () => {
+    expect(loadNodeConfig(minimal).http.sandboxGatewayBaseUrl).toBeUndefined();
+    expect(loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: "  " }).http.sandboxGatewayBaseUrl).toBeUndefined();
+    expect(loadNodeConfig({
+      ...minimal,
+      SANDBOX_GATEWAY_BASE_URL: "http://host.boxlite.internal:8795/",
+    }).http.sandboxGatewayBaseUrl).toBe("http://host.boxlite.internal:8795");
+    for (const bad of ["host.boxlite.internal:8795", "ftp://gw", "https://gw/v1", "https://user:pass@gw"]) {
+      expect(() => loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: bad })).toThrow(/SANDBOX_GATEWAY_BASE_URL/);
+    }
+    let error: Error | undefined;
+    try {
+      loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: "gw", SMTP_HOST: "smtp", SMTP_PORT: "abc" });
+    } catch (caught) {
+      error = caught as Error;
+    }
+    expect(error?.message).toContain("2 problems");
+  });
+
   it("keeps the serverless-mode requirements", () => {
     expect(() => loadNodeConfig({ ...minimal, OPENMA_PROCESS_MODE: "serverless", DATABASE_URL: "mysql://u:p@h/db" }))
       .toThrow(/DATABASE_URL must be PostgreSQL in serverless mode/);
@@ -189,6 +212,10 @@ describe("redactNodeConfig", () => {
     expect(redacted).toContain("\"bucket\":\"mem\"");
     expect(redacted).toContain("\"gid\"");
     expect(redacted).toContain("\"kind\":\"mysql\"");
+    expect(JSON.stringify(redactNodeConfig(loadNodeConfig({
+      ...minimal,
+      SANDBOX_GATEWAY_BASE_URL: "http://host.boxlite.internal:8795",
+    })))).toContain("\"sandboxGatewayBaseUrl\":\"http://host.boxlite.internal:8795\"");
     // The provider's own namespace is opaque to the control plane and is not echoed.
     expect(redacted).not.toContain("environment");
   });

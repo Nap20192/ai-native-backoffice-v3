@@ -136,6 +136,7 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
   { action: "Найти в разговоре", keys: ["/"] },
   { action: "Следующее или предыдущее совпадение (в поле поиска)", keys: ["Enter", "Shift", "Enter"] },
   { action: "Показать или скрыть инспектор", keys: ["D"] },
+  { action: "Переключить разговор и трейс", keys: ["T"] },
   { action: "Свернуть вызов, затем снять выбор", keys: ["Esc"] },
   { action: "Показать это окно", keys: ["?"] },
 ];

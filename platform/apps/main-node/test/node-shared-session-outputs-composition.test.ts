@@ -19,6 +19,8 @@ it("routes official Session outputs to shared storage rather than node-local out
   root = await mkdtemp(join(tmpdir(), "oma-output-composition-"));
   const config = loadNodeConfig({
     NODE_ENV: "test", AUTH_DISABLED: "1", OPENMA_TEST_SANDBOX_PROVIDER: "local-subprocess",
+    // The agent guard accepts only models of GET /v1/oma/model_options.
+    ANTHROPIC_API_KEY: "unused",
     DATABASE_PATH: join(root, "database.sqlite"), MEMORY_BLOB_DIR: join(root, "memory"),
     SESSION_OUTPUTS_DIR: join(root, "local-outputs"), SANDBOX_WORKDIR: join(root, "sandbox"), MEMORY_QUEUE: "disabled",
     FILES_S3_ENDPOINT: "http://unused.test", FILES_S3_BUCKET: "shared-test", FILES_S3_ACCESS_KEY: "test", FILES_S3_SECRET_KEY: "test",
@@ -36,7 +38,7 @@ it("routes official Session outputs to shared storage rather than node-local out
     return response.json() as Promise<Record<string, any>>;
   };
   const environment = await post("/v1/environments", { name: "shared", config: { type: "cloud", networking: { type: "unrestricted" }, packages: { type: "packages" } } });
-  const agent = await post("/v1/agents", { name: "shared", model: "test-model", system: "test" });
+  const agent = await post("/v1/agents", { name: "shared", model: "claude-sonnet-4-6", system: "test" });
   const session = await post("/v1/sessions", {
     agent: { type: "agent", id: agent.id, version: agent.version }, environment_id: environment.id, title: "shared",
   });

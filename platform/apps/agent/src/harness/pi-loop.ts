@@ -56,6 +56,8 @@ interface LiveMessageState {
   textIds: Map<number, string>;
   thinkingIds: Map<number, string>;
   toolIds: Map<number, string>;
+  /** Tool calls with an open span.tool_execution_start frame (agent trace, plan 2.2). */
+  executingTools: Set<string>;
 }
 
 interface PiRunOutcome {
@@ -123,6 +125,7 @@ export class PiHarness implements HarnessInterface {
       textIds: new Map(),
       thinkingIds: new Map(),
       toolIds: new Map(),
+      executingTools: new Set(),
     };
     let providerFailure: AssistantMessage | undefined;
     let producedOutput = false;
@@ -288,7 +291,8 @@ async function translatePiEvent(
       type: "span.model_request_start",
       id: state.spanId,
       model: modelId,
-    });
+      at_ms: Date.now(),
+    } as SessionEvent);
     return { producedOutput };
   }
 
@@ -377,7 +381,8 @@ async function translatePiEvent(
         final_text_length: 0,
         is_error: message.stopReason === "error",
         ...(message.errorMessage ? { error_message: message.errorMessage.slice(0, 500) } : {}),
-      });
+        ...piModelTiming(message),
+      } as SessionEvent);
       await runtime.reportUsage?.(usage.input, usage.output);
       return { producedOutput: false, providerFailure: message };
     }
@@ -441,7 +446,8 @@ async function translatePiEvent(
         .reduce((sum, block) => sum + block.text.length, 0),
       is_error: message.stopReason === "error",
       ...(message.errorMessage ? { error_message: message.errorMessage.slice(0, 500) } : {}),
-    });
+      ...piModelTiming(message),
+    } as SessionEvent);
     await runtime.reportUsage?.(usage.input, usage.output);
     clearMessageState(state);
     return {
@@ -452,7 +458,31 @@ async function translatePiEvent(
     };
   }
 
+  if (event.type === "tool_execution_start") {
+    // A tool without execute waits for OpenMA confirmation: Pi still calls the
+    // wrapper, but nothing runs, so it gets no execution frames.
+    if (!awaitsConfirmation(ctx, event.toolName)) {
+      state.executingTools.add(event.toolCallId);
+      runtime.broadcast({
+        type: "span.tool_execution_start",
+        tool_use_id: event.toolCallId,
+        name: event.toolName,
+        at_ms: Date.now(),
+      } as unknown as SessionEvent);
+    }
+    return { producedOutput };
+  }
+
   if (event.type === "tool_execution_end") {
+    if (state.executingTools.delete(event.toolCallId)) {
+      runtime.broadcast({
+        type: "span.tool_execution_end",
+        tool_use_id: event.toolCallId,
+        at_ms: Date.now(),
+        ...(typeof event.durationMs === "number" ? { duration_ms: event.durationMs } : {}),
+        is_error: event.isError,
+      } as unknown as SessionEvent);
+    }
     const details = event.result?.details as { openmaPendingConfirmation?: boolean } | undefined;
     if (!details?.openmaPendingConfirmation) {
       const content = piContentToWire(event.result?.content ?? []);
@@ -488,7 +518,32 @@ function markFirstToken(
     type: "span.model_first_token",
     model,
     model_request_start_id: state.spanId,
-  });
+    at_ms: Date.now(),
+  } as SessionEvent);
+}
+
+/**
+ * Pi's own clock for the agent trace (docs/plans/agent-trace.md, 2.2): event
+ * stamps follow write order, not execution. `timestamp` is the request start,
+ * `durationMs` comes from a monotonic clock. The public stream drops these
+ * fields; only the trace observer reads them.
+ */
+function piModelTiming(message: AssistantMessage): {
+  started_at_ms: number;
+  duration_ms?: number;
+  at_ms: number;
+} {
+  return {
+    started_at_ms: message.timestamp,
+    ...(typeof message.durationMs === "number" ? { duration_ms: message.durationMs } : {}),
+    at_ms: Date.now(),
+  };
+}
+
+function awaitsConfirmation(ctx: HarnessContext, toolName: string): boolean {
+  const tools = ctx.tools as Record<string, { execute?: unknown } | undefined>;
+  if (!Object.hasOwn(tools, toolName)) return false;
+  return typeof tools[toolName]?.execute !== "function";
 }
 
 async function ensureTextStream(

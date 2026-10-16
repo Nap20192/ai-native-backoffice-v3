@@ -84,7 +84,7 @@ function props(overrides: Partial<SessionHeaderProps> = {}): SessionHeaderProps 
     onArchive: vi.fn(),
     onCopyEvents: vi.fn(),
     onDownloadEvents: vi.fn(),
-    onShowTrajectory: vi.fn(),
+    onDownloadTrace: vi.fn(),
     onShowShortcuts: vi.fn(),
     ...overrides,
   };
@@ -382,19 +382,33 @@ describe("SessionHeader: меню «Действия»", () => {
 });
 
 describe("SessionHeader: меню «⋮»", () => {
-  it("копирует и скачивает события, открывает траекторию и горячие клавиши", async () => {
+  it("копирует и скачивает события, скачивает трейс и открывает горячие клавиши", async () => {
     const { props: p } = renderHeader();
 
     for (const [label, handler] of [
       ["Копировать все события", p.onCopyEvents],
       ["Скачать все события", p.onDownloadEvents],
-      ["Траектория", p.onShowTrajectory],
+      ["Скачать трейс", p.onDownloadTrace],
       ["Горячие клавиши", p.onShowShortcuts],
     ] as const) {
       await userEvent.click(screen.getByRole("button", { name: "Ещё" }));
       await userEvent.click(await screen.findByRole("menuitem", { name: label }));
       expect(handler).toHaveBeenCalledOnce();
     }
+  });
+
+  it("пункты идут в порядке: события, трейс, горячие клавиши, а «Траектории» в меню нет", async () => {
+    renderHeader();
+
+    await userEvent.click(screen.getByRole("button", { name: "Ещё" }));
+
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Копировать все события",
+      "Скачать все события",
+      "Скачать трейс",
+      "Горячие клавиши",
+    ]);
+    expect(screen.queryByRole("menuitem", { name: "Траектория" })).toBeNull();
   });
 });
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import {
   createModels,
   fauxAssistantMessage,
@@ -80,6 +81,118 @@ function makeContext(responses: ReturnType<typeof fauxAssistantMessage>[]) {
 }
 
 describe("PiHarness", () => {
+  describe("кадры трейса", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    function capturePiEvents(): AgentEvent[] {
+      const events: AgentEvent[] = [];
+      const subscribe = Agent.prototype.subscribe;
+      vi.spyOn(Agent.prototype, "subscribe").mockImplementation(function (listener) {
+        return subscribe.call(this, (event) => {
+          events.push(event);
+          return listener(event);
+        });
+      });
+      return events;
+    }
+
+    it.each(["stop", "error", "length"] as const)(
+      "передаёт время Pi при завершении модели с %s",
+      async (stopReason) => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const now = 1_800_000_000_000;
+        vi.setSystemTime(now);
+        const rawEvents = capturePiEvents();
+        const message = fauxAssistantMessage(stopReason === "length" ? "" : "ответ", {
+          stopReason,
+          timestamp: now - 200,
+          ...(stopReason === "error" ? { errorMessage: "provider failed" } : {}),
+        });
+        message.durationMs = 137;
+        const { ctx, events } = makeContext([message]);
+        const run = new PiHarness({ compaction: {
+          name: "disabled",
+          shouldCompact: () => false,
+          compact: async () => null,
+        } }).run(ctx);
+        if (stopReason === "stop") await run;
+        else await expect(run).rejects.toThrow();
+
+        const rawEnd = rawEvents.find((event) => event.type === "message_end"
+          && event.message.role === "assistant");
+        expect(rawEnd).toBeDefined();
+        const assistant = rawEnd!.type === "message_end" ? rawEnd!.message : undefined;
+        expect(events.find((event) => event.type === "span.model_request_start")).toMatchObject({ at_ms: now });
+        if (stopReason === "stop") {
+          expect(events.find((event) => event.type === "span.model_first_token")).toMatchObject({ at_ms: now });
+        }
+        expect(events.find((event) => event.type === "span.model_request_end")).toMatchObject({
+          started_at_ms: assistant!.timestamp,
+          duration_ms: (assistant as typeof message).durationMs,
+          at_ms: now,
+        });
+      },
+    );
+
+    it("измеряет параллельные инструменты и передаёт ошибку до результата", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const now = 1_800_000_000_000;
+      vi.setSystemTime(now);
+      const rawEvents = capturePiEvents();
+      const { ctx, events, echo } = makeContext([
+        fauxAssistantMessage([
+          fauxToolCall("echo", { value: "первый" }, { id: "tool-1" }),
+          fauxToolCall("echo", { value: "второй" }, { id: "tool-2" }),
+          fauxToolCall("mcp_docs_read", { value: "третий" }, { id: "tool-3" }),
+        ], { stopReason: "toolUse" }),
+        fauxAssistantMessage("готово"),
+      ]);
+      let entered = 0;
+      let release!: () => void;
+      const bothStarted = new Promise<void>((resolve) => { release = resolve; });
+      echo.mockImplementation(async ({ value }) => {
+        entered += 1;
+        if (entered === 3) release();
+        await bothStarted;
+        vi.setSystemTime(now + 100);
+        if (value === "второй") throw new Error("ошибка инструмента");
+        return { echoed: value };
+      });
+      ctx.tools.mcp_docs_read = ctx.tools.echo;
+
+      await new PiHarness().run(ctx);
+
+      const frames = events as unknown as Array<Record<string, unknown>>;
+      const starts = frames.filter((event) => event.type === "span.tool_execution_start");
+      const ends = frames.filter((event) => event.type === "span.tool_execution_end");
+      expect(starts).toHaveLength(3);
+      expect(ends).toHaveLength(3);
+      expect(Math.max(...starts.map((event) => frames.indexOf(event))))
+        .toBeLessThan(Math.min(...ends.map((event) => frames.indexOf(event))));
+      for (const [index, id] of ["tool-1", "tool-2", "tool-3"].entries()) {
+        const start = starts.find((event) => event.tool_use_id === id)!;
+        const end = ends.find((event) => event.tool_use_id === id)!;
+        const piEnd = rawEvents.find((event) => event.type === "tool_execution_end" && event.toolCallId === id);
+        expect(piEnd?.type).toBe("tool_execution_end");
+        expect(start).toMatchObject({ name: index === 2 ? "mcp_docs_read" : "echo", at_ms: now });
+        expect(end).toMatchObject({
+          at_ms: now + 100,
+          duration_ms: piEnd!.type === "tool_execution_end" ? piEnd!.durationMs : undefined,
+          is_error: index === 1,
+        });
+        expect(end.duration_ms).toEqual(expect.any(Number));
+        const result = frames.find((event) => (event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result")
+          && (event.tool_use_id === id || event.mcp_tool_use_id === id))!;
+        expect(frames.indexOf(start)).toBeLessThan(frames.indexOf(end));
+        expect(frames.indexOf(end)).toBeLessThan(frames.indexOf(result));
+        expect(result).not.toHaveProperty("duration_ms");
+      }
+    });
+  });
+
   it("keeps thinking off by default even when the model supports reasoning", async () => {
     const { ctx, faux } = makeContext([]);
     ctx.pi!.model = { ...ctx.pi!.model, reasoning: true };
@@ -684,5 +797,6 @@ describe("PiHarness", () => {
       id: "tool-confirm",
     }));
     expect(events.some((event) => event.type === "agent.tool_result")).toBe(false);
+    expect(events.filter((event) => event.type.startsWith("span.tool_execution_"))).toEqual([]);
   });
 });

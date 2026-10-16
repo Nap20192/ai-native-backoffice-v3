@@ -60,6 +60,7 @@ import {
   IntegrationsFeishuPublishPage,
 } from "./pages/IntegrationsFeishu";
 import { consolePlugins } from "./plugins/registry";
+import { HARNESS_ROUTE } from "./pages/harnesses/harness-nav";
 
 /**
  * Router config. Migrated from declarative `<BrowserRouter><Routes>` to
@@ -169,6 +170,7 @@ const protectedRoutes: RouteObject[] = [
     ],
   },
   { path: "model-cards", element: <ModelCardsList />, handle: { crumb: "Карточки моделей" } },
+  { path: HARNESS_ROUTE.path, lazy: HARNESS_ROUTE.load, handle: { crumb: HARNESS_ROUTE.crumb } },
   { path: "members", element: <WorkspaceMembers />, handle: { crumb: "Участники" } },
   { path: "api-keys", element: <ApiKeysList />, handle: { crumb: "API-ключи" } },
   { path: "runtimes", element: <RuntimesList />, handle: { crumb: "Локальные среды" } },

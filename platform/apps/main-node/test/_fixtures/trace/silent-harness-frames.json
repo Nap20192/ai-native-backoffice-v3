@@ -1,0 +1,86 @@
+{
+  "_provenance": {
+    "source": "synthetic",
+    "note": "A harness that sends only the final agent.message (level 0 of plan section 2.5)."
+  },
+  "scope": {
+    "workspaceId": "ws_fixture",
+    "sessionId": "session_fixtureSilent000001"
+  },
+  "harness": "silent-test",
+  "agentName": "agent",
+  "inputs": [
+    {
+      "kind": "execution_started",
+      "atMs": 1792200100001,
+      "events": [
+        {
+          "type": "user.message",
+          "id": "sevt_fixtureSilentUser0001",
+          "content": [
+            {
+              "type": "text",
+              "text": "<user text>"
+            }
+          ],
+          "processedAt": "2026-10-17T01:21:40.000Z"
+        }
+      ],
+      "fence": {
+        "executionId": "sevt_fixtureSilentUser0001",
+        "attemptId": "attempt_fixtureSilent00001",
+        "generation": 1
+      }
+    },
+    {
+      "kind": "start_attempt",
+      "attempt": 1,
+      "atMs": 1792200100002
+    },
+    {
+      "kind": "start_attempt_settled",
+      "attempt": 1,
+      "atMs": 1792200100009,
+      "outcome": "ok"
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_running",
+        "id": "sevt_fixtureSilentRun0001",
+        "processed_at": "2026-10-17T01:21:40.020Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "agent.message",
+        "message_id": "sevt_fixtureSilentMsg0001",
+        "content": [
+          {
+            "type": "text",
+            "text": "<agent text>"
+          }
+        ],
+        "id": "sevt_fixtureSilentMsg0001",
+        "processed_at": "2026-10-17T01:21:42.400Z"
+      }
+    },
+    {
+      "kind": "frame",
+      "frame": {
+        "type": "session.status_idle",
+        "stop_reason": {
+          "type": "end_turn"
+        },
+        "id": "sevt_fixtureSilentIdle001",
+        "processed_at": "2026-10-17T01:21:42.410Z"
+      }
+    },
+    {
+      "kind": "execution_settled",
+      "atMs": 1792200102415,
+      "outcome": "completed"
+    }
+  ]
+}

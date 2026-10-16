@@ -1,16 +1,22 @@
 #!/usr/bin/env node
-// Сценарий «Claude Code в песочнице» verify-agent-console (Playwright, консоль на русском):
-//   вход → окружение с npm-пакетом @agentclientprotocol/claude-agent-acp (консоль) →
-//   хранилище с учётными данными «переменная окружения» (API: в консоли такого типа нет) →
-//   агент на harness acp-sandbox с ACP-агентом claude-acp (консоль, YAML) → сессия с этим
-//   окружением и хранилищем (консоль) → ход: Claude Code внутри VM LiteBox пишет и читает
-//   verify.txt в рабочей папке (= /mnt/session/outputs), Bash без разрешения отклоняется →
-//   доказательства (события, поток, выводы, файл на хосте, VM, журнал модели) → второй ход:
-//   ps в VM (ACP-сессия возобновлена, в VM один claude-agent-acp, на хосте его нет) → архив.
-// Модель: режим fake (по умолчанию): Claude Code в VM ходит в fake-model.mjs хоста через
-//   ANTHROPIC_BASE_URL=http://host.boxlite.internal:<порт фейка>, ключ фиктивный и лежит в хранилище.
-//   Режим real (VERIFY_CC_MODE=real) только явно: настоящий ключ или токен подписки из файла
-//   VERIFY_CC_SECRET_FILE кладётся в хранилище, базовый URL не задаётся. Сейчас не запускался.
+// Сценарий «Claude Code и свой harness в песочнице» verify-agent-console (Playwright, консоль на русском):
+//   вход → карточки моделей (консоль): Anthropic на фейк с ключом карточки и OpenAI для
+//   несовместимой модели → окружение с npm-пакетом @agentclientprotocol/claude-agent-acp (консоль) →
+//   хранилище с ключом модели и обычной переменной «переменная окружения» (API: в консоли такого
+//   типа нет) → guard на POST /v1/agents: 400 на секрет в env, неизвестный harness и несовместимую
+//   модель (API и окно агента) → карточка своего harness на странице «Harness» (консоль) → агент
+//   Claude Code из формы: Harness «Claude Code в песочнице», несовместимая модель выключена с
+//   причиной, своя карточка видна в списке → сессия с окружением и хранилищем (консоль) → ход:
+//   Claude Code внутри VM LiteBox пишет и читает verify.txt в рабочей папке (= /mnt/session/outputs),
+//   Bash без разрешения отклоняется → доказательства (события, поток, выводы, файл на хосте, VM,
+//   журнал модели) → второй ход: ps и окружение claude-agent-acp в VM (ACP-сессия возобновлена,
+//   в VM один claude-agent-acp, ключа модели в окружении нет, модель идёт через прокси с токеном
+//   сессии) → архив → агент на своей карточке (acp-echo-agent.cjs) отвечает в новой сессии.
+// Модель: Claude Code и свой агент в VM ходят в модель через прокси сервера
+//   (/v1/oma/inference-proxy/<сессия>, токен хода oma_sbx_), прокси берёт ключ и адрес карточки.
+//   Режим fake (по умолчанию): адрес карточки это fake-model.mjs хоста, ключ фиктивный.
+//   Режим real (VERIFY_CC_MODE=real) только явно: ключ API Anthropic из файла VERIFY_CC_SECRET_FILE
+//   уходит в карточку модели, базовый URL не задаётся. Сейчас не запускался.
 // Запуск: scripts/journey.sh --run <RUN_ID> --scenario claude-code.
 // Итог: $EVIDENCE_DIR/summary.md; код 0, если все обязательные проверки прошли.
 import { createRequire } from "node:module";
@@ -55,52 +61,74 @@ const CC_MODE = process.env.VERIFY_CC_MODE ?? "fake";
 if (!["fake", "real"].includes(CC_MODE)) throw new Error("VERIFY_CC_MODE должен быть fake или real");
 const FAKE = CC_MODE === "fake";
 if (FAKE && run.MODEL_MODE !== "fake") throw new Error("VERIFY_CC_MODE=fake требует экземпляр с фейковой моделью (VERIFY_MODEL_MODE=fake при launch)");
-// Хост из VM BoxLite: gvproxy отвечает на host.boxlite.internal адресом 192.168.127.254
-// и пересылает его на 127.0.0.1 хоста (проверено 2026-10-16), поэтому фейку хватает 127.0.0.1.
-const FAKE_URL_VM = `http://host.boxlite.internal:${run.VERIFY_FAKE_PORT}`;
+// Адрес сервера из VM BoxLite (SANDBOX_GATEWAY_BASE_URL, его задаёт launch.sh): gvproxy отвечает
+// на host.boxlite.internal адресом 192.168.127.254 и пересылает его на 127.0.0.1 хоста.
+const GATEWAY_VM = run.SANDBOX_GATEWAY_BASE_URL || `http://host.boxlite.internal:${run.VERIFY_PORT}`;
 // Версия закреплена: пакет ставится из npm при каждом старте VM, и новый релиз Claude Code
 // не должен менять сценарий. 0.91.0 прошла в прогоне 20261016-012333.
 const CC_PACKAGE = "@agentclientprotocol/claude-agent-acp@0.91.0";
 const WORKDIR = "/mnt/session/outputs";
-// Обёртка запуска: пишет настройки Claude Code (только список allow, без режима обхода)
-// в его CLAUDE_CONFIG_DIR, который задаёт профиль claude-code (acp-runtime/native-state.ts),
-// и заменяет себя на claude-agent-acp.
-const CLAUDE_WRAPPER = 'mkdir -p "$CLAUDE_CONFIG_DIR" && printf \'%s\' "$OMA_CLAUDE_SETTINGS" > "$CLAUDE_CONFIG_DIR/settings.json" && exec claude-agent-acp';
-// Bash(ps:*) нужен второму ходу (процессы VM); контрольный touch по-прежнему вне списка.
-const CLAUDE_SETTINGS = { permissions: { allow: ["Read", "Write", "Edit", "Bash(ps:*)"] } };
+// Форма агента пишет блок _oma.acp из каталога (обёртка sh -c и OMA_CLAUDE_SETTINGS со списком
+// Read, Write, Edit). Bash(ps:*) нужен второму ходу (процессы и окружение VM), его сценарий
+// добавляет в YAML той же формы, как советует подсказка вкладки «Инструменты»; контрольный
+// touch по-прежнему вне списка.
+const CLAUDE_ALLOW_EXTRA = "Bash(ps:*)";
+// Модель карточки, которую прокси подставляет вместо handle агента (wire_model).
+const WIRE_MODEL = process.env.VERIFY_CC_WIRE_MODEL ?? "claude-sonnet-4-6";
 
 const newNonce = () => randomBytes(4).toString("hex");
 const nonce = newNonce();
+const cardNonce = newNonce();
 const names = {
   env: `verify-cc-env-${nonce}`,
   vault: `verify-cc-vault-${nonce}`,
   agent: `verify-cc-agent-${nonce}`,
   session: `verify-cc-session-${nonce}`,
+  // Карточки моделей: handle Claude Code и несовместимая с ним модель OpenAI.
+  modelCard: `verify-cc-${nonce}`,
+  oaiCard: `verify-oai-${nonce}`,
+  // Свой harness: ID в агенте, название на странице «Harness», агент и сессия на нём.
+  harnessId: `verify-echo-${nonce}`,
+  harnessName: `Эхо ACP ${nonce}`,
+  cardAgent: `verify-card-agent-${nonce}`,
+  cardSession: `verify-card-session-${nonce}`,
+  guardAgent: `verify-guard-${nonce}`,
+  unknownHarness: `verify-unknown-${nonce}`,
 };
 const ids = {};
 const created = { sessions: [], agents: [], environments: [], vaults: [] };
 const covered = new Set();
 const cover = (...list) => list.forEach((id) => covered.add(id));
 
-// Секрет для хранилища. fake: одноразовый фиктивный ключ. real: файл владельца (не ~/.claude).
-// Читается в начале сценария (внутри try), значение не печатается и уходит только в API хранилища.
-let secret = { name: "—", value: "" };
-const loadSecret = () => {
-  if (FAKE) return { name: "ANTHROPIC_API_KEY", value: `verify-cc-fake-key-${nonce}` };
+// Ключ карточки модели. fake: одноразовый фиктивный ключ, адрес карточки это фейк хоста.
+// real: ключ API Anthropic из файла владельца (не ~/.claude), адрес по умолчанию. Значение
+// не печатается и уходит только в карточку модели; в VM его нет, его подставляет прокси.
+let cardSecret = { key: "", baseUrl: "" };
+const loadCardSecret = () => {
+  if (FAKE) return { key: `verify-card-key-${nonce}`, baseUrl: run.FAKE_URL };
   const file = process.env.VERIFY_CC_SECRET_FILE ?? "";
-  const name = process.env.VERIFY_CC_SECRET_NAME ?? "CLAUDE_CODE_OAUTH_TOKEN";
-  if (!["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"].includes(name)) {
-    throw new Error("VERIFY_CC_SECRET_NAME: ANTHROPIC_API_KEY или CLAUDE_CODE_OAUTH_TOKEN");
+  const name = process.env.VERIFY_CC_SECRET_NAME ?? "ANTHROPIC_API_KEY";
+  if (name !== "ANTHROPIC_API_KEY") {
+    throw new Error("VERIFY_CC_SECRET_NAME: только ANTHROPIC_API_KEY. Модель идёт через прокси с ключом карточки, токен подписки через прокси не поддерживается");
   }
-  if (!file) throw new Error("VERIFY_CC_MODE=real: задайте VERIFY_CC_SECRET_FILE (файл с ключом или токеном claude setup-token, права 600)");
+  if (!file) throw new Error("VERIFY_CC_MODE=real: задайте VERIFY_CC_SECRET_FILE (файл с ключом API Anthropic, права 600)");
   const abs = resolve(file);
-  if (abs.startsWith(join(os.homedir(), ".claude"))) throw new Error("учётные данные Claude Code из ~/.claude не используются: сохраните токен в отдельный файл");
+  if (abs.startsWith(join(os.homedir(), ".claude"))) throw new Error("учётные данные Claude Code из ~/.claude не используются: сохраните ключ в отдельный файл");
   if ((statSync(abs).mode & 0o077) !== 0) throw new Error(`${abs}: права шире 600`);
   const value = readFileSync(abs, "utf8").trim();
-  if (!value || value.includes("\n")) throw new Error(`${abs}: нужен один ключ или токен одной строкой`);
-  return { name, value };
+  if (!value || value.includes("\n")) throw new Error(`${abs}: нужен один ключ одной строкой`);
+  return { key: value, baseUrl: "" };
+};
+// Хранилище сессии: ключ модели (до VM дойти не должен, skipModelKeys) и обычная переменная
+// (до VM доходит, так видно, что окружение хранилища работает, а ключи моделей отсеяны).
+const vaultSecrets = {
+  modelKey: { name: "ANTHROPIC_API_KEY", value: `verify-vault-key-${nonce}` },
+  note: { name: "VERIFY_VAULT_NOTE", value: `verify-vault-note-${nonce}` },
 };
 const sha12 = (value) => createHash("sha256").update(String(value)).digest("hex").slice(0, 12);
+// Тестовый ACP-агент своей карточки одной строкой: аргумент после -e команды node.
+const ECHO_AGENT = readFileSync(join(SKILL_DIR, "scripts", "acp-echo-agent.cjs"), "utf8")
+  .split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("//")).join(" ");
 
 const require = createRequire(join(run.PLATFORM_DIR, "package.json"));
 const { chromium } = require("@playwright/test");
@@ -395,9 +423,36 @@ function hostAcpProcesses() {
   }
   return found;
 }
-function fakeRequests() {
+function fakeRequests(n = nonce) {
   if (!existsSync(run.FAKE_REQUESTS)) return [];
-  return readFileSync(run.FAKE_REQUESTS, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.nonce === nonce);
+  return readFileSync(run.FAKE_REQUESTS, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.nonce === n);
+}
+// Процессы хоста среди потомков server-node, в командной строке которых есть text.
+function hostProcessesWith(text) {
+  const serverNode = recordedPid("server-node");
+  const found = [];
+  for (const name of readdirSync("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    const pid = Number(name);
+    let cmdline;
+    try { cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ").trim(); } catch { continue; }
+    if (!cmdline.includes(text)) continue;
+    if (ancestry(pid).slice(1).includes(serverNode)) found.push(`${pid} ${cmdline.slice(0, 160)}`);
+  }
+  return found;
+}
+// Запрос к API без исключения на коде ответа: guard проверяется по коду 400 и тексту.
+async function apiRaw(method, path, body) {
+  const res = await context.request.fetch(BASE + path, {
+    method,
+    headers: { "anthropic-beta": BETAS, origin: BASE, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    data: body === undefined ? undefined : JSON.stringify(body),
+    failOnStatusCode: false,
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+  return { status: res.status(), json, text };
 }
 
 // --------------------------------------------------------------- браузер ---
@@ -454,6 +509,61 @@ async function stepLogin() {
   });
 }
 
+// Карточка модели через консоль («Карточки моделей» → «Новая карточка модели»). Провайдер
+// выбирается первым: плитка провайдера сбрасывает модель и адрес. При создании сервер проверяет
+// ключ запросом к адресу карточки (probeModelCard в packages/http-routes/src/model-cards).
+async function createModelCardUi({ id, provider, key, wire, baseUrl }) {
+  await openSection("Карточки моделей", "Карточек моделей пока нет");
+  await page.getByRole("button", { name: "Новая карточка модели" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Новая карточка модели" });
+  await dialog.waitFor();
+  await dialog.getByRole("group", { name: "Провайдер Pi *" }).getByRole("button", { name: new RegExp(`^${provider.label}`) }).click();
+  await dialog.locator("#modelcard-id").fill(id);
+  await dialog.locator("#modelcard-api-key").fill(key);
+  await dialog.locator("#modelcard-wire-model").fill(wire);
+  if (baseUrl) await dialog.locator("#modelcard-base-url").fill(baseUrl);
+  const filled = await shot(`model-card-${provider.value}-filled`);
+  await dialog.getByRole("button", { name: "Создать", exact: true }).click();
+  const toast = page.getByText(new RegExp(`^Карточка модели (создана, ключ ${provider.value} проверен|сохранена)`)).first();
+  await toast.waitFor({ timeout: 20_000 });
+  const toastText = plain(await toast.textContent());
+  await dialog.waitFor({ state: "hidden", timeout: 15_000 });
+  await tableRow(id).waitFor({ timeout: 15_000 });
+  return { filled, toastText };
+}
+
+async function stepModelCards() {
+  const cc = await createModelCardUi({
+    id: names.modelCard, provider: { value: "anthropic", label: "Anthropic" },
+    key: cardSecret.key, wire: WIRE_MODEL, baseUrl: cardSecret.baseUrl,
+  });
+  const oai = await createModelCardUi({
+    id: names.oaiCard, provider: { value: "openai", label: "OpenAI" },
+    key: `verify-oai-key-${nonce}`, wire: "gpt-4.1", baseUrl: `${run.FAKE_URL}/v1`,
+  });
+  await shot("model-cards");
+  const options = await api("GET", "/v1/oma/model_options");
+  saveJson("05-model-options", options);
+  const byHandle = (handle) => (options.data ?? []).find((o) => o.handle === handle);
+  const ccOption = byHandle(names.modelCard);
+  const oaiOption = byHandle(names.oaiCard);
+  ids.ccOption = ccOption;
+  ids.oaiOption = oaiOption;
+  const ok = await check("cc.model_cards", `карточки моделей из консоли: ${names.modelCard} (anthropic-messages, подходит Claude Code) и ${names.oaiCard} (протоколы OpenAI, Claude Code не подходит); ключ карточки проверен при создании`, () => {
+    assert(ccOption, `нет ${names.modelCard} в GET /v1/oma/model_options`);
+    assert(oaiOption, `нет ${names.oaiCard} в GET /v1/oma/model_options`);
+    assert(ccOption.source === "card" && ccOption.wire_model === WIRE_MODEL, `${names.modelCard}: source ${ccOption.source}, wire_model ${ccOption.wire_model}`);
+    assert(JSON.stringify(ccOption.protocols) === JSON.stringify(["anthropic-messages"]), `протоколы ${names.modelCard}: ${JSON.stringify(ccOption.protocols)}`);
+    assert((ccOption.harnesses ?? []).includes("claude-acp"), `harnesses ${names.modelCard}: ${JSON.stringify(ccOption.harnesses)}`);
+    assert(!(oaiOption.protocols ?? []).includes("anthropic-messages") && (oaiOption.protocols ?? []).length > 0, `протоколы ${names.oaiCard}: ${JSON.stringify(oaiOption.protocols)}`);
+    assert(!(oaiOption.harnesses ?? []).includes("claude-acp"), `harnesses ${names.oaiCard}: ${JSON.stringify(oaiOption.harnesses)}`);
+    assert(/проверен/.test(cc.toastText), `тост карточки ${names.modelCard}: «${cc.toastText}»`);
+    assert(!JSON.stringify(options).includes(cardSecret.key), "ключ карточки вернулся в GET /v1/oma/model_options");
+    return `api/cc-05-model-options.json, ${cc.filled}, ${oai.filled}; тосты: «${cc.toastText}», «${oai.toastText}»`;
+  });
+  if (ok) cover("cc-model-card");
+}
+
 // Окружение через консоль: создать, затем в карточке добавить npm-пакет агента.
 async function stepEnvironment() {
   await openSection("Окружения", "Окружений пока нет");
@@ -501,56 +611,76 @@ async function stepVault() {
   ids.vault = vault.id;
   created.vaults.push(ids.vault);
   saveCreated();
-  const credential = await api("POST", `/v1/vaults/${ids.vault}/credentials`, {
-    display_name: `Claude Code: ${secret.name}`,
-    auth: { type: "environment_variable", secret_name: secret.name, secret_value: secret.value, networking: { type: "unrestricted" } },
-  });
-  saveJson("20-vault-credential", credential);
-  const ok_cc_vault = await check("cc.vault_secret", `в хранилище есть учётные данные «переменная окружения» ${secret.name}, значение API не отдаёт`, () => {
-    assert(credential.auth?.type === "environment_variable", `auth.type ${credential.auth?.type}`);
-    assert(credential.auth?.secret_name === secret.name, `secret_name ${credential.auth?.secret_name}`);
-    assert(!JSON.stringify(credential).includes(secret.value), "значение секрета вернулось в ответе API");
-    return "api/cc-20-vault-credential.json";
+  // Ключ модели в хранилище: с 2026-10-16 сервер его в VM не кладёт (skipModelKeys в
+  // applyVaultEnvironment), второй ход это проверяет. Обычная переменная доходит до VM.
+  const credentials = [];
+  for (const item of [vaultSecrets.modelKey, vaultSecrets.note]) {
+    credentials.push(await api("POST", `/v1/vaults/${ids.vault}/credentials`, {
+      display_name: `verify: ${item.name}`,
+      auth: { type: "environment_variable", secret_name: item.name, secret_value: item.value, networking: { type: "unrestricted" } },
+    }));
+  }
+  saveJson("20-vault-credentials", credentials);
+  const ok_cc_vault = await check("cc.vault_secret", `в хранилище учётные данные «переменная окружения» ${vaultSecrets.modelKey.name} и ${vaultSecrets.note.name}, значения API не отдаёт`, () => {
+    for (const [i, item] of [vaultSecrets.modelKey, vaultSecrets.note].entries()) {
+      assert(credentials[i]?.auth?.type === "environment_variable", `auth.type ${credentials[i]?.auth?.type}`);
+      assert(credentials[i]?.auth?.secret_name === item.name, `secret_name ${credentials[i]?.auth?.secret_name}`);
+      assert(!JSON.stringify(credentials).includes(item.value), `значение ${item.name} вернулось в ответе API`);
+    }
+    return "api/cc-20-vault-credentials.json";
   });
   record("cc.vault_api_path", "учётные данные «переменная окружения» созданы через API", "внимание", "",
     "в консоли (pages/VaultDetail.tsx) нет формы для типа environment_variable, только MCP-сервер и CLI; хранилище видно в консоли и выбирается в окне «Новая сессия»");
   await page.goto(`${BASE}/vaults/${ids.vault}`);
   await page.getByRole("heading", { level: 1, name: names.vault }).first().waitFor();
-  await page.getByText(secret.name).first().waitFor({ timeout: 15_000 });
+  await page.getByText(vaultSecrets.modelKey.name).first().waitFor({ timeout: 15_000 });
   await shot("vault-detail");
   if (ok_cc_vault) cover("cc-vault");
 }
 
-function agentYaml() {
-  const q = (value) => JSON.stringify(value);
-  const env = {
-    ...(FAKE ? { ANTHROPIC_BASE_URL: FAKE_URL_VM } : {}),
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-    OMA_CLAUDE_SETTINGS: JSON.stringify(CLAUDE_SETTINGS),
-  };
-  return [
-    `name: ${names.agent}`,
-    `model: ${MODEL}`,
-    `description: ${q("Claude Code (claude-agent-acp) внутри песочницы LiteBox")}`,
-    `system: ${q("Агент на Claude Code. Работай в рабочей папке сессии.")}`,
-    "_oma:",
-    "  harness: acp-sandbox",
-    "  acp:",
-    "    agent:",
-    "      id: claude-acp",
-    "      command: sh",
-    "      args:",
-    `        - ${q("-c")}`,
-    `        - ${q(CLAUDE_WRAPPER)}`,
-    `      cwd: ${WORKDIR}`,
-    "      env:",
-    ...Object.entries(env).map(([k, v]) => `        ${k}: ${q(v)}`),
-    "    per_turn_timeout_ms: 600000",
-    "",
-  ].join("\n");
-}
-
-async function stepAgent() {
+// Guard на POST /v1/agents (apps/main-node/src/lib/agent-config-guard.ts): 400 и текст по-русски
+// в формате managed API, агент не создаётся. Тот же отказ видит пользователь в окне агента.
+async function stepGuard() {
+  const claudeBlock = (env) => ({
+    harness: "acp-sandbox",
+    acp: {
+      agent: { id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"], cwd: WORKDIR, env },
+      per_turn_timeout_ms: 600000,
+    },
+  });
+  const cases = [
+    { id: "cc.guard_secret_env", title: "секрет в env агента: GITHUB_TOKEN",
+      body: { name: `${names.guardAgent}-secret`, model: names.modelCard, _oma: claudeBlock({ GITHUB_TOKEN: `verify-not-a-secret-${nonce}` }) },
+      want: "Переменная «GITHUB_TOKEN» похожа на секрет" },
+    { id: "cc.guard_model_key_env", title: "ключ модели в env агента: ANTHROPIC_API_KEY",
+      body: { name: `${names.guardAgent}-key`, model: names.modelCard, _oma: claudeBlock({ ANTHROPIC_API_KEY: `verify-guard-key-${nonce}` }) },
+      want: "Переменную «ANTHROPIC_API_KEY» задаёт сервер" },
+    { id: "cc.guard_unknown_harness", title: `неизвестный harness ${names.unknownHarness}`,
+      body: { name: `${names.guardAgent}-harness`, model: names.modelCard, _oma: { harness: names.unknownHarness } },
+      want: `Неизвестный harness «${names.unknownHarness}»` },
+    { id: "cc.guard_incompatible_model", title: `модель ${names.oaiCard} без anthropic-messages для Claude Code`,
+      body: { name: `${names.guardAgent}-model`, model: names.oaiCard, _oma: claudeBlock({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }) },
+      want: `Модель «${names.oaiCard}» не подходит для «Claude Code в песочнице»` },
+  ];
+  const answers = [];
+  for (const item of cases) {
+    const res = await apiRaw("POST", "/v1/agents", item.body);
+    answers.push({ id: item.id, status: res.status, body: res.json ?? res.text.slice(0, 300) });
+    await check(item.id, `guard: POST /v1/agents отвечает 400 (${item.title}), invalid_request_error с текстом «${item.want}…»`, () => {
+      assert(res.status === 400, `код ${res.status}: ${res.text.slice(0, 200)}`);
+      assert(res.json?.type === "error" && res.json?.error?.type === "invalid_request_error", `тело ${res.text.slice(0, 200)}`);
+      assert(String(res.json?.error?.message ?? "").includes(item.want), `текст «${res.json?.error?.message}»`);
+      return `api/cc-25-guard.json: ${plain(res.json.error.message).slice(0, 140)}`;
+    });
+  }
+  saveJson("25-guard", answers);
+  const agents = await api("GET", "/v1/agents?limit=100&include_archived=true");
+  await check("cc.guard_nothing_created", "после отказов guard агентов verify-guard-* нет (GET /v1/agents)", () => {
+    const leaked = (agents.data ?? []).filter((a) => String(a.name).startsWith(names.guardAgent));
+    assert(leaked.length === 0, `созданы: ${leaked.map((a) => `${a.name} ${a.id}`).join(", ")}`);
+    return `агентов в списке: ${(agents.data ?? []).length}`;
+  });
+  // Тот же отказ в консоли: окно «Новый агент», режим YAML, неизвестный harness.
   await openSection("Агенты", "Агентов пока нет");
   await page.getByRole("button", { name: "Новый агент" }).first().click();
   const dialog = page.getByRole("dialog", { name: "Новый агент" });
@@ -558,10 +688,91 @@ async function stepAgent() {
   await dialog.getByRole("button", { name: /^Пустой агент/ }).click();
   await dialog.getByRole("group", { name: "Режим правки" }).getByRole("button", { name: "YAML", exact: true }).click();
   const editor = dialog.getByRole("textbox", { name: "Конфигурация агента в формате YAML" });
-  const yamlText = agentYaml();
-  await editor.fill(yamlText);
-  writeFileSync(join(EV, "api", "cc-30-agent-create.yaml"), yamlText);
-  await shot("agent-yaml");
+  await editor.fill([`name: ${names.guardAgent}-ui`, `model: ${names.modelCard}`, "_oma:", `  harness: ${names.unknownHarness}`, ""].join("\n"));
+  await dialog.getByRole("button", { name: "Создать агента", exact: true }).click();
+  const alert = dialog.getByRole("alert").filter({ hasText: `Неизвестный harness «${names.unknownHarness}»` }).first();
+  await check("cc.guard_ui_alert", "окно «Новый агент» показывает отказ guard (400) блоком role=alert и остаётся открытым", async () => {
+    await alert.waitFor({ timeout: 15_000 });
+    assert(/\/agents$/.test(new URL(page.url()).pathname), `адрес ${page.url()}: окно ушло на карточку агента`);
+    return shot("guard-ui-alert");
+  });
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden", timeout: 10_000 });
+  if (["cc.guard_secret_env", "cc.guard_unknown_harness", "cc.guard_nothing_created", "cc.guard_ui_alert"]
+    .every((id) => checks.some((c) => c.id === id && c.status === "проверено"))) cover("cc-guard");
+}
+
+// Карточка своего harness на странице «Harness»: команда node и тестовый ACP-агент
+// (scripts/acp-echo-agent.cjs) одной строкой после -e. Пакетов не нужно: node есть в образе.
+async function stepHarnessCard() {
+  await nav("Harness").click();
+  await page.getByRole("main").getByRole("heading", { level: 1, name: "Harness", exact: true }).waitFor();
+  const builtin = page.getByRole("region", { name: "Встроенные" });
+  const claudeRow = builtin.locator("tr", { hasText: "Claude Code в песочнице" }).first();
+  await claudeRow.waitFor({ timeout: 15_000 });
+  await page.getByText("Своих harness нет", { exact: true }).first().waitFor({ timeout: 15_000 });
+  const pageShot = await shot("harness-page");
+  await check("harness.page_builtin", "страница «Harness» из меню: встроенные записи, «Claude Code в песочнице» со статусом «Готово», своих harness нет", async () => {
+    const text = plain(await claudeRow.textContent());
+    assert(text.includes("claude-acp") && text.includes("Готово"), `строка Claude Code: «${text}»`);
+    return pageShot;
+  });
+  await page.getByRole("button", { name: "Новый harness" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Новый harness" });
+  await dialog.waitFor();
+  await dialog.locator("#harness-card-name").fill(names.harnessName);
+  await dialog.locator("#harness-card-id").fill(names.harnessId);
+  await dialog.locator("#harness-card-command").fill("node");
+  await dialog.locator("#harness-card-args").fill(`-e\n${ECHO_AGENT}`);
+  await dialog.getByRole("checkbox", { name: "Anthropic Messages" }).check();
+  const filled = await shot("harness-card-filled");
+  await dialog.getByRole("button", { name: "Создать", exact: true }).click();
+  await page.getByText("Harness создан", { exact: true }).first().waitFor({ timeout: 15_000 });
+  await dialog.waitFor({ state: "hidden", timeout: 15_000 });
+  await tableRow(names.harnessName).waitFor({ timeout: 15_000 });
+  const listed = await shot("harness-card-listed");
+  const cards = await api("GET", "/v1/oma/harness_cards");
+  const catalog = await api("GET", "/v1/oma/harnesses");
+  saveJson("26-harness-cards", cards);
+  saveJson("27-harnesses", catalog);
+  const card = (cards.data ?? []).find((c) => c.harness_id === names.harnessId);
+  const entry = (catalog.data ?? []).find((e) => e.id === names.harnessId);
+  ids.harnessCard = card?.id;
+  const ok = await check("harness.card_created", `карточка своего harness создана в консоли: ${names.harnessId}, команда node -e <агент>, протокол anthropic-messages, статус «Не проверено» (API карточек и каталог)`, () => {
+    assert(card, `нет карточки ${names.harnessId} в GET /v1/oma/harness_cards`);
+    assert(card.name === names.harnessName && card.command === "node", `name ${card.name}, command ${card.command}`);
+    assert(card.args?.length === 2 && card.args[0] === "-e" && card.args[1] === ECHO_AGENT, `args: ${JSON.stringify(card.args).slice(0, 120)}`);
+    assert(JSON.stringify(card.protocols) === JSON.stringify(["anthropic-messages"]), `protocols ${JSON.stringify(card.protocols)}`);
+    assert(card.cwd === WORKDIR && card.status === "unverified", `cwd ${card.cwd}, status ${card.status}`);
+    assert(entry?.source === "card" && entry.runtime_harness === "acp-sandbox" && entry.status === "unverified", `запись каталога: ${JSON.stringify(entry ?? null).slice(0, 200)}`);
+    assert(entry.acp?.agent?.id === names.harnessId && entry.acp?.agent?.command === "node", `блок acp каталога: ${JSON.stringify(entry.acp?.agent ?? null).slice(0, 160)}`);
+    return `api/cc-26-harness-cards.json, api/cc-27-harnesses.json, ${filled}, ${listed}`;
+  });
+  if (ok) cover("harness-card-page");
+}
+
+// Окно «Новый агент»: пустой шаблон, название и промпт в разделе «Основное».
+async function openBlankAgentForm(name, system) {
+  await openSection("Агенты", "Агентов пока нет");
+  await page.getByRole("button", { name: "Новый агент" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Новый агент" });
+  await dialog.waitFor();
+  await dialog.getByRole("button", { name: /^Пустой агент/ }).click();
+  await dialog.locator("#agent-name").fill(name);
+  await dialog.locator("#agent-system").fill(system);
+  return dialog;
+}
+// Пункт списка выбора Harness или модели (Popover и Command): cmdk пишет в data-value
+// строку «<id> <подпись>» (HarnessPicker.tsx, ModelPicker.tsx).
+const commandItem = (id) => page.locator(`[data-slot="command-item"][data-value^="${id} "]`).first();
+async function pickFromCombobox(box, id) {
+  await box.click();
+  const item = commandItem(id);
+  await item.waitFor({ timeout: 15_000 });
+  await item.click();
+  await box.filter({ hasText: id }).or(box.filter({ hasText: names.harnessName })).first().waitFor({ timeout: 10_000 });
+}
+async function createAgentAndOpen(dialog, name) {
   await dialog.getByRole("button", { name: "Создать агента", exact: true }).click();
   try {
     await page.waitForURL(/\/agents\/[^/]+$/, { timeout: 30_000 });
@@ -569,27 +780,110 @@ async function stepAgent() {
     const alert = await dialog.getByRole("alert").first().textContent().catch(() => null);
     throw new Error(`агент не создан${alert ? `: ${alert}` : ""}`);
   }
-  ids.agent = decodeURIComponent(new URL(page.url()).pathname.split("/").pop());
-  created.agents.push(ids.agent);
+  const id = decodeURIComponent(new URL(page.url()).pathname.split("/").pop());
+  created.agents.push(id);
   saveCreated();
-  await page.getByRole("heading", { level: 1, name: names.agent }).first().waitFor();
+  await page.getByRole("heading", { level: 1, name }).first().waitFor();
+  return id;
+}
+
+// Агент Claude Code из формы: Harness «Claude Code в песочнице», модель карточки. Форма
+// пишет блок _oma.acp из каталога и убирает усилие. Список allow расширяется в YAML той же формы.
+async function stepAgent() {
+  const dialog = await openBlankAgentForm(names.agent, "Агент на Claude Code. Работай в рабочей папке сессии.");
+  const harnessBox = dialog.getByRole("combobox", { name: "Harness", exact: true });
+  const modelBox = dialog.getByRole("combobox", { name: "Модель", exact: true });
+  // Своя карточка со страницы «Harness» видна в списке, группа «Свои».
+  await harnessBox.click();
+  const ownItem = commandItem(names.harnessId);
+  const ownGroup = page.locator("[cmdk-group]").filter({ has: page.locator("[cmdk-group-heading]", { hasText: /^Свои$/ }) });
+  const ok_in_form = await check("harness.card_in_form", `своя карточка «${names.harnessName}» (${names.harnessId}) видна в списке Harness формы агента: группа «Свои», чип «Не проверено», пункт включён`, async () => {
+    await ownItem.waitFor({ timeout: 15_000 });
+    assert((await ownGroup.locator(`[data-value^="${names.harnessId} "]`).count()) > 0, "пункт не в группе «Свои»");
+    const text = plain(await ownItem.textContent());
+    assert(text.includes(names.harnessName) && text.includes("Не проверено"), `пункт: «${text}»`);
+    assert((await ownItem.getAttribute("aria-disabled")) !== "true", `пункт выключен: ${await ownItem.getAttribute("title")}`);
+    return shot("agent-harness-list");
+  });
+  if (ok_in_form) cover("harness-card-form");
+  await page.keyboard.press("Escape");
+  await ownItem.waitFor({ state: "hidden", timeout: 10_000 });
+  // Со встроенным циклом выбрать модель OpenAI, затем Claude Code: форма заменяет модель на совместимую.
+  await pickFromCombobox(modelBox, names.oaiCard);
+  await pickFromCombobox(harnessBox, "claude-acp");
+  const replacedNote = `Модель заменена: ${names.oaiCard} не работает с Claude Code в песочнице`;
+  await check("cc.form_model_replaced", "при смене Harness на Claude Code несовместимая модель заменена на совместимую карточку, под полем «Модель заменена…»", async () => {
+    await dialog.getByText(replacedNote, { exact: true }).waitFor({ timeout: 10_000 });
+    const modelText = plain(await modelBox.textContent());
+    assert(!modelText.includes(names.oaiCard), `в поле осталась ${names.oaiCard}: «${modelText}»`);
+    return replacedNote;
+  });
+  // Несовместимая модель видна, но выключена; причина в строке, title и aria-describedby.
+  await modelBox.click();
+  const oaiItem = commandItem(names.oaiCard);
+  await oaiItem.waitFor({ timeout: 15_000 });
+  const reason = `Claude Code в песочнице работает только с моделями с протоколом anthropic-messages, у модели ${names.oaiCard}: ${(ids.oaiOption?.protocols ?? []).join(", ")}`;
+  const ok_incompatible = await check("cc.form_incompatible_model", `в списке моделей при Harness «Claude Code в песочнице» ${names.oaiCard} выключена с причиной «${reason}», ${names.modelCard} включена`, async () => {
+    assert((await oaiItem.getAttribute("aria-disabled")) === "true", `aria-disabled=${await oaiItem.getAttribute("aria-disabled")}`);
+    const describedBy = await oaiItem.getAttribute("aria-describedby");
+    const described = describedBy ? plain(await page.locator(`[id="${describedBy}"]`).textContent()) : "";
+    assert(described === reason, `причина по aria-describedby: «${described}»`);
+    assert((await oaiItem.getAttribute("title")) === reason, `title «${await oaiItem.getAttribute("title")}»`);
+    assert((await commandItem(names.modelCard).getAttribute("aria-disabled")) !== "true", `${names.modelCard} выключена`);
+    return shot("agent-model-incompatible");
+  });
+  if (ok_incompatible) cover("cc-incompatible-model");
+  // Клик по выключенной модели ничего не выбирает.
+  await oaiItem.click({ force: true }).catch(() => {});
+  await commandItem(names.modelCard).click();
+  await modelBox.filter({ hasText: names.modelCard }).waitFor({ timeout: 10_000 });
+  await check("cc.form_acp_hints", "при Claude Code поле «Усилие» скрыто, видны «Усилие и скорость ACP-агенту не передаются» и требование к окружению с пакетом claude-agent-acp", async () => {
+    assert((await dialog.getByRole("combobox", { name: "Усилие", exact: true }).count()) === 0, "поле «Усилие» видно");
+    await dialog.getByText("Усилие и скорость ACP-агенту не передаются", { exact: true }).waitFor({ timeout: 5_000 });
+    await dialog.getByText(`В окружении сессии должны стоять пакеты: npm ${CC_PACKAGE}`).first().waitFor({ timeout: 5_000 });
+    return shot("agent-form-claude-code");
+  });
+  // Bash(ps:*) для второго хода: правка OMA_CLAUDE_SETTINGS в YAML той же формы.
+  await dialog.getByRole("group", { name: "Режим правки" }).getByRole("button", { name: "YAML", exact: true }).click();
+  const editor = dialog.getByRole("textbox", { name: "Конфигурация агента в формате YAML" });
+  const formYaml = await editor.inputValue();
+  const yamlText = formYaml.includes('"Edit"]')
+    ? formYaml.replace('"Edit"]', `"Edit","${CLAUDE_ALLOW_EXTRA}"]`)
+    : formYaml.replace('\\"Edit\\"]', `\\"Edit\\",\\"${CLAUDE_ALLOW_EXTRA}\\"]`);
+  assert(yamlText !== formYaml, `в YAML формы нет списка allow с "Edit": ${formYaml.slice(0, 400)}`);
+  await editor.fill(yamlText);
+  writeFileSync(join(EV, "api", "cc-30-agent-create.yaml"), yamlText);
+  await shot("agent-yaml");
+  ids.agent = await createAgentAndOpen(dialog, names.agent);
   await shot("agent-detail");
-  await aria("agent-detail");
+  const ariaFile = await aria("agent-detail");
   const agent = await api("GET", `/v1/agents/${ids.agent}`);
   saveJson("31-agent", agent);
-  const ok_cc_agent = await check("cc.agent_harness", "агент из консоли: harness acp-sandbox, ACP-агент claude-acp, рабочая папка /mnt/session/outputs", () => {
-    const acp = agent._oma?.acp?.agent;
+  const acp = agent._oma?.acp?.agent;
+  let settings = null;
+  try { settings = JSON.parse(acp?.env?.OMA_CLAUDE_SETTINGS ?? "null"); } catch { settings = null; }
+  const ok_cc_agent = await check("cc.agent_harness", `агент из формы: harness acp-sandbox, ACP-агент claude-acp из каталога (sh, рабочая папка ${WORKDIR}), модель ${names.modelCard} без усилия, allow + ${CLAUDE_ALLOW_EXTRA}`, () => {
+    const model = typeof agent.model === "string" ? agent.model : agent.model?.id;
     assert(agent._oma?.harness === "acp-sandbox", `_oma.harness ${agent._oma?.harness}`);
-    assert(acp?.id === "claude-acp", `_oma.acp.agent.id ${acp?.id}`);
+    assert(acp?.id === "claude-acp" && acp?.command === "sh", `_oma.acp.agent ${JSON.stringify({ id: acp?.id, command: acp?.command })}`);
     assert(acp?.cwd === WORKDIR, `cwd ${acp?.cwd}`);
+    assert(model === names.modelCard, `model ${JSON.stringify(agent.model)}`);
+    assert(typeof agent.model === "string" || (agent.model?.effort === undefined && agent.model?.speed === undefined), `усилие или скорость в модели: ${JSON.stringify(agent.model)}`);
+    const allow = settings?.permissions?.allow ?? [];
+    assert(["Read", "Write", "Edit", CLAUDE_ALLOW_EXTRA].every((rule) => allow.includes(rule)), `permissions.allow ${JSON.stringify(allow)}`);
     return "api/cc-31-agent.json, api/cc-30-agent-create.yaml";
   });
-  await check("cc.agent_no_secret", "в конфигурации агента нет ключа и режима обхода разрешений", () => {
+  await check("cc.agent_no_secret", "в конфигурации агента нет ключей, адреса модели и режима обхода разрешений", () => {
     const text = JSON.stringify(agent);
-    assert(!text.includes(secret.value), "значение секрета есть в агенте");
-    assert(!/ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN/.test(JSON.stringify(agent._oma?.acp?.agent?.env ?? {})), "переменная ключа задана в env агента");
+    for (const value of [cardSecret.key, vaultSecrets.modelKey.value]) assert(!text.includes(value), "значение ключа есть в агенте");
+    assert(!/ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_BASE_URL|ANTHROPIC_AUTH_TOKEN/.test(JSON.stringify(acp?.env ?? {})), `env агента: ${Object.keys(acp?.env ?? {}).join(", ")}`);
     assert(!/bypassPermissions|dangerously/i.test(text), "в агенте есть bypassPermissions/dangerously");
     return "api/cc-31-agent.json";
+  });
+  await check("cc.agent_detail_ui", "карточка агента: Harness «Claude Code в песочнице» и модель карточки", async () => {
+    const text = plain(await page.getByRole("region", { name: "Свойства агента" }).first().textContent());
+    assert(text.includes("Claude Code в песочнице") && text.includes(names.modelCard), `«Свойства агента»: ${text.slice(0, 240)}`);
+    return ariaFile;
   });
   if (ok_cc_agent) cover("cc-agent");
 }
@@ -715,31 +1009,43 @@ async function stepTurn() {
     if (FAKE) assert((await answer.textContent())?.includes(`VERIFY_CC_DONE_${nonce}`), "в ответе нет VERIFY_CC_DONE");
     return `${await shot("turn-done")}, ${await aria("turn-done")}`;
   });
-  await check("cc.ui_tool_cards", "в ходе видны карточки инструментов Claude Code Write и Read", async () => {
-    const reasoning = article.locator("[data-chat-reasoning-trigger]").first();
-    if ((await reasoning.count()) && (await reasoning.getAttribute("aria-expanded")) !== "true") await reasoning.click();
-    const group = article.getByRole("button", { name: /^Использован[о]? \d+ инструмент/ }).first();
-    if (await group.count()) await group.click();
-    for (const kind of ["Write", "Read"]) {
-      await article.locator('[data-slot="collapsible-trigger"]', { hasText: kind }).first().waitFor({ timeout: 15_000 });
+  // Страница сессии как в консоли Claude (с 2026-10-16): каждый вызов инструмента стоит в ходе строкой
+  // [data-tool-call][data-event-id=<id agent.tool_use>] (ToolRow в components/session/CanonicalSessionTurn.tsx),
+  // кнопка строки раскрывает вызов ([data-tool-details], вывод в [data-tool-output]), статус «Ошибка» бейджем.
+  // Файлы сессии лежат на вкладке «Ресурсы» инспектора, панели «Файлы сессии» больше нет.
+  const toolRow = (event) => article.locator(`[data-tool-call][data-event-id="${event?.id}"]`).first();
+  await check("cc.ui_tool_cards", "в ходе видны строки вызовов Claude Code Write и Read (id из журнала), раскрытый Read показывает VERIFY_OK", async () => {
+    assert(a.write?.id && a.read?.id, "в журнале нет agent.tool_use Write и Read");
+    for (const [kind, event] of [["Write", a.write], ["Read", a.read]]) {
+      const row = toolRow(event);
+      await row.waitFor({ timeout: 15_000 });
+      const title = plain(await row.locator("button[aria-expanded]").first().innerText());
+      assert(title.startsWith(kind), `строка вызова ${event.id}: «${title.slice(0, 120)}»`);
     }
-    const readTrigger = article.locator('[data-slot="collapsible-trigger"]', { hasText: "Read" }).first();
-    if ((await readTrigger.getAttribute("data-state")) !== "open") await readTrigger.click();
-    await article.locator('[data-slot="collapsible-content"]', { hasText: "VERIFY_OK" }).first().waitFor({ timeout: 15_000 });
+    const readRow = toolRow(a.read);
+    if ((await readRow.getAttribute("data-open")) !== "true") await readRow.locator("button[aria-expanded]").first().click();
+    await readRow.locator("[data-tool-details] [data-tool-output]", { hasText: "VERIFY_OK" }).first().waitFor({ timeout: 15_000 });
     return shot("turn-tool-cards");
   }) && cover("cc-tool-cards");
   if (FAKE) {
-    await check("cc.ui_denied_badge", "карточка отклонённого Bash в консоли с бейджем «Ошибка», а не «Готово»", async () => {
-      const trigger = article.locator('[data-slot="collapsible-trigger"]', { hasText: "bash-ran-" }).first();
-      await trigger.waitFor({ timeout: 15_000 });
-      const text = plain(await trigger.textContent());
-      assert(text.includes("Ошибка") && !text.includes("Готово"), `заголовок карточки: ${text.slice(0, 160)}`);
-      return text.slice(0, 120);
+    await check("cc.ui_denied_badge", "строка отклонённого Bash в консоли с бейджем «Ошибка»", async () => {
+      assert(a.bash?.id, "в журнале нет agent.tool_use с контрольной командой Bash");
+      const row = toolRow(a.bash);
+      await row.waitFor({ timeout: 15_000 });
+      const title = plain(await row.locator("button[aria-expanded]").first().innerText());
+      assert(title.includes("bash-ran-") && title.includes("Ошибка"), `строка вызова: ${title.slice(0, 160)}`);
+      return title.slice(0, 120);
     });
   }
-  await check("cc.ui_files", "в панели «Файлы сессии» есть verify.txt", async () => {
-    await page.getByRole("button", { name: "Файлы сессии" }).click();
-    await page.getByRole("complementary", { name: "Файлы сессии" }).getByRole("link", { name: "verify.txt" }).waitFor({ timeout: 15_000 });
+  await check("cc.ui_files", `на вкладке «Ресурсы» инспектора есть ${WORKDIR}/verify.txt со ссылкой на скачивание`, async () => {
+    const inspector = page.getByRole("complementary", { name: "Инспектор сессии" });
+    if (!(await inspector.count())) await page.getByRole("button", { name: "Инспектор", exact: true }).click();
+    await inspector.waitFor({ timeout: 15_000 });
+    await inspector.getByRole("tablist", { name: "Вкладки инспектора" }).getByRole("tab", { name: "Ресурсы", exact: true }).click();
+    const link = inspector.getByRole("link", { name: `${WORKDIR}/verify.txt` });
+    await link.waitFor({ timeout: 15_000 });
+    const href = await link.getAttribute("href");
+    assert(href?.endsWith("/outputs/verify.txt"), `ссылка ведёт на ${href}`);
     return shot("session-files");
   }) && cover("cc-files");
   await sleep(500);
@@ -800,12 +1106,20 @@ async function stepTurn() {
       assert(main.at(-1).bash_denied === true, "bash_denied не true");
       return "api/cc-fake-model-requests.json";
     });
-    await check("cc.key_from_vault", "ключ в запросах Claude Code взят из хранилища (sha256 совпал), в агенте ключа нет", () => {
-      const want = sha12(secret.value);
+    // Прокси сервера (apps/main-node/src/lib/http-inference-proxy.ts) срезает входящий токен
+    // хода, ставит ключ карточки и меняет model на wire_model. Claude Code шлёт handle карточки
+    // (ANTHROPIC_MODEL, окружение проверяет второй ход), а фейк видит только wire_model.
+    await check("cc.proxy_card_key", `Claude Code ходит в модель через прокси сервера: во всех запросах хода ключ карточки ${names.modelCard} (x-api-key, sha256), без Bearer, model = wire_model ${WIRE_MODEL}; ключа из хранилища нет`, () => {
+      const want = sha12(cardSecret.key);
       const got = [...new Set(reqs.map((r) => r.api_key_sha256))];
-      assert(got.length === 1 && got[0] === want, `sha256 ключа в запросах ${got.join(",")}, ожидалось ${want}`);
-      return `x-api-key sha256 ${want}`;
-    }) && cover("cc-key-vault");
+      const vaultSha = sha12(vaultSecrets.modelKey.value);
+      assert(got.length === 1 && got[0] === want, `sha256 x-api-key в запросах ${got.join(",")}, ожидался ключ карточки ${want}${got.includes(vaultSha) ? "; пришёл ключ из хранилища" : ""}`);
+      const bearers = [...new Set(reqs.map((r) => r.bearer_sha256))];
+      assert(bearers.length === 1 && bearers[0] === null, `Bearer в запросах к модели: ${bearers.join(",")}; токен хода дошёл до провайдера`);
+      const models = [...new Set(reqs.map((r) => r.model))];
+      assert(models.length === 1 && models[0] === WIRE_MODEL, `model в запросах: ${models.join(",")}, ожидалась ${WIRE_MODEL} (swapModelInJsonBody)`);
+      return `x-api-key sha256 ${want} (карточка), model ${WIRE_MODEL}, запросов ${reqs.length}`;
+    }) && cover("cc-proxy");
   }
 }
 
@@ -877,9 +1191,44 @@ async function stepSecondTurn() {
       assert(acpLines.length > 0, "в VM процесс не найден, сравнивать не с чем (см. cc.acp_in_vm_single)");
       return "опрос /proc хоста каждые 2 с во время хода; в VM строка из вывода ps";
     });
+    // Окружение главного claude-agent-acp в VM (ps eww, шаг cc2_env фейка): имена, sha256 значений,
+    // адрес и модель. Адаптер Claude (packages/harness-inference-adapters/src/adapters/claude.ts)
+    // ставит адрес прокси и токен хода; ключи моделей хранилища сервер в VM не кладёт
+    // (skipModelKeys в apps/main-node/src/lib/node-managed-vault-env.ts).
+    const env = psRequest?.env ?? null;
+    const proxyUrl = `${GATEWAY_VM}/v1/oma/inference-proxy/${ids.session}/anthropic`;
+    const envFile = saveJson("46-turn2-env", { proxy_expected: proxyUrl, env, env_error: psRequest?.env_error ?? null });
+    const ok_proxy_env = await check("cc.vm_env_proxy", `Claude Code в VM ходит в модель через прокси с токеном сессии: у claude-agent-acp ANTHROPIC_BASE_URL = ${proxyUrl}, ANTHROPIC_AUTH_TOKEN = токен хода oma_sbx_…, ANTHROPIC_MODEL = ${names.modelCard}`, () => {
+      assert(env, `нет окружения процесса claude-agent-acp: ${psRequest?.env_error ?? "шаг ps eww не выполнен (решения второго хода: " + turn2Requests.map((r) => r.decision).join(",") + ")"}`);
+      assert(env.anthropic_base_url === proxyUrl, `ANTHROPIC_BASE_URL ${env.anthropic_base_url}`);
+      assert(env.auth_token_prefix === "oma_sbx_", `ANTHROPIC_AUTH_TOKEN начинается с «${env.auth_token_prefix}»`);
+      assert(env.anthropic_model === names.modelCard, `ANTHROPIC_MODEL ${env.anthropic_model}`);
+      return `${envFile}: переменных ${env.names.length}`;
+    });
+    const modelKeyNames = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"];
+    const skipped = serverLogLines().filter((l) => l.includes('"op":"main-node.vault_env.model_key_skipped"') && l.includes(`"secretName":"${vaultSecrets.modelKey.name}"`));
+    const ok_no_key = await check("cc.vm_env_no_key", `ключа модели в окружении VM нет: у claude-agent-acp нет ${modelKeyNames.join(", ")}, нет значений ключа карточки и ключа ${vaultSecrets.modelKey.name} из хранилища сессии; ${vaultSecrets.modelKey.name} хранилища сервер пропустил (model_key_skipped), а ${vaultSecrets.note.name} дошла`, () => {
+      assert(env, "нет окружения процесса (см. cc.vm_env_proxy)");
+      const leaked = modelKeyNames.filter((name) => env.names.includes(name));
+      assert(leaked.length === 0, `в окружении VM есть ${leaked.join(", ")}`);
+      const shas = Object.values(env.sha12 ?? {});
+      assert(!shas.includes(sha12(cardSecret.key)), "значение ключа карточки есть в окружении VM");
+      assert(!shas.includes(sha12(vaultSecrets.modelKey.value)), `значение ${vaultSecrets.modelKey.name} из хранилища есть в окружении VM`);
+      assert(env.sha12?.[vaultSecrets.note.name] === sha12(vaultSecrets.note.value), `${vaultSecrets.note.name} хранилища нет в окружении VM: переменные хранилища не дошли, проверка пропуска ключа ничего не доказывает`);
+      assert(skipped.length > 0, `в логе сервера нет main-node.vault_env.model_key_skipped для ${vaultSecrets.modelKey.name}`);
+      return `${envFile}; ${plain(skipped[0]).match(/"op":"[^"]+"/)?.[0] ?? ""}`;
+    });
+    if (ok_proxy_env && ok_no_key) cover("cc-no-key-in-vm");
+    if (env?.names?.includes(vaultSecrets.note.name)) {
+      record("cc.vault_plain_in_vm", "переменные хранилища, кроме ключей моделей, лежат в VM открытым текстом", "внимание", envFile,
+        `${vaultSecrets.note.name} есть в окружении claude-agent-acp: подстановки секрета на выходе нет, это видят Claude Code, его инструменты и bash`);
+    }
   } else {
     record("cc.acp_in_vm_single", "в VM один процесс claude-agent-acp", "не проверено", "",
       "в режиме real вывод Bash Claude Code в событиях не виден (только «(status: completed)»), а журнала фейка нет");
+    record("cc.vm_env_proxy", "у claude-agent-acp в VM адрес прокси сессии и токен хода", "не проверено", "",
+      "окружение процесса видно только в выводе ps, который Claude Code отправляет фейку; в режиме real журнала фейка нет");
+    record("cc.vm_env_no_key", "ключа модели в окружении VM нет", "не проверено", "", "как cc.vm_env_proxy");
     ok_host = await check("cc.acp_not_on_host", "на хосте среди потомков server-node процесса claude-agent-acp не было ни разу за второй ход", () => {
       assert(hostSeen.size === 0, `на хосте: ${[...hostSeen].join(" | ").slice(0, 300)}`);
       return "опрос /proc хоста каждые 2 с во время хода";
@@ -903,23 +1252,146 @@ async function stepSecondTurn() {
   if (ok_vm && ok_host && ok_ui && checks.some((c) => c.id === "cc.turn2_resumed" && c.status === "проверено")) cover("cc-multi-turn");
 }
 
-async function archiveAndProveStop() {
+async function archiveAndProveStop(sessionId = ids.session, checkId = "cc.vm_stopped", file = "50-session-archived") {
   const before = boxliteCount("Box stopped");
-  const archived = await api("POST", `/v1/sessions/${ids.session}/archive`);
-  saveJson("50-session-archived", archived);
-  let state = { scratch: scratchDirs(ids.session), stopped: before };
+  const archived = await api("POST", `/v1/sessions/${sessionId}/archive`);
+  saveJson(file, archived);
+  let state = { scratch: scratchDirs(sessionId), stopped: before };
   for (let i = 0; i < 60; i++) {
-    state = { scratch: scratchDirs(ids.session), stopped: boxliteCount("Box stopped") };
+    state = { scratch: scratchDirs(sessionId), stopped: boxliteCount("Box stopped") };
     if (state.scratch.length === 0 && state.stopped > before) break;
     await sleep(1000);
   }
-  const ok_cc_archive = await check("cc.vm_stopped", "после архива сессии VM остановлена (Box stopped) и scratch удалён", () => {
+  const ok_archive = await check(checkId, "после архива сессии VM остановлена (Box stopped) и scratch удалён", () => {
     assert(archived?.archived_at, "archived_at пустой");
     assert(state.stopped > before, `новых «Box stopped» нет (было ${before}, стало ${state.stopped})`);
     assert(state.scratch.length === 0, `scratch остался: ${state.scratch.join(", ")}`);
     return `Box stopped: ${before} → ${state.stopped}`;
   });
-  if (ok_cc_archive) cover("cc-archive");
+  if (ok_archive && checkId === "cc.vm_stopped") cover("cc-archive");
+  return ok_archive;
+}
+
+// Агент на своей карточке harness из формы: Harness из группы «Свои», модель карточки.
+async function stepCardAgent() {
+  const dialog = await openBlankAgentForm(names.cardAgent, "Агент на своей карточке harness: отвечает эхом и одной строкой о модели.");
+  const harnessBox = dialog.getByRole("combobox", { name: "Harness", exact: true });
+  const modelBox = dialog.getByRole("combobox", { name: "Модель", exact: true });
+  await pickFromCombobox(harnessBox, names.harnessId);
+  await pickFromCombobox(modelBox, names.modelCard);
+  const hint = "Свой ACP-агент из карточки. Запускается в VM окружения командой node. Не проверено.";
+  await dialog.getByText(hint, { exact: true }).waitFor({ timeout: 10_000 });
+  await shot("card-agent-form");
+  ids.cardAgent = await createAgentAndOpen(dialog, names.cardAgent);
+  await shot("card-agent-detail");
+  const agent = await api("GET", `/v1/agents/${ids.cardAgent}`);
+  saveJson("60-card-agent", agent);
+  const acp = agent._oma?.acp?.agent;
+  await check("harness.card_agent", `агент из формы на своей карточке: _oma.harness acp-sandbox, _oma.acp.agent из карточки (id ${names.harnessId}, node -e), модель ${names.modelCard}; карточка агента показывает Harness с «Не проверено»`, async () => {
+    const model = typeof agent.model === "string" ? agent.model : agent.model?.id;
+    assert(agent._oma?.harness === "acp-sandbox", `_oma.harness ${agent._oma?.harness}`);
+    assert(acp?.id === names.harnessId && acp?.command === "node", `_oma.acp.agent ${JSON.stringify({ id: acp?.id, command: acp?.command })}`);
+    assert(acp?.args?.[0] === "-e" && acp?.args?.[1] === ECHO_AGENT, `args ${JSON.stringify(acp?.args ?? null).slice(0, 120)}`);
+    assert(model === names.modelCard, `model ${JSON.stringify(agent.model)}`);
+    const text = plain(await page.getByRole("region", { name: "Свойства агента" }).first().textContent());
+    assert(text.includes(names.harnessName) && text.includes("Не проверено"), `«Свойства агента»: ${text.slice(0, 240)}`);
+    return "api/cc-60-card-agent.json";
+  });
+}
+
+// Ход агента на своей карточке: сессия и сообщение через консоль. Тестовый ACP-агент в VM
+// получает OMA_INFERENCE_* (cardInferenceEnv, apps/main-node/src/lib/sandbox-hosted-inference.ts),
+// зовёт модель через прокси с токеном хода и отвечает одной строкой.
+async function stepCardTurn() {
+  await openSection("Сессии", "Сессий пока нет");
+  await page.getByRole("button", { name: "Новая сессия" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Новая сессия" });
+  await dialog.waitFor();
+  await pickCombobox(dialog, 0, ids.cardAgent);
+  await pickCombobox(dialog, 1, ids.environment);
+  await dialog.locator("#session-title").fill(names.cardSession);
+  await dialog.getByRole("button", { name: "Создать", exact: true }).click();
+  await page.waitForURL(/\/sessions\/[^/]+$/, { timeout: 30_000 });
+  ids.cardSession = decodeURIComponent(new URL(page.url()).pathname.split("/").pop());
+  created.sessions.push(ids.cardSession);
+  saveCreated();
+  const box = page.getByRole("textbox", { name: "Сообщение" });
+  await box.waitFor();
+  await box.fill(["ответь эхом и скажи, что ответила модель", `VERIFY_ACP_CARD nonce=${cardNonce}`].join("\n"));
+  const sendButton = page.getByRole("button", { name: /^(Отправить сообщение|Поставить сообщение в очередь)$/ }).first();
+  await sendButton.waitFor();
+  const runtimeBefore = serverLogLines().filter((l) => l.includes("[acp-runtime]") && l.includes("command=node")).length;
+  const startedBefore = boxliteCount("Box started successfully");
+  const hostSeen = new Set();
+  const sampleHost = () => { for (const line of hostProcessesWith("VERIFY_ACP_ECHO_")) hostSeen.add(line); };
+  const t0 = Date.now();
+  await sendButton.click();
+  for (let i = 0; i < 20 && (await box.inputValue()) !== ""; i++) await sleep(250);
+  await shot("card-turn-sent");
+  const events = await waitTurnIdle(ids.cardSession, TURN_TIMEOUT, `nonce=${cardNonce}`, sampleHost);
+  sampleHost();
+  const turnSeconds = Math.round((Date.now() - t0) / 1000);
+  const evFile = saveJson("61-card-session-events", events);
+  const a = analyzeTurn(events, `nonce=${cardNonce}`);
+  const answer = textOf(a.lastMessage?.content);
+  const field = (name) => answer.match(new RegExp(`(?:^|\\s)${name}=(\\S*)`))?.[1] ?? null;
+  const proxyUrl = `${GATEWAY_VM}/v1/oma/inference-proxy/${ids.cardSession}/anthropic`;
+  log(`ход своего harness занял ${turnSeconds} с: ${plain(answer).slice(0, 200)}`);
+  const ok_turn = await check("harness.card_turn", `агент на своей карточке ответил в сессии: agent.message VERIFY_ACP_ECHO_${cardNonce}, session.status_idle end_turn, без session.error`, () => {
+    assert(a.userMessage, `нет user.message с nonce=${cardNonce}`);
+    assert(a.errors.length === 0, `session.error: ${JSON.stringify(a.errors.map((e) => e.error ?? e)).slice(0, 400)}`);
+    assert(answer.includes(`VERIFY_ACP_ECHO_${cardNonce}`), `ответ: «${plain(answer).slice(0, 200)}»`);
+    assert(a.idle?.stop_reason?.type === "end_turn", `stop_reason ${JSON.stringify(a.idle?.stop_reason)}`);
+    return `${evFile}; ход ${turnSeconds} с`;
+  });
+  const ok_proxy = await check("harness.card_proxy", `свой агент в VM получил прокси модели этой сессии (OMA_INFERENCE_BASE_URL ${proxyUrl}, протокол anthropic-messages, токен хода oma_sbx_…) и ответ модели${FAKE ? ` VERIFY_MODEL_SAW_${cardNonce}` : ""}; ключей моделей в его окружении нет: все переменные с KEY, TOKEN, SECRET, PASSWORD в имени несут токен хода`, () => {
+    assert(field("base") === proxyUrl, `base=${field("base")}`);
+    assert(field("protocol") === "anthropic-messages", `protocol=${field("protocol")}`);
+    assert(field("token") === "oma_sbx_", `token=${field("token")}`);
+    const model = field("model") ?? "";
+    assert(FAKE ? model === `200:VERIFY_MODEL_SAW_${cardNonce}` : model.startsWith("200:"), `model=${model}`);
+    // keys=<имя>:<true|false>: все переменные с KEY, TOKEN, SECRET, PASSWORD в имени и равно ли значение токену хода.
+    const keys = (field("keys") ?? "").split(",").filter(Boolean).map((item) => item.split(":"));
+    assert(keys.length > 0 && keys.every(([, same]) => same === "true" || same === "false"), `keys=${field("keys")}: тестовый агент без признака значения`);
+    const leaked = keys.filter(([name]) => ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"].includes(name));
+    assert(leaked.length === 0, `ключи моделей в окружении агента: ${leaked.map(([name]) => name).join(", ")}`);
+    const foreign = keys.filter(([, same]) => same !== "true").map(([name]) => name);
+    assert(foreign.length === 0, `переменные с ключом или токеном, значение которых не токен хода: ${foreign.join(", ")}`);
+    return `ответ агента: ${plain(answer).replace(/base=\S+/, "base=<прокси сессии>").slice(0, 200)}`;
+  });
+  if (FAKE) {
+    const reqs = fakeRequests(cardNonce);
+    writeFileSync(join(EV, "api", "cc-62-card-fake-requests.json"), JSON.stringify(reqs, null, 2));
+    await check("harness.card_fake_model", `запрос своего агента дошёл до модели через прокси: ключ карточки ${names.modelCard} (x-api-key), без Bearer, model = wire_model ${WIRE_MODEL}`, () => {
+      assert(reqs.length === 1 && reqs[0].decision === "card_reply", `запросов с nonce ${cardNonce}: ${reqs.map((r) => r.decision).join(",") || "нет"}`);
+      const r = reqs[0];
+      assert(r.api_key_sha256 === sha12(cardSecret.key), `sha256 x-api-key ${r.api_key_sha256}, ожидался ключ карточки ${sha12(cardSecret.key)}`);
+      assert(r.bearer_sha256 === null, "Bearer дошёл до модели: прокси не срезал токен хода");
+      assert(r.model === WIRE_MODEL, `model ${r.model}, ожидалась ${WIRE_MODEL}`);
+      return `api/cc-62-card-fake-requests.json: user-agent ${r.user_agent}`;
+    });
+  }
+  const runtimeLines = serverLogLines().filter((l) => l.includes("[acp-runtime]") && l.includes("command=node"));
+  const ok_vm = await check("harness.card_in_vm", "свой агент запущен в VM сессии: новая строка [acp-runtime] … command=node, BoxLite стартовал VM, на хосте среди потомков server-node процесса агента не было", () => {
+    assert(runtimeLines.length > runtimeBefore, `строк [acp-runtime] command=node: было ${runtimeBefore}, стало ${runtimeLines.length}`);
+    assert(boxliteCount("Box started successfully") > startedBefore, "BoxLite не записал новый старт VM");
+    assert(hostSeen.size === 0, `на хосте: ${[...hostSeen].join(" | ").slice(0, 300)}`);
+    return plain(runtimeLines.at(-1)).slice(0, 140);
+  });
+  const article = page.locator("article[data-turn-id]").last();
+  const ok_ui = await check("harness.card_ui_answer", `в консоли ход своего агента завершён, ответ VERIFY_ACP_ECHO_${cardNonce}`, async () => {
+    const t1 = Date.now();
+    let status = await article.getAttribute("data-session-turn-status");
+    while (/^(running|queued)$/.test(status ?? "running") && Date.now() - t1 < 60_000) {
+      await sleep(1000);
+      status = await article.getAttribute("data-session-turn-status");
+    }
+    assert(/^complete(d)?$/.test(status ?? ""), `data-session-turn-status=${status}`);
+    await article.locator("[data-session-turn-answer]", { hasText: `VERIFY_ACP_ECHO_${cardNonce}` }).first().waitFor({ timeout: 30_000 });
+    return shot("card-turn-done");
+  });
+  const ok_stop = KEEP_SESSION ? true : await archiveAndProveStop(ids.cardSession, "harness.card_vm_stopped", "63-card-session-archived");
+  if (ok_turn && ok_proxy && ok_vm && ok_ui && ok_stop) cover("harness-card-turn");
 }
 
 // ------------------------------------------------------------------ итог ---
@@ -943,12 +1415,13 @@ function writeSummary(abortError) {
   const failed = checks.filter((c) => c.status === "провал");
   const notChecked = [
     ...(FAKE
-      ? [["cc.model_real", "настоящая модель Anthropic не вызывалась: режим fake. Путь с ключом или токеном подписки через хранилище: VERIFY_CC_MODE=real, VERIFY_CC_SECRET_FILE, VERIFY_CC_SECRET_NAME (SKILL.md)"]]
+      ? [["cc.model_real", "настоящая модель Anthropic не вызывалась: режим fake. Путь с ключом API в карточке модели: VERIFY_CC_MODE=real, VERIFY_CC_SECRET_FILE (SKILL.md); Claude Code через наш прокси против настоящего API не проверялся"]]
       : [["cc.answer_text", "точный текст ответа настоящей модели и отказ Bash не проверяются, только Write/Read, файл и ответ"]]),
-    ["cc.limited_network", "окружение с сетью «Ограниченный» для Claude Code не проверялось (нужны registry.npmjs.org и хост модели)"],
+    ["cc.limited_network", "окружение с сетью «Ограниченный» для Claude Code не проверялось (нужны registry.npmjs.org и адрес шлюза на порту 80 или 443)"],
     ["cc.agent_mcp_servers", "MCP-серверы агента в Claude Code (projectAcpSandboxMcpServers) не проверялись"],
     ["cc.system_prompt", "системный промпт агента до Claude Code не доходит: AcpSandboxHarness.onSessionInit пишет /workspace/AGENTS.md, main-node этот хук не вызывает, а Claude Code читает CLAUDE.md; сценарий это не проверяет"],
-    ["cc.secret_plain_in_vm", "секрет хранилища лежит в VM открытым текстом в окружении claude-agent-acp и его команд (подстановки на выходе нет). Что default-харнесс (Pi) его не получает, проверяет только тест apps/main-node/test/managed-session-vault-env.test.ts"],
+    ["cc.proxy_token_scope", "что токен хода oma_sbx_ не открывает другие пути API и прокси чужой сессии (403), проверяют тесты apps/main-node/test/models-harness-http.test.ts и sandbox-inference-token.test.ts; сценарий видит только его начало"],
+    ["harness.card_multi_turn", "второй ход агента на своей карточке не проверялся"],
     ...(KEEP_SESSION ? [["cc.vm_stop", "VERIFY_KEEP_SESSION=1: архив сессии и остановка VM не проверялись"]] : []),
   ];
   const features = featureEntries();
@@ -956,17 +1429,19 @@ function writeSummary(abortError) {
   const err50 = serverLogLines().filter((l) => l.includes('"level":50')).length;
   const cell = (text) => String(text).replace(/\|/g, "\\|").replace(/\n/g, " ");
   const lines = [
-    `# verify-agent-console: сценарий Claude Code, прогон ${run.RUN_ID}`,
+    `# verify-agent-console: сценарий Claude Code и свой harness, прогон ${run.RUN_ID}`,
     "",
     `Итог: ${abortError ? "ПРЕРВАН" : failed.length ? "ПРОВАЛ" : "ПРОЙДЕН"} (проверок: ${checks.length}, провалов: ${failed.length}, подфункций сценария пройдено ${features.length - uncovered.length} из ${features.length}).`,
     abortError ? `Сценарий прерван: ${plain(abortError.message)}` : "",
     "",
     "## Экземпляр",
     "",
-    `- URL: ${BASE}, режим Claude Code: ${CC_MODE}${FAKE ? ` (фейк ${run.FAKE_URL}, из VM ${FAKE_URL_VM})` : ""}, модель агента: ${MODEL}, образ: ${run.SANDBOX_IMAGE}, диск VM: ${run.LITEBOX_DISK_SIZE_GB || "по умолчанию"} ГБ`,
+    `- URL: ${BASE}, режим Claude Code: ${CC_MODE}${FAKE ? ` (фейк ${run.FAKE_URL})` : ""}, адрес сервера из VM: ${GATEWAY_VM}, образ: ${run.SANDBOX_IMAGE}, диск VM: ${run.LITEBOX_DISK_SIZE_GB || "по умолчанию"} ГБ`,
     `- git ${run.GIT_REV}, незакоммиченных файлов: консоль ${run.CONSOLE_DIRTY_FILES}, сервер ${run.SERVER_DIRTY_FILES}; хэши изменений: консоль ${run.CONSOLE_TREE_HASH}, сервер ${run.SERVER_TREE_HASH}`,
     `- учётка: ${user.email}, рабочее пространство ${user.tenant_id}`,
-    `- окружение ${ids.environment ?? "—"} (${names.env}), хранилище ${ids.vault ?? "—"} (${names.vault}, секрет ${secret.name}${FAKE && secret.value ? `, sha256 фиктивного ключа ${sha12(secret.value)}` : ""}), агент ${ids.agent ?? "—"} (${names.agent}), сессия ${ids.session ?? "—"} (${names.session}), nonce ${nonce}`,
+    `- карточки моделей: ${names.modelCard} (wire_model ${WIRE_MODEL}${FAKE && cardSecret.key ? `, sha256 фиктивного ключа ${sha12(cardSecret.key)}` : ""}) и ${names.oaiCard}; хранилище ${ids.vault ?? "—"} (${names.vault}: ${vaultSecrets.modelKey.name} sha256 ${sha12(vaultSecrets.modelKey.value)}, ${vaultSecrets.note.name})`,
+    `- окружение ${ids.environment ?? "—"} (${names.env}), агент ${ids.agent ?? "—"} (${names.agent}), сессия ${ids.session ?? "—"} (${names.session}), nonce ${nonce}`,
+    `- свой harness ${names.harnessId} (${names.harnessName}, карточка ${ids.harnessCard ?? "—"}), агент ${ids.cardAgent ?? "—"} (${names.cardAgent}), сессия ${ids.cardSession ?? "—"} (${names.cardSession}), nonce ${cardNonce}`,
     `- ядро хоста ${HOST_KERNEL}; ошибок уровня 50 в логе сервера: ${err50}`,
     "",
     "## Проверки",
@@ -1005,29 +1480,58 @@ try {
   if (health?.backends?.db !== `sqlite ${run.DB_PATH}`) {
     throw new Error(`на ${BASE} не экземпляр этого прогона (db: ${health?.backends?.db}); сценарий не запускаю`);
   }
-  secret = loadSecret();
+  cardSecret = loadCardSecret();
   if (FAKE) {
     const fh = await (await fetch(`${run.FAKE_URL}/health`)).json().catch(() => null);
     if (!fh?.ok) throw new Error(`фейковая модель ${run.FAKE_URL} не отвечает`);
   }
+  if (ECHO_AGENT.length > 2000) throw new Error(`acp-echo-agent.cjs одной строкой ${ECHO_AGENT.length} знаков, карточка принимает аргумент до 2000`);
   const executablePath = pickChromium();
   browser = await chromium.launch({ executablePath, headless: process.env.VERIFY_HEADED !== "1", args: ["--disable-gpu"] });
   context = await browser.newContext({ baseURL: BASE, viewport: VIEW, locale: "ru-RU" });
   page = await context.newPage();
   page.setDefaultTimeout(20_000);
   log(`процессов браузера записано в state/pids: ${recordJourneyChildren()}`);
-  for (const [name, fn] of [
-    ["вход", stepLogin],
-    ["окружение с claude-agent-acp", stepEnvironment],
-    ["хранилище с ключом", stepVault],
-    ["агент на Claude Code", stepAgent],
-    ["сессия", stepSession],
-    ["ход Claude Code", stepTurn],
-    ["второй ход Claude Code", stepSecondTurn],
-    ...(KEEP_SESSION ? [] : [["архив сессии", archiveAndProveStop]]),
+  // critical: сбой прерывает сценарий. Сбой другого шага пишется провалом, и сценарий идёт
+  // дальше; шаг, которому нужен упавший (needs), пишется строкой «не проверено».
+  const failedSteps = new Set();
+  const stepId = (name) => name.replace(/\s+/g, "_");
+  for (const [name, fn, critical, needs = []] of [
+    ["вход", stepLogin, true],
+    ["карточки моделей", stepModelCards, true],
+    ["окружение с claude-agent-acp", stepEnvironment, true],
+    ["хранилище с ключом", stepVault, false],
+    ["guard агента", stepGuard, false],
+    ["карточка своего harness", stepHarnessCard, false],
+    ["агент на Claude Code", stepAgent, false],
+    ["сессия", stepSession, false, ["агент на Claude Code", "хранилище с ключом"]],
+    ["ход Claude Code", stepTurn, false, ["сессия"]],
+    ["второй ход Claude Code", stepSecondTurn, false, ["ход Claude Code"]],
+    ...(KEEP_SESSION ? [] : [["архив сессии", () => archiveAndProveStop(), false, ["сессия"]]]),
+    ["агент на своей карточке", stepCardAgent, false, ["карточка своего harness"]],
+    ["ход своего агента", stepCardTurn, false, ["агент на своей карточке"]],
   ]) {
+    const missing = needs.filter((need) => failedSteps.has(need));
+    if (missing.length > 0) {
+      failedSteps.add(name);
+      record(`cc.step_skipped.${stepId(name)}`, `шаг «${name}»`, "не проверено", "", `не выполнен шаг: ${missing.join(", ")}`);
+      continue;
+    }
     log(`== шаг: ${name}`);
-    await fn();
+    if (critical) {
+      await fn();
+      continue;
+    }
+    try {
+      await fn();
+    } catch (error) {
+      failedSteps.add(name);
+      record(`cc.step_failed.${stepId(name)}`, `шаг «${name}» выполнен до конца`, "провал", "", error.message);
+      await shot(`fail-step-${name.replace(/\s+/g, "-")}`).catch(() => {});
+      // Открытое окно или меню мешает следующему шагу.
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.keyboard.press("Escape").catch(() => {});
+    }
   }
 } catch (error) {
   abortError = error;

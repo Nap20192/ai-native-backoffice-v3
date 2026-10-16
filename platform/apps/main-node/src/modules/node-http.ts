@@ -71,8 +71,13 @@ import { buildSkillSourcesRoutes, createSourceFetcher } from "../lib/skill-sourc
 import { SqlKvStore } from "@open-managed-agents/kv-store/adapters/sql";
 
 import { buildNodeHttpInferenceProxyRoutes } from "../lib/http-inference-proxy.js";
+import { agentConfigGuard } from "../lib/agent-config-guard.js";
+import { buildHarnessCatalogRoutes, buildModelOptionsRoutes } from "../lib/catalog-routes.js";
+import { agentForGuard, buildHarnessCardRoutesFor, createModelsHarnessWiring } from "../lib/models-harness-wiring.js";
+import { resolveSandboxInferenceBearer, sandboxInferenceCipher } from "../lib/sandbox-inference-token.js";
 import { buildNodeHttpMcpProxyRoutes } from "../lib/http-mcp-proxy.js";
 import { createNodeAccessLossRuntime } from "../lib/mcp-access-loss.js";
+import { buildTraceRoutes } from "../lib/trace/routes.js";
 
 import { Disposables } from "../lifecycle.js";
 
@@ -238,6 +243,12 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       };
     },
     resolveBearerToken: async ({ token, method, path }) => {
+      // A sandbox inference token (oma_sbx_) opens only its session's
+      // inference proxy; any other token gives null here without decryption.
+      if (secrets !== null) {
+        const sandboxInference = await resolveSandboxInferenceBearer({ cipher: sandboxInferenceCipher(secrets), token });
+        if (sandboxInference !== null) return sandboxInference;
+      }
       if (managedEnvironmentWorkSessionTokenCrypto === null) return null;
       const scoped = await authenticateEnvironmentWorkSessionBearer({
         token,
@@ -332,6 +343,24 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     return c.json({ error: result.type }, 409);
   });
 
+  // Models and harness (docs/plans/models-harness.md): catalog routes,
+  // harness cards and the guard that checks an agent's model and harness
+  // before the shared route stores it.
+  const modelsHarness = createModelsHarnessWiring({ config, sql, dialect, modelCards: modelCardsService });
+  v1.route("/oma/model_options", buildModelOptionsRoutes(modelsHarness.catalog));
+  v1.route("/oma/harnesses", buildHarnessCatalogRoutes(modelsHarness.catalog));
+  v1.route("/oma/harness_cards", buildHarnessCardRoutesFor(modelsHarness));
+  v1.use("/agents/*", agentConfigGuard({
+    catalog: modelsHarness.catalog.catalog,
+    loadAgent: async (workspaceId, agentId) => {
+      const found = await managedPlatform
+        .app({ workspaceId })
+        .port(managedAgentsPortTokens.agents)
+        .retrieveAgent({ agentId });
+      return found.type === "found" ? agentForGuard(found.agent) : null;
+    },
+  }));
+
   // Mount route bundles. Same paths CF uses; behavior preserved. Once a tenant
   // has configured model cards, agent model handles must resolve to an active
   // card; an empty card set keeps the legacy ANTHROPIC_API_KEY fallback usable.
@@ -392,6 +421,9 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       store: sessionOutputs,
     },
   }));
+  // Agent trace (docs/plans/agent-trace.md, 3.2): GET /:id/trace, its search
+  // and the OTLP download, mounted before the generic /oma/sessions routes.
+  v1.route("/oma/sessions", buildTraceRoutes({ sql, dialect }));
   v1.route("/oma/sessions", buildSessionRoutes({
     services,
     router: sessionRouter,

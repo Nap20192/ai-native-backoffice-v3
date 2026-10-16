@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import {
   ArrowLeftIcon,
   CircleAlertIcon,
+  InfoIcon,
   PlusIcon,
   SearchIcon,
   SearchXIcon,
@@ -34,12 +35,21 @@ import { Modal } from "../../components/Modal";
 import { Select, SelectOption } from "../../components/Select";
 import { AGENT_TEMPLATES, tagLabel, type AgentTemplate } from "../../data/templates";
 import type { ModelCard } from "@open-managed-agents/api-types";
+import {
+  useHarnesses,
+  useModelOptions,
+  type EffortLevel,
+  type HarnessEntry,
+  type ModelOption,
+} from "../../lib/catalog-api";
 import type { AgentRecord as Agent } from "../../types/agent";
 import { useI18n } from "../../i18n";
 import {
   INITIAL_FORM,
   agentToForm,
   agentToPreservedConfig,
+  applyHarnessChoice,
+  applyModelChoice,
   configToForm,
   materializeAgentUpdate,
   mergeFormIntoConfig,
@@ -50,6 +60,23 @@ import {
   type SkillEntry,
   type ToolOverride,
 } from "./agentFormCodec";
+import { findHarness, findModel, pickDefaultModel } from "./agent-harness";
+import {
+  ACP_EFFORT_NOTE,
+  ACP_SYSTEM_NOTE,
+  EFFORT_RESET_NOTE,
+  SPEED_RESET_NOTE,
+  acpMcpNote,
+  acpToolsNote,
+  harnessDescription,
+  harnessLabel,
+  installRequirement,
+  legacyHarnessDescription,
+  modelReplacedNote,
+} from "./harness-text";
+import { HarnessPicker } from "./HarnessPicker";
+import { ModelPicker } from "./ModelPicker";
+import { EFFORT_ORDER, effortLabel, modelMetaLine } from "./model-format";
 
 const ANTHROPIC_SKILLS = [
   { id: "xlsx", label: "Excel (xlsx)" },
@@ -113,7 +140,9 @@ interface AgentFormDialogProps {
    *  to re-fetch on every open. */
   allAgents: Agent[];
   customSkills: Array<{ id: string; name: string; description: string }>;
-  modelCards: ModelCard[];
+  /** Не читается: форма сама грузит модели из `GET /v1/oma/model_options`.
+   *  Родители всё ещё передают проп, поэтому он остаётся необязательным. */
+  modelCards?: ModelCard[];
 }
 
 /**
@@ -132,7 +161,6 @@ export function AgentFormDialog({
   agent: editingAgent,
   allAgents,
   customSkills,
-  modelCards,
 }: AgentFormDialogProps) {
   const managedApi = useManagedApi();
   const nav = useNavigate();
@@ -152,6 +180,9 @@ export function AgentFormDialog({
   const [codeValue, setCodeValue] = useState("");
   const [showMcpPicker, setShowMcpPicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Пояснения под полями: форма сама меняет модель, усилие и скорость при смене
+  // harness или модели и говорит об этом.
+  const [notes, setNotes] = useState<{ model?: string; effort?: string }>({});
 
   const errorRef = useRef<HTMLDivElement>(null);
 
@@ -168,25 +199,28 @@ export function AgentFormDialog({
       setCreateError("");
       setCodeValue("");
       setSaving(false);
+      setNotes({});
     } else {
       setPreservedConfig(null);
     }
   }, [open, editingAgent?.id, editingAgent?.version]);
 
-  // Pre-select default model card when entering the form step. (tenant_id,
-  // model_id) is UNIQUE in DB, so picking a card uniquely determines the
-  // model. Skip if user/paste already set model. Re-runs when modelCards
-  // arrives if the dialog opened before the aux fetch.
+  // Каталог моделей и harness грузится, пока окно открыто.
+  const modelsQuery = useModelOptions({ enabled: open });
+  const harnessesQuery = useHarnesses({ enabled: open });
+  const options = modelsQuery.data?.data;
+  const entries = harnessesQuery.data?.data;
+  const harnessEntry = findHarness(entries, form.harness);
+  const acp = form.harnessAcp !== null;
+
+  // Новой форме нужна модель. Берём совместимую карточку по умолчанию, иначе
+  // первую совместимую карточку, иначе первую совместимую встроенную модель.
+  // Эффект ждёт каталог, который мог прийти позже открытия окна.
   useEffect(() => {
-    if (createStep !== "form") return;
-    if (form.modelCardId || form.model) return;
-    if (modelCards.length === 0) return;
-    const def = modelCards.find((mc) => mc.is_default) ?? modelCards[0];
-    setForm((f) => ({ ...f, modelCardId: def.id, model: def.model_id }));
-    // Intentionally not depending on form.* — guards above prevent the
-    // re-trigger loop and we only want to hydrate on step entry / cards arrival.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [createStep, modelCards.length]);
+    if (createStep !== "form" || !options || form.model !== "") return;
+    const pick = pickDefaultModel(options, harnessEntry);
+    if (pick) setForm((f) => (f.model === "" ? applyModelChoice(f, pick).form : f));
+  }, [createStep, options, harnessEntry, form.model]);
 
   // Ошибка сохранения может появиться, пока форма прокручена вниз: подводим
   // её в поле зрения.
@@ -204,6 +238,7 @@ export function AgentFormDialog({
     setCreateMode("form");
     setCodeValue("");
     setSaving(false);
+    setNotes({});
     onClose();
   };
 
@@ -415,12 +450,6 @@ export function AgentFormDialog({
       )
     : AGENT_TEMPLATES;
 
-  // Resolve which card the Model dropdown should highlight: explicit pick
-  // wins, otherwise derive from model_id (paste path / pre-select effect).
-  // Empty string when nothing matches (e.g. paste mode with an unknown model).
-  const selectedCardId =
-    form.modelCardId || modelCards.find((mc) => mc.model_id === form.model)?.id || "";
-
   // В режиме правки шаг с шаблоном не показывается никогда, даже в первый
   // кадр до того, как эффект переведёт окно на шаг формы.
   const showTemplates = createStep === "template" && !isEdit;
@@ -446,6 +475,12 @@ export function AgentFormDialog({
     .filter(Boolean)
     .join(" · ");
   const canSubmit = createMode === "form" ? !!form.name : !!codeValue.trim();
+  // Подпись harness для пояснений вкладок, пока каталог ещё не пришёл.
+  const acpNames = harnessEntry ?? {
+    id: form.harness,
+    label: form.harness,
+    source: "builtin" as const,
+  };
 
   const footer = showTemplates ? (
     <Button variant="ghost" onClick={closeCreate}>
@@ -614,13 +649,25 @@ export function AgentFormDialog({
                   <BasicTab
                     form={form}
                     setForm={setForm}
-                    modelCards={modelCards}
-                    selectedCardId={selectedCardId}
+                    catalog={{
+                      options,
+                      optionsLoading: modelsQuery.isLoading,
+                      optionsError: modelsQuery.isError,
+                      entries,
+                      entriesLoading: harnessesQuery.isLoading,
+                      entriesError: harnessesQuery.isError,
+                    }}
+                    notes={notes}
+                    setNotes={setNotes}
                   />
                 </TabsContent>
 
                 <TabsContent value="tools">
-                  <ToolsTab form={form} setForm={setForm} />
+                  {acp ? (
+                    <AcpNote text={acpToolsNote(acpNames)} />
+                  ) : (
+                    <ToolsTab form={form} setForm={setForm} />
+                  )}
                 </TabsContent>
 
                 <TabsContent value="skills">
@@ -633,13 +680,17 @@ export function AgentFormDialog({
                 </TabsContent>
 
                 <TabsContent value="mcp">
-                  <McpTab
-                    form={form}
-                    onPickFromRegistry={() => setShowMcpPicker(true)}
-                    addMcp={addMcp}
-                    updateMcp={updateMcp}
-                    removeMcp={removeMcp}
-                  />
+                  {acp ? (
+                    <AcpNote text={acpMcpNote(acpNames)} />
+                  ) : (
+                    <McpTab
+                      form={form}
+                      onPickFromRegistry={() => setShowMcpPicker(true)}
+                      addMcp={addMcp}
+                      updateMcp={updateMcp}
+                      removeMcp={removeMcp}
+                    />
+                  )}
                 </TabsContent>
 
                 <TabsContent value="agents">
@@ -695,14 +746,123 @@ function GroupField({
   );
 }
 
+interface CatalogState {
+  options: ModelOption[] | undefined;
+  optionsLoading: boolean;
+  optionsError: boolean;
+  entries: HarnessEntry[] | undefined;
+  entriesLoading: boolean;
+  entriesError: boolean;
+}
+
 interface BasicTabProps {
   form: FormState;
   setForm: FormSetter;
-  modelCards: ModelCard[];
-  selectedCardId: string;
+  catalog: CatalogState;
+  notes: { model?: string; effort?: string };
+  setNotes: (notes: { model?: string; effort?: string }) => void;
 }
 
-function BasicTab({ form, setForm, modelCards, selectedCardId }: BasicTabProps) {
+/** Пояснение на месте полей вкладки, которую ACP-агент не использует. */
+function AcpNote({ text }: { text: string }) {
+  return (
+    <div className="callout" role="note">
+      <InfoIcon aria-hidden="true" className="mt-0.5 size-4 flex-none" />
+      <p className="min-w-0">{text}</p>
+    </div>
+  );
+}
+
+/** Описание выбранного harness под полем и требование к окружению для ACP. */
+function HarnessHint({
+  id,
+  entry,
+  entriesLoaded,
+}: {
+  id: string;
+  entry: HarnessEntry | undefined;
+  entriesLoaded: boolean;
+}) {
+  if (!entry) {
+    // Устаревшее значение известно и без каталога, остальное ждёт ответа сервера.
+    const known = entriesLoaded || id === "ai-sdk" || id === "acp-proxy";
+    return known ? <>{legacyHarnessDescription(id)}</> : null;
+  }
+  const requirement = entry.acp ? installRequirement(entry.install) : "";
+  return (
+    <>
+      <span className="block">{harnessDescription(entry)}</span>
+      {requirement && (
+        <span className="mt-1 block">
+          {requirement}.{" "}
+          <Link to="/environments" className="link">
+            Окружения
+          </Link>
+        </span>
+      )}
+    </>
+  );
+}
+
+function BasicTab({ form, setForm, catalog, notes, setNotes }: BasicTabProps) {
+  const { options, entries } = catalog;
+  const harnessEntry = findHarness(entries, form.harness);
+  const selectedModel = findModel(options, form.model);
+  const acp = form.harnessAcp !== null;
+  const noModels = options !== undefined && options.length === 0;
+
+  const changeHarness = (entry: HarnessEntry) => {
+    const result = applyHarnessChoice(form, entry, options);
+    setForm(result.form);
+    setNotes({
+      model: result.modelReplaced
+        ? modelReplacedNote(result.modelReplaced.from, harnessLabel(entry))
+        : undefined,
+    });
+  };
+
+  const changeModel = (option: ModelOption | null) => {
+    if (!option) return;
+    const result = applyModelChoice(form, option);
+    setForm(result.form);
+    setNotes({
+      effort: acp
+        ? undefined
+        : result.effortReset
+          ? EFFORT_RESET_NOTE
+          : result.speedReset
+            ? SPEED_RESET_NOTE
+            : undefined,
+    });
+  };
+
+  const changeEffort = (value: string) => {
+    setForm({ ...form, modelEffort: value === "default" ? "" : (value as EffortLevel) });
+    setNotes({ ...notes, effort: undefined });
+  };
+
+  // Уровни усилия: из модели каталога. Для модели, которой в каталоге нет,
+  // остаётся только текущее значение, чтобы не потерять его.
+  const levels: EffortLevel[] = selectedModel
+    ? EFFORT_ORDER.filter((level) => selectedModel.effort_levels.includes(level))
+    : form.modelEffort
+      ? [form.modelEffort]
+      : [];
+  const effortUnsupported = selectedModel !== undefined && levels.length === 0;
+
+  const modelHint = (
+    <>
+      {selectedModel && <span className="block">{modelMetaLine(selectedModel)}</span>}
+      {notes.model && (
+        <span className="block" role="status">
+          {notes.model}
+        </span>
+      )}
+      {acp && <span className="block">{ACP_EFFORT_NOTE}</span>}
+    </>
+  );
+  const hasModelHint = Boolean(selectedModel) || Boolean(notes.model) || acp;
+
   return (
     <div className="space-y-4">
       <Field
@@ -721,91 +881,160 @@ function BasicTab({ form, setForm, modelCards, selectedCardId }: BasicTabProps) 
           aria-required="true"
         />
       </Field>
-      {/* Выбор модели: карточка однозначно задаёт модель. */}
-      {modelCards.length === 0 ? (
+      <Field
+        label="Harness"
+        error={catalog.entriesError && !entries ? "Не удалось загрузить каталог harness." : undefined}
+        hint={
+          <HarnessHint id={form.harness} entry={harnessEntry} entriesLoaded={entries !== undefined} />
+        }
+      >
+        <HarnessPicker
+          id="agent-harness"
+          value={form.harness}
+          entries={entries}
+          options={options}
+          loading={catalog.entriesLoading}
+          onChange={changeHarness}
+        />
+      </Field>
+      {/* Выбор модели: handle из каталога, усилие справа. */}
+      {noModels ? (
         <div className="callout-warning">
           <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-4 flex-none" />
           <p className="min-w-0">
-            Карточки моделей не настроены. Облачным агентам нужна хотя бы одна карточка с
-            доступом к LLM.{" "}
+            Модели не настроены. Добавьте карточку модели или задайте на сервере
+            ANTHROPIC_API_KEY.{" "}
             <Link to="/model-cards" className="link">
-              Добавить карточку
+              Добавить карточку модели
             </Link>
           </p>
         </div>
       ) : (
-        <GroupField label="Модель">
-          <Combobox<ModelCard>
-            value={selectedCardId}
-            onValueChange={(v, item) => {
-              setForm({ ...form, modelCardId: v, model: item?.model_id ?? v });
-            }}
-            endpoint="/v1/oma/model_cards"
-            searchParam="q"
-            pagination="oma"
-            getValue={(mc) => mc.id}
-            getLabel={(mc) => (
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate" title={mc.model_id}>{mc.model_id}</span>
-                {mc.model !== mc.model_id && (
-                  <span className="text-ddc-text-muted">({mc.model})</span>
-                )}
-                {mc.is_default && <Badge variant="brand">По умолчанию</Badge>}
-              </span>
-            )}
-            getTextLabel={(mc) =>
-              `${mc.model_id}${mc.model !== mc.model_id ? ` (${mc.model})` : ""}${
-                mc.is_default ? ", по умолчанию" : ""
-              }`
+        <div
+          className={cn(
+            "grid gap-4",
+            !acp && "sm:grid-cols-[minmax(0,1fr)_12rem]",
+          )}
+        >
+          <Field
+            label="Модель"
+            error={
+              catalog.optionsError && !options
+                ? "Не удалось загрузить список моделей. Модель можно задать в режиме YAML."
+                : undefined
             }
-            placeholder={
-              !selectedCardId && form.model
-                ? `${form.model}: нет подходящей карточки, выберите другую`
-                : "Выберите карточку модели…"
-            }
-          />
+            hint={hasModelHint ? modelHint : undefined}
+          >
+            <ModelPicker
+              id="agent-model"
+              value={form.model}
+              options={options}
+              loading={catalog.optionsLoading}
+              harness={harnessEntry}
+              onChange={changeModel}
+            />
+          </Field>
+          {!acp && (
+            <Field
+              label="Усилие"
+              hint={
+                effortUnsupported ? (
+                  "Модель не поддерживает усилие"
+                ) : notes.effort ? (
+                  <span role="status">{notes.effort}</span>
+                ) : undefined
+              }
+            >
+              <Select
+                id="agent-effort"
+                value={form.modelEffort || "default"}
+                disabled={levels.length === 0}
+                onValueChange={changeEffort}
+                className="w-full"
+              >
+                <SelectOption value="default">По умолчанию</SelectOption>
+                {levels.map((level) => (
+                  <SelectOption key={level} value={level}>
+                    {effortLabel(level)}
+                  </SelectOption>
+                ))}
+              </Select>
+            </Field>
+          )}
+        </div>
+      )}
+      {!acp && selectedModel?.speed_fast && (
+        <GroupField label="Скорость">
+          <div className="segmented" role="group" aria-label="Скорость модели">
+            {(
+              [
+                { value: "", label: "Обычная" },
+                { value: "fast", label: "Быстрая" },
+              ] as const
+            ).map((item) => (
+              <PlainButton
+                type="button"
+                key={item.label}
+                aria-pressed={(form.modelSpeed === "fast") === (item.value === "fast")}
+                onClick={() => setForm({ ...form, modelSpeed: item.value })}
+                className="segmented-item"
+              >
+                {item.label}
+              </PlainButton>
+            ))}
+          </div>
         </GroupField>
       )}
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_11rem]">
-        <GroupField label="Вспомогательная модель">
-          <Combobox<ModelCard>
-            value={
-              modelCards.find((card) => card.model_id === form.auxiliaryModel)?.id ?? ""
-            }
-            onValueChange={(value, item) =>
-              setForm({
-                ...form,
-                auxiliaryModel: item?.model_id ?? (value ? form.auxiliaryModel : ""),
-              })
-            }
-            endpoint="/v1/oma/model_cards"
-            searchParam="q"
-            pagination="oma"
-            getValue={(card) => card.id}
-            getLabel={(card) => card.model_id}
-            getTextLabel={(card) => card.model_id}
-            placeholder="Нет"
-          />
-        </GroupField>
-        <Field label="Скорость">
-          <Select
-            value={form.auxiliaryModelSpeed || "default"}
-            disabled={!form.auxiliaryModel}
-            onValueChange={(value) =>
-              setForm({
-                ...form,
-                auxiliaryModelSpeed:
-                  value === "standard" || value === "fast" ? value : "",
-              })
-            }
-            className="w-full"
-          >
-            <SelectOption value="default">По умолчанию</SelectOption>
-            <SelectOption value="standard">Стандартная</SelectOption>
-            <SelectOption value="fast">Быстрая</SelectOption>
-          </Select>
-        </Field>
-      </div>
+      <Field label="Описание">
+        <Input
+          id="agent-description"
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="Проверяет договоры и сверяет реквизиты сторон"
+        />
+      </Field>
+      <Field label="Системный промпт" hint={acp ? ACP_SYSTEM_NOTE : undefined}>
+        <Textarea
+          id="agent-system"
+          value={form.system}
+          onChange={(e) => setForm({ ...form, system: e.target.value })}
+          rows={6}
+          className="resize-y font-mono text-xs leading-5"
+          placeholder="Вы ассистент сотрудников бэк-офиса. Отвечайте кратко и по делу…"
+        />
+      </Field>
+      {/* При ACP вспомогательная модель скрыта, её значение сохраняется. */}
+      {!acp && (
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_11rem]">
+          <Field label="Вспомогательная модель">
+            <ModelPicker
+              id="agent-aux-model"
+              value={form.auxiliaryModel}
+              options={options}
+              loading={catalog.optionsLoading}
+              emptyLabel="Нет"
+              onChange={(option) => setForm({ ...form, auxiliaryModel: option?.handle ?? "" })}
+            />
+          </Field>
+          <Field label="Скорость">
+            <Select
+              value={form.auxiliaryModelSpeed || "default"}
+              disabled={!form.auxiliaryModel}
+              onValueChange={(value) =>
+                setForm({
+                  ...form,
+                  auxiliaryModelSpeed: value === "standard" || value === "fast" ? value : "",
+                })
+              }
+              className="w-full"
+            >
+              <SelectOption value="default">По умолчанию</SelectOption>
+              <SelectOption value="standard">Стандартная</SelectOption>
+              <SelectOption value="fast">Быстрая</SelectOption>
+            </Select>
+          </Field>
+        </div>
+      )}
       <Field
         label="Идентификаторы добавляемых промптов"
         hint="По одному идентификатору в строке."
@@ -827,14 +1056,6 @@ function BasicTab({ form, setForm, modelCards, selectedCardId }: BasicTabProps) 
           placeholder={"prompt_review\nprompt_security"}
         />
       </Field>
-      <Field label="Описание">
-        <Input
-          id="agent-description"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          placeholder="Проверяет договоры и сверяет реквизиты сторон"
-        />
-      </Field>
       <Field
         label="Метаданные (JSON)"
         hint="До 16 пар «ключ: значение»: ключ до 64 символов, значение до 512."
@@ -847,16 +1068,6 @@ function BasicTab({ form, setForm, modelCards, selectedCardId }: BasicTabProps) 
           className="resize-y font-mono text-xs leading-5"
           spellCheck={false}
           placeholder='{"team":"legal"}'
-        />
-      </Field>
-      <Field label="Системный промпт">
-        <Textarea
-          id="agent-system"
-          value={form.system}
-          onChange={(e) => setForm({ ...form, system: e.target.value })}
-          rows={6}
-          className="resize-y font-mono text-xs leading-5"
-          placeholder="Вы ассистент сотрудников бэк-офиса. Отвечайте кратко и по делу…"
         />
       </Field>
     </div>

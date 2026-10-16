@@ -4,8 +4,8 @@
  * signature — render code must defensively check `type` before
  * accessing kind-specific fields.
  *
- * Lives in lib/ rather than the timeline folder because both the
- * Conversation view and the Timeline view consume events.
+ * Lives in lib/ because the conversation, the trace view and the inspector
+ * tabs all consume events.
  */
 export interface Event {
   type: string;

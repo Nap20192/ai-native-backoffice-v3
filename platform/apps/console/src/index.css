@@ -199,7 +199,7 @@ body,
 .chat-composer-frame:has(.session-composer) {
     flex-shrink: 0;
     padding-block: 0 1rem;
-    background: var(--bg);
+    background: transparent;
 }
 
 .session-composer {
@@ -213,9 +213,9 @@ body,
     overflow: hidden;
     border: var(--composer-card-border-width) solid var(--border);
     border-radius: var(--composer-radius);
-    background: var(--bg-surface);
+    background: var(--bg);
     padding: var(--composer-card-padding-block) var(--composer-card-padding-inline);
-    box-shadow: none;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 6%, transparent);
     transition:
       border-color var(--dur-quick) var(--ease-soft),
       box-shadow var(--dur-quick) var(--ease-soft);

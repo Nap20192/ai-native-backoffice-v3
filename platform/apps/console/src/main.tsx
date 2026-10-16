@@ -59,7 +59,6 @@ import {
   IntegrationsFeishuWorkspace,
   IntegrationsFeishuPublishPage,
 } from "./pages/IntegrationsFeishu";
-import { ANALYTICS_CRUMBS, ANALYTICS_PAGES } from "./components/analytics/analytics-nav";
 import { consolePlugins } from "./plugins/registry";
 
 /**
@@ -130,20 +129,6 @@ const protectedRoutes: RouteObject[] = [
         element: <EvalRunDetail />,
         handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Запуск оценки") },
       },
-    ],
-  },
-  // Аналитика: пять страниц грузятся отдельными фрагментами. Корень ведёт на
-  // «Использование», как первая вкладка в меню.
-  {
-    path: "analytics",
-    handle: { crumb: ANALYTICS_CRUMBS.root },
-    children: [
-      { index: true, element: <Navigate to="usage" replace /> },
-      ...ANALYTICS_PAGES.map((page) => ({
-        path: page.path,
-        handle: { crumb: page.crumb },
-        lazy: page.load,
-      })),
     ],
   },
   {

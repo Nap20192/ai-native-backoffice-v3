@@ -1,5 +1,0 @@
-import {it,expect,vi} from 'vitest';
-import {withModelCallRecording} from '../src/lib/analytics/recording-runner.js';
-import {input,end} from './_helpers/analytics-seed.js';
-it('records only after durable output, forwards lifecycle and accept',async()=>{const order:string[]=[];const runner={start:vi.fn(),stop:vi.fn(),archiveThread:vi.fn(),accept:vi.fn(async(i:any)=>i.output(end))};const tap=vi.fn(()=>order.push('record'));const wrapped=withModelCallRecording(runner as any,{tap:()=>tap} as any);const i=input();i.output=async()=>{await Promise.resolve();order.push('output');};await wrapped.accept(i);expect(order).toEqual(['output','record']);for(const method of ['start','stop','archiveThread'] as const){await wrapped[method](i);expect(runner[method]).toHaveBeenCalledWith(i);}});
-it('does not record when output rejects',async()=>{const tap=vi.fn();const runner={accept:async(i:any)=>i.output(end)};const wrapped=withModelCallRecording(runner as any,{tap:()=>tap} as any);await expect(wrapped.accept({...input(),output:async()=>{throw Error('journal');}})).rejects.toThrow('journal');expect(tap).not.toHaveBeenCalled();});

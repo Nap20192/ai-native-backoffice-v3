@@ -8,7 +8,6 @@ import { TenantSwitcher } from "./TenantSwitcher";
 import { UserProfile } from "./UserProfile";
 import { consolePlugins } from "../plugins/registry";
 import { useI18n } from "../i18n";
-import { analyticsNav } from "./analytics/analytics-nav";
 
 interface NavItem {
   to: string;
@@ -42,7 +41,6 @@ function useNavGroups(): NavGroup[] {
         { to: "/evals", label: t.nav.evalRuns, icon: NAV_ICONS.evals },
       ],
     },
-    analyticsNav(locale),
     {
       label: t.nav.infrastructure,
       items: [

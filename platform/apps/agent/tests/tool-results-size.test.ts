@@ -152,4 +152,21 @@ describe("history rebuilt from stored events", () => {
   it("keeps short text as is", () => {
     expect(capHistoryText("Hello, World!")).toBe("Hello, World!");
   });
+
+  it("keeps a table of Latin names and numbers: tabs and spaces are not base64 (Codex review)", () => {
+    const rows = Array.from({ length: 400 }, (_, i) => `Employee${i}\tDept${i % 7}\t${1000 + i}`);
+    const tsv = ["Name\tDepartment\tAmount", ...rows].join("\n");
+    expect(tsv.length).toBeGreaterThan(6_000);
+    expect(capHistoryText(tsv)).toBe(tsv);
+  });
+
+  it("keeps a list of words one per line", () => {
+    const words = Array.from({ length: 900 }, (_, i) => `item${i}`).join("\n");
+    expect(capHistoryText(words)).toBe(words);
+  });
+
+  it("still drops base64 wrapped at 76 characters", () => {
+    const wrapped = (PNG_BASE64.repeat(80).match(/.{1,76}/g) ?? []).join("\n");
+    expect(capHistoryText(wrapped)).toMatch(/binary data omitted/);
+  });
 });

@@ -664,22 +664,36 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     return `${LiteBoxSandbox.STAGING_DIR}/.oma-${kind}-${Buffer.from(randomBytes(6)).toString("hex")}`;
   }
 
+  /** Time limit of the in-container copy: a FIFO or a stuck mount must not hold the turn. */
+  private copyTimeoutSecs(): number {
+    return Math.max(1, Math.ceil((this.opts.defaultTimeoutMs ?? 120_000) / 1000));
+  }
+
   private async copyIntoTarget(box: LiteBoxInstance, hostPath: string, target: string): Promise<void> {
     if (!this.hiddenByMount(target)) {
       await this.copyIntoBox(box, hostPath, target);
       return;
     }
     const staged = this.stagingPath("write");
-    await this.copyIntoBox(box, hostPath, staged);
-    const moved = await box.exec("sh", [
-      "-c",
-      'mkdir -p "$(dirname "$2")" && cat "$1" > "$2"; status=$?; rm -f "$1"; exit $status',
-      "sh",
-      staged,
-      target,
-    ]);
-    if (moved.exitCode !== 0) {
-      throw new Error(`LiteBoxSandbox could not write ${target}: ${(moved.stderr || moved.stdout).trim()}`);
+    try {
+      await this.copyIntoBox(box, hostPath, staged);
+      const moved = await box.exec(
+        "sh",
+        [
+          "-c",
+          'if [ -p "$2" ]; then echo "$2 is a FIFO" >&2; exit 1; fi; mkdir -p "$(dirname "$2")" && cat "$1" > "$2"',
+          "sh",
+          staged,
+          target,
+        ],
+        {},
+        { timeoutSecs: this.copyTimeoutSecs() },
+      );
+      if (moved.exitCode !== 0) {
+        throw new Error(`LiteBoxSandbox could not write ${target}: ${(moved.stderr || moved.stdout).trim()}`);
+      }
+    } finally {
+      await box.exec("rm", ["-f", staged]).catch(() => undefined);
     }
   }
 
@@ -690,7 +704,12 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     }
     const staged = this.stagingPath("read");
     try {
-      const copied = await box.exec("sh", ["-c", 'cat "$1" > "$2"', "sh", source, staged]);
+      const copied = await box.exec(
+        "sh",
+        ["-c", 'if [ -p "$1" ]; then echo "$1 is a FIFO" >&2; exit 1; fi; cat "$1" > "$2"', "sh", source, staged],
+        {},
+        { timeoutSecs: this.copyTimeoutSecs() },
+      );
       if (copied.exitCode !== 0) {
         throw new Error(`LiteBoxSandbox could not read ${source}: ${(copied.stderr || copied.stdout).trim()}`);
       }

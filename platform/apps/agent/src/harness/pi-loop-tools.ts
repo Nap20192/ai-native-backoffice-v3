@@ -121,11 +121,21 @@ export function valueToPiContent(value: unknown, options: PiToolContentOptions =
  * already hold oversized results can run again.
  */
 export function capHistoryText(text: string): string {
-  const compact = text.length >= HISTORY_BASE64_MIN_CHARS ? text.replace(/\s+/g, "") : "";
-  // Base64 alphabet only, padding anywhere: stored results may join several
-  // encoded chunks. Prose of this length always has spaces or punctuation.
-  if (compact.length >= HISTORY_BASE64_MIN_CHARS && /^[A-Za-z0-9+/=]+$/.test(compact)) {
+  if (text.length >= HISTORY_BASE64_MIN_CHARS && looksLikeBase64(text)) {
+    const compact = text.replace(/\r?\n/g, "");
     return `[binary data omitted from history: ${sizeOfBase64(compact)} of base64]`;
   }
   return cutText(text);
+}
+
+/**
+ * Base64 is one long line or lines wrapped at 60-76 characters, with no spaces
+ * or tabs. Tables and prose have spaces or tabs; a word list has short lines.
+ */
+function looksLikeBase64(text: string): boolean {
+  if (/[ \t]/.test(text)) return false;
+  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+  if (lines.length === 0) return false;
+  const compact = lines.join("");
+  return /^[A-Za-z0-9+/=]+$/.test(compact) && compact.length / lines.length >= 60;
 }

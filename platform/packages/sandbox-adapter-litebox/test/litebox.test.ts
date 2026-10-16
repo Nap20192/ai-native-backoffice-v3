@@ -228,13 +228,14 @@ describe("LiteBoxSandbox", () => {
       "sh",
       staged,
       "/mnt/session/outputs/itogi.md",
-    ]);
+    ], {}, { timeoutSecs: expect.any(Number) });
+    expect(box.exec).toHaveBeenCalledWith("rm", ["-f", staged]);
 
     box.copyOut.mockImplementationOnce(async (_source, destination) => { await fs.writeFile(destination, "# Итоги"); });
     await expect(sandbox.readFile("/mnt/session/outputs/itogi.md")).resolves.toBe("# Итоги");
     const readStaged = box.copyOut.mock.calls[0]?.[0] as string;
     expect(readStaged).toMatch(/^\/var\/tmp\/\.oma-read-[0-9a-f]+$/);
-    expect(box.exec).toHaveBeenCalledWith("sh", ["-c", 'cat "$1" > "$2"', "sh", "/mnt/session/outputs/itogi.md", readStaged]);
+    expect(box.exec).toHaveBeenCalledWith("sh", ["-c", expect.stringContaining('cat "$1" > "$2"'), "sh", "/mnt/session/outputs/itogi.md", readStaged], {}, { timeoutSecs: expect.any(Number) });
     expect(box.exec).toHaveBeenCalledWith("rm", ["-f", readStaged]);
 
     await sandbox.writeFileBytes("/mnt/session/outputs/svodka.xlsx", new Uint8Array([80, 75]));
@@ -243,13 +244,32 @@ describe("LiteBoxSandbox", () => {
     // /tmp is a tmpfs of the box container: copyIn under it is hidden as well.
     await sandbox.writeFile("/tmp/script.py", "print(1)");
     expect(box.copyIn.mock.calls.at(-1)?.[1]).toMatch(/^\/var\/tmp\/\.oma-write-/);
-    expect(box.exec).toHaveBeenCalledWith("sh", ["-c", expect.any(String), "sh", expect.any(String), "/tmp/script.py"]);
+    expect(box.exec).toHaveBeenCalledWith("sh", ["-c", expect.any(String), "sh", expect.any(String), "/tmp/script.py"], {}, { timeoutSecs: expect.any(Number) });
 
     // Outside every mount, and out of one through "..", the direct copy stays.
     await sandbox.writeFile("/workspace/a.txt", "a");
     expect(box.copyIn.mock.calls.at(-1)?.[1]).toBe("/workspace/a.txt");
     await sandbox.writeFile("/mnt/session/outputs/../escape.txt", "x");
     expect(box.copyIn.mock.calls.at(-1)?.[1]).toBe("/mnt/session/outputs/../escape.txt");
+    await sandbox.destroy();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("removes the staging file when the copy inside the VM cannot start, and refuses FIFOs (Codex review)", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "openma-litebox-volume-gone-"));
+    const box = queueBox();
+    box.exec.mockImplementation(async (command: string) => {
+      if (command === "sh") throw new Error("box gone");
+      return { exitCode: 0, stdout: "ok\n", stderr: "" };
+    });
+    const sandbox = new LiteBoxSandbox({ outputsRoot: join(root, "outputs") });
+    await sandbox.mountSessionOutputs({ tenantId: "t", sessionId: "s" });
+
+    await expect(sandbox.writeFile("/mnt/session/outputs/a.md", "x")).rejects.toThrow("box gone");
+    const staged = box.copyIn.mock.calls[0]?.[1] as string;
+    expect(box.exec).toHaveBeenCalledWith("rm", ["-f", staged]);
+    const scripts = box.exec.mock.calls.filter((call) => call[0] === "sh").map((call) => (call[1] as string[])[1]);
+    expect(scripts.every((script) => script.includes("[ -p "))).toBe(true);
     await sandbox.destroy();
     await fs.rm(root, { recursive: true, force: true });
   });

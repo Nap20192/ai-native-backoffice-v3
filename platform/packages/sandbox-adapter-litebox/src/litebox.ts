@@ -41,7 +41,7 @@ import {
 import { promises as dns } from "node:dns";
 import { promises as fs, mkdirSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { constants as osConstants, tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { Buffer } from "node:buffer";
@@ -397,7 +397,7 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     const box = await this.ensureBox();
     const tmp = join(this.tmpRoot, `read-${Buffer.from(randomBytes(6)).toString("hex")}`);
     try {
-      await box.copyOut(this.normalise(path), tmp);
+      await this.copyOutOfBox(box, this.normalise(path), tmp);
       return await fs.readFile(tmp, "utf8");
     } finally {
       await removeBestEffort(tmp);
@@ -408,7 +408,7 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     const box = await this.ensureBox();
     const tmp = join(this.tmpRoot, `read-${Buffer.from(randomBytes(6)).toString("hex")}`);
     try {
-      await box.copyOut(this.normalise(path), tmp);
+      await this.copyOutOfBox(box, this.normalise(path), tmp);
       const buf = await fs.readFile(tmp);
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
     } finally {
@@ -422,7 +422,7 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     const target = this.normalise(path);
     await fs.writeFile(tmp, content, "utf8");
     try {
-      await this.copyIntoBox(box, tmp, target);
+      await this.copyIntoTarget(box, tmp, target);
     } finally {
       await removeBestEffort(tmp);
     }
@@ -435,7 +435,7 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     const target = this.normalise(path);
     await fs.writeFile(tmp, bytes);
     try {
-      await this.copyIntoBox(box, tmp, target);
+      await this.copyIntoTarget(box, tmp, target);
     } finally {
       await removeBestEffort(tmp);
     }
@@ -634,6 +634,70 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
       if (command.startsWith(prefix)) Object.assign(out, secrets);
     }
     return out;
+  }
+
+  /** tmpfs mounts of the box container; copyIn and copyOut do not see them. */
+  private static readonly TMPFS_MOUNTS = ["/tmp"];
+  /** Staging directory on the ext4 root file system, visible to both sides. */
+  private static readonly STAGING_DIR = "/var/tmp";
+
+  /**
+   * The path lies under a mount of the container that runs `exec`: a volume
+   * (session outputs, memory stores) or its tmpfs /tmp. BoxLite copyIn and
+   * copyOut work on the ext4 root file system and do not see these mounts
+   * (/proc/mounts in the box, 2026-10-16: "/dev/vda /", "tmpfs /tmp",
+   * "virtiofs /mnt/session/outputs"). The `write` tool put itogi.md under the
+   * outputs mount: bash never saw it and it never reached the session outputs.
+   * Such paths go through a staging file in /var/tmp (ext4) and a `cat` inside
+   * the container, so links resolve inside the VM and never on the host.
+   */
+  private hiddenByMount(target: string): boolean {
+    const path = posix.normalize(target);
+    const roots = [...LiteBoxSandbox.TMPFS_MOUNTS, ...this.volumes.map((volume) => volume.guestPath)];
+    return roots.some((guestPath) => {
+      const root = posix.normalize(guestPath).replace(/\/+$/, "");
+      return path === root || path.startsWith(`${root}/`);
+    });
+  }
+
+  private stagingPath(kind: "read" | "write"): string {
+    return `${LiteBoxSandbox.STAGING_DIR}/.oma-${kind}-${Buffer.from(randomBytes(6)).toString("hex")}`;
+  }
+
+  private async copyIntoTarget(box: LiteBoxInstance, hostPath: string, target: string): Promise<void> {
+    if (!this.hiddenByMount(target)) {
+      await this.copyIntoBox(box, hostPath, target);
+      return;
+    }
+    const staged = this.stagingPath("write");
+    await this.copyIntoBox(box, hostPath, staged);
+    const moved = await box.exec("sh", [
+      "-c",
+      'mkdir -p "$(dirname "$2")" && cat "$1" > "$2"; status=$?; rm -f "$1"; exit $status',
+      "sh",
+      staged,
+      target,
+    ]);
+    if (moved.exitCode !== 0) {
+      throw new Error(`LiteBoxSandbox could not write ${target}: ${(moved.stderr || moved.stdout).trim()}`);
+    }
+  }
+
+  private async copyOutOfBox(box: LiteBoxInstance, source: string, hostPath: string): Promise<void> {
+    if (!this.hiddenByMount(source)) {
+      await box.copyOut(source, hostPath);
+      return;
+    }
+    const staged = this.stagingPath("read");
+    try {
+      const copied = await box.exec("sh", ["-c", 'cat "$1" > "$2"', "sh", source, staged]);
+      if (copied.exitCode !== 0) {
+        throw new Error(`LiteBoxSandbox could not read ${source}: ${(copied.stderr || copied.stdout).trim()}`);
+      }
+      await box.copyOut(staged, hostPath);
+    } finally {
+      await box.exec("rm", ["-f", staged]).catch(() => undefined);
+    }
   }
 
   private async copyIntoBox(

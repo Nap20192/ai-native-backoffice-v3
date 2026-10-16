@@ -210,6 +210,67 @@ describe("LiteBoxSandbox", () => {
     await sandbox.destroy();
   });
 
+  it("writes and reads files under a mounted volume inside the VM, not under the mount", async () => {
+    // 2026-10-16: `write` put itogi.md into /mnt/session/outputs with copyIn,
+    // the host-mounted outputs hid it, and the file never reached the session
+    // outputs although `read` (copyOut) found it again.
+    const root = await fs.mkdtemp(join(tmpdir(), "openma-litebox-volume-"));
+    const box = queueBox();
+    const sandbox = new LiteBoxSandbox({ outputsRoot: join(root, "outputs") });
+    await sandbox.mountSessionOutputs({ tenantId: "t", sessionId: "s" });
+
+    await expect(sandbox.writeFile("/mnt/session/outputs/itogi.md", "# Итоги")).resolves.toBe("/mnt/session/outputs/itogi.md");
+    const staged = box.copyIn.mock.calls[0]?.[1] as string;
+    expect(staged).toMatch(/^\/var\/tmp\/\.oma-write-[0-9a-f]+$/);
+    expect(box.exec).toHaveBeenCalledWith("sh", [
+      "-c",
+      expect.stringContaining('cat "$1" > "$2"'),
+      "sh",
+      staged,
+      "/mnt/session/outputs/itogi.md",
+    ]);
+
+    box.copyOut.mockImplementationOnce(async (_source, destination) => { await fs.writeFile(destination, "# Итоги"); });
+    await expect(sandbox.readFile("/mnt/session/outputs/itogi.md")).resolves.toBe("# Итоги");
+    const readStaged = box.copyOut.mock.calls[0]?.[0] as string;
+    expect(readStaged).toMatch(/^\/var\/tmp\/\.oma-read-[0-9a-f]+$/);
+    expect(box.exec).toHaveBeenCalledWith("sh", ["-c", 'cat "$1" > "$2"', "sh", "/mnt/session/outputs/itogi.md", readStaged]);
+    expect(box.exec).toHaveBeenCalledWith("rm", ["-f", readStaged]);
+
+    await sandbox.writeFileBytes("/mnt/session/outputs/svodka.xlsx", new Uint8Array([80, 75]));
+    expect(box.copyIn.mock.calls.at(-1)?.[1]).toMatch(/^\/var\/tmp\/\.oma-write-/);
+
+    // /tmp is a tmpfs of the box container: copyIn under it is hidden as well.
+    await sandbox.writeFile("/tmp/script.py", "print(1)");
+    expect(box.copyIn.mock.calls.at(-1)?.[1]).toMatch(/^\/var\/tmp\/\.oma-write-/);
+    expect(box.exec).toHaveBeenCalledWith("sh", ["-c", expect.any(String), "sh", expect.any(String), "/tmp/script.py"]);
+
+    // Outside every mount, and out of one through "..", the direct copy stays.
+    await sandbox.writeFile("/workspace/a.txt", "a");
+    expect(box.copyIn.mock.calls.at(-1)?.[1]).toBe("/workspace/a.txt");
+    await sandbox.writeFile("/mnt/session/outputs/../escape.txt", "x");
+    expect(box.copyIn.mock.calls.at(-1)?.[1]).toBe("/mnt/session/outputs/../escape.txt");
+    await sandbox.destroy();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("reports a copy that failed inside the VM, for example on a read-only memory store", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "openma-litebox-volume-ro-"));
+    const box = queueBox();
+    box.exec.mockImplementation(async (command: string) =>
+      command === "sh"
+        ? { exitCode: 1, stdout: "", stderr: "sh: 1: cannot create /mnt/memory/notes/a.md: Read-only file system" }
+        : { exitCode: 0, stdout: "ok\n", stderr: "" },
+    );
+    const sandbox = new LiteBoxSandbox({ memoryRoot: join(root, "memory") });
+    await sandbox.mountMemoryStore({ storeName: "notes", storeId: "store", readOnly: true });
+
+    await expect(sandbox.writeFile("/mnt/memory/notes/a.md", "x")).rejects.toThrow(/Read-only file system/);
+    await expect(sandbox.readFile("/mnt/memory/notes/missing.md")).rejects.toThrow(/could not read/);
+    await sandbox.destroy();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
   it("cleans staging paths even when copy operations or cleanup fail", async () => {
     const box = queueBox();
     box.copyOut.mockRejectedValueOnce(new Error("copy out"));

@@ -3,7 +3,7 @@ import { unzipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -21,6 +21,9 @@ interface ProcessHandle {
 const REPO_ROOT = resolve(__dirname, "../../..");
 const MAIN_NODE_ENTRY = join(REPO_ROOT, "apps/main-node/src/index.ts");
 const TSX_BIN = join(REPO_ROOT, "apps/main-node/node_modules/.bin/tsx");
+// Platform skills from skills/builtin appear in every workspace's skill count.
+const BUILTIN_SKILL_COUNT = readdirSync(join(REPO_ROOT, "skills/builtin"), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory()).length;
 const SKILL_MARKDOWN = `---
 name: repository-guide
 description: How to work in this repository
@@ -677,7 +680,7 @@ describe("main-node official Managed Agents route", () => {
       sessions: 2,
       environments: 1,
       vaults: 1,
-      skills: 1,
+      skills: 1 + BUILTIN_SKILL_COUNT,
       model_cards: 1,
       api_keys: 0,
     });

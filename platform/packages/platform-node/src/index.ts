@@ -85,6 +85,11 @@ import type { MemoryDocumentStore } from "@open-managed-agents/memory-document-s
 import { InMemoryMemoryDocumentStore } from "@open-managed-agents/memory-document-store-memory";
 import type { SkillStore } from "@open-managed-agents/skill-store";
 import { MemorySkillStore } from "@open-managed-agents/skill-store-memory";
+// Platform skills shared by every workspace (main-node wraps its SQL store).
+export {
+  BuiltinSkillOverlayStore,
+  type BuiltinSkill,
+} from "@open-managed-agents/skill-store/builtin-overlay";
 import type { TunnelStore } from "@open-managed-agents/tunnel-store";
 import { MemoryTunnelStore } from "@open-managed-agents/tunnel-store-memory";
 import type { UserProfileStore } from "@open-managed-agents/user-profile-store";

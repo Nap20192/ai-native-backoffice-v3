@@ -365,6 +365,7 @@ export async function getSkillFilesFromManagedSource(
 }
 
 // No hardcoded built-in skills.
-// All skills (including Anthropic's pptx/xlsx/docx/pdf) are managed via the
-// /v1/skills API and stored in KV. Use `scripts/seed-skills.ts` to import
-// skills from github.com/anthropics/skills into your deployment.
+// All skills are managed via the /v1/skills API. On Node, the platform skills
+// docx/pdf/pptx/xlsx ship as files in platform/skills/builtin (MIT, see each
+// ATTRIBUTION.md) and join every workspace through BuiltinSkillOverlayStore.
+// Do not import github.com/anthropics/skills: its license forbids copies.

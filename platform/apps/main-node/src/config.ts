@@ -10,11 +10,13 @@
 // are: the sandbox provider's own keys (SandboxFactory takes a
 // SandboxFactoryEnv), and nothing else.
 
+import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
 
 import { resolveNodeProcessMode, validateNodeProcessEnvironment, type NodeProcessMode } from "./process-mode.js";
 import { resolveRealtimeFanout, type RealtimeFanoutConfig } from "./realtime-fanout.js";
 import { parseAllowHosts } from "./lib/skill-sources.js";
+import { normalizeSandboxGatewayBaseUrl } from "./lib/sandbox-hosted-inference.js";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -80,11 +82,24 @@ export interface NodeConfig {
     signingKey: string | undefined;
     organizationId: string | undefined;
   };
-  paths: { sandboxWorkdir: string; sessionOutputs: string };
+  paths: {
+    sandboxWorkdir: string;
+    sessionOutputs: string;
+    /**
+     * OMA_BUILTIN_SKILLS_DIR: platform skills shown in every workspace, one
+     * folder per skill. Defaults to platform/skills/builtin; "off" is null.
+     */
+    builtinSkills: string | null;
+  };
   http: {
     host: string;
     port: number;
     publicBaseUrl: string | undefined;
+    /**
+     * SANDBOX_GATEWAY_BASE_URL: the origin an ACP agent in the session VM
+     * calls for the inference proxy. Without it the VM uses PUBLIC_BASE_URL.
+     */
+    sandboxGatewayBaseUrl: string | undefined;
     gatewayOrigin: string;
     consoleDir: string | undefined;
     /** CONSOLE_BRANDING_DIR: branding.json plus the logo, favicon, and stylesheet it names. */
@@ -137,6 +152,14 @@ export class NodeConfigError extends TypeError {
     );
     this.name = "NodeConfigError";
   }
+}
+
+const DEFAULT_BUILTIN_SKILLS_DIR = fileURLToPath(new URL("../../../skills/builtin", import.meta.url).href);
+
+function builtinSkillsDir(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") return DEFAULT_BUILTIN_SKILLS_DIR;
+  return trimmed.toLowerCase() === "off" ? null : trimmed;
 }
 
 export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
@@ -256,6 +279,10 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
   };
 
   const skillSourceAllowHosts = attempt<string[]>([], () => parseAllowHosts(env.SKILL_SOURCES_ALLOW_HOSTS));
+  const sandboxGatewayBaseUrl = attempt<string | undefined>(
+    undefined,
+    () => normalizeSandboxGatewayBaseUrl(env.SANDBOX_GATEWAY_BASE_URL) ?? undefined,
+  );
 
   const config: NodeConfig = {
     processMode,
@@ -296,12 +323,14 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     paths: {
       sandboxWorkdir: env.SANDBOX_WORKDIR ?? "./data/sandboxes",
       sessionOutputs: env.SESSION_OUTPUTS_DIR ?? "./data/session-outputs",
+      builtinSkills: builtinSkillsDir(env.OMA_BUILTIN_SKILLS_DIR),
     },
     http: {
       host: env.HOST ?? "0.0.0.0",
       // 0 asks the OS for an ephemeral port (tests and local tooling rely on it).
       port: integer("PORT", 8787, { min: 0, max: 65535 }),
       publicBaseUrl: env.PUBLIC_BASE_URL,
+      sandboxGatewayBaseUrl,
       gatewayOrigin: env.GATEWAY_ORIGIN ?? env.PUBLIC_BASE_URL ?? "http://localhost:8787",
       consoleDir: env.CONSOLE_DIR,
       brandingDir: env.CONSOLE_BRANDING_DIR,

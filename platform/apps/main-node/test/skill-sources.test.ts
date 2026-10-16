@@ -156,6 +156,8 @@ function testConfig(overrides: Record<string, string | undefined> = {}): NodeCon
     FILES_BLOB_DIR: join(dir, "files"),
     SESSION_OUTPUTS_DIR: join(dir, "outputs"),
     ANTHROPIC_API_KEY: "unused",
+    // These tests count installed skills; platform skills would add rows.
+    OMA_BUILTIN_SKILLS_DIR: "off",
     ...overrides,
   });
 }

@@ -14,13 +14,15 @@
 
 import type { EmailSender } from "@open-managed-agents/email";
 import { NodemailerSender } from "@open-managed-agents/email/adapters/nodemailer";
-import type { NodePlatformStores } from "@open-managed-agents/platform-node";
+import { BuiltinSkillOverlayStore, type NodePlatformStores } from "@open-managed-agents/platform-node";
 import type { SandboxFactory } from "@open-managed-agents/sandbox";
+import { SqlSkillStore } from "@open-managed-agents/skill-store-sql";
 
 import { createBetterAuthComponent, type NodeAuth } from "./auth/node-auth.js";
 import { createFilesBlobs, createMemoryBlobs, type NodeBlobs } from "./blobs.js";
 import type { NodeConfig } from "./config.js";
 import { openNodeDatabase, type NodeDatabase } from "./database.js";
+import { loadBuiltinSkills } from "./lib/builtin-skills.js";
 import { createNodeRealtime, type NodeRealtime } from "./realtime.js";
 import { resolveSandboxProviderForEnvironment } from "./sandbox-provider.js";
 import { createNodeSecrets, type NodeSecrets } from "./secrets.js";
@@ -49,6 +51,7 @@ export { InProcessEventStreamHub, type EventStreamHub } from "./lib/event-stream
 export { PgEventStreamHub } from "./lib/pg-event-stream-hub.js";
 export { SqlPollingEventStreamHub } from "./lib/sql-polling-event-stream-hub.js";
 export { createNodeSecrets, type NodeSecrets, type PurposeCipher } from "./secrets.js";
+export { loadBuiltinSkills } from "./lib/builtin-skills.js";
 
 export interface NodeComponents {
   config: NodeConfig;
@@ -95,6 +98,7 @@ export async function nodeDefaults(
     memory: await createMemoryBlobs(config.blobs.memory),
     files: createFilesBlobs(config.blobs.files),
   };
+  const stores = await withBuiltinSkills(config, database, overrides.stores);
   return {
     config,
     database,
@@ -104,7 +108,25 @@ export async function nodeDefaults(
     sandbox,
     realtime,
     blobs,
-    ...(overrides.stores !== undefined && { stores: overrides.stores }),
+    ...(stores !== undefined && { stores }),
+  };
+}
+
+/**
+ * Platform skills (OMA_BUILTIN_SKILLS_DIR) join every workspace's SQL skills
+ * through a read-only overlay. A caller-supplied skills store is kept as is.
+ */
+async function withBuiltinSkills(
+  config: NodeConfig,
+  database: NodeDatabase,
+  stores: Partial<NodePlatformStores> | undefined,
+): Promise<Partial<NodePlatformStores> | undefined> {
+  if (stores?.skills !== undefined || config.paths.builtinSkills === null) return stores;
+  const builtins = await loadBuiltinSkills(config.paths.builtinSkills);
+  if (builtins.length === 0) return stores;
+  return {
+    ...stores,
+    skills: new BuiltinSkillOverlayStore(new SqlSkillStore(database.sql), builtins),
   };
 }
 

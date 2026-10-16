@@ -36,11 +36,21 @@ function skillMdBodyFromArchive(archive: Uint8Array): string | undefined {
   return undefined;
 }
 
+type SessionSkill = Session["agent"]["skills"][number];
+
+/** Custom skills and platform skills (type `anthropic`) are both files in
+ * the Skills store, so both are copied into the sandbox the same way. */
+function isMountedSkill(skill: SessionSkill): boolean {
+  return skill.type === "custom" || skill.type === "anthropic";
+}
+
 async function resolveConcreteSkillVersion(
   skillVersions: SkillVersionSource,
   skillId: string,
   requestedVersion: string,
-): Promise<{ version: string; name: string; description: string } | undefined> {
+): Promise<
+  { version: string; name: string; description: string; directory: string } | undefined
+> {
   if (requestedVersion === "latest") {
     const listed = await skillVersions.listSkillVersions({ skillId, pageSize: 1 });
     if (listed.type !== "page" || listed.page.versions.length === 0) return undefined;
@@ -49,6 +59,7 @@ async function resolveConcreteSkillVersion(
       version: view.version,
       name: view.name,
       description: view.description,
+      directory: view.directory,
     };
   }
   const retrieved = await skillVersions.retrieveSkillVersion({
@@ -60,6 +71,7 @@ async function resolveConcreteSkillVersion(
     version: retrieved.version.version,
     name: retrieved.version.name,
     description: retrieved.version.description,
+    directory: retrieved.version.directory,
   };
 }
 
@@ -85,12 +97,13 @@ export function buildNodeManagedSkillReminders(
   session: Session,
 ): Array<{ source: string; text: string }> {
   return session.agent.skills.flatMap((skill) => {
-    if (skill.type !== "custom") return [];
+    if (!isMountedSkill(skill)) return [];
     const requestedVersion = skill.version ?? "latest";
     const mountRoot = `/workspace/.openma/skills/${encodeURIComponent(skill.skillId)}/${encodeURIComponent(requestedVersion)}/`;
+    const kind = skill.type === "custom" ? "Custom" : "Built-in";
     return [{
       source: `skill:${skill.skillId}`,
-      text: `Custom skill ${skill.skillId} is mounted at ${mountRoot}. Locate and read its SKILL.md before applying it.`,
+      text: `${kind} skill ${skill.skillId} is mounted at ${mountRoot}. Locate and read its SKILL.md before applying it.`,
     }];
   });
 }
@@ -100,7 +113,7 @@ export function buildNodeManagedSkillMounts(
   session: Session,
 ): SkillMountDescriptor[] {
   return session.agent.skills.flatMap((skill) => {
-    if (skill.type !== "custom") return [];
+    if (!isMountedSkill(skill)) return [];
     const requestedVersion = skill.version ?? "latest";
     const mountRoot = `/workspace/.openma/skills/${encodeURIComponent(skill.skillId)}/${encodeURIComponent(requestedVersion)}/`;
     return [{
@@ -108,7 +121,7 @@ export function buildNodeManagedSkillMounts(
       name: skill.skillId,
       description: `Custom skill mounted at ${mountRoot}`,
       mountRoot,
-      source: "custom",
+      source: skill.type === "custom" ? "custom" : "builtin",
     }];
   });
 }
@@ -123,15 +136,18 @@ export async function resolveNodeManagedSkillMounts(
   const mounts: SkillMountDescriptor[] = [];
 
   for (const skill of session.agent.skills) {
-    if (skill.type !== "custom") continue;
+    if (!isMountedSkill(skill)) continue;
     const requestedVersion = skill.version ?? "latest";
-    const mountRoot = `/workspace/.openma/skills/${encodeURIComponent(skill.skillId)}/${encodeURIComponent(requestedVersion)}/`;
     const resolved = await resolveConcreteSkillVersion(
       skillVersions,
       skill.skillId,
       requestedVersion,
     );
     if (!resolved) continue;
+    // The archive keeps one top-level folder, so SKILL.md sits inside it.
+    // The preparer writes archive paths unencoded, so the folder is too.
+    const folder = resolved.directory ? `${safeArchivePath(resolved.directory)}/` : "";
+    const mountRoot = `/workspace/.openma/skills/${encodeURIComponent(skill.skillId)}/${encodeURIComponent(requestedVersion)}/${folder}`;
 
     let body: string | undefined;
     if (fetchBodies) {
@@ -150,7 +166,7 @@ export async function resolveNodeManagedSkillMounts(
       description: resolved.description || `Custom skill mounted at ${mountRoot}`,
       mountRoot,
       ...(body?.trim() ? { body } : {}),
-      source: "custom",
+      source: skill.type === "custom" ? "custom" : "builtin",
     });
   }
 
@@ -311,7 +327,7 @@ export class NodeManagedSessionInputPreparer {
     const writeFileBytes = input.sandbox.writeFileBytes;
     const needsBinaryWrites = input.session.resources.some(
       (resource) => resource.type === "file",
-    ) || input.session.agent.skills.some((skill) => skill.type === "custom");
+    ) || input.session.agent.skills.some(isMountedSkill);
     if (needsBinaryWrites && writeFileBytes === undefined) {
       throw new Error("Managed Session inputs require sandbox binary file writes");
     }
@@ -337,7 +353,7 @@ export class NodeManagedSessionInputPreparer {
     }
 
     for (const skill of input.session.agent.skills) {
-      if (skill.type !== "custom") continue;
+      if (!isMountedSkill(skill)) continue;
       const requestedVersion = skill.version ?? "latest";
       let concreteVersion = requestedVersion;
       if (requestedVersion === "latest") {

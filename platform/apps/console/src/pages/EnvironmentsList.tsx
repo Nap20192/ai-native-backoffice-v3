@@ -1,6 +1,8 @@
 import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { ArchiveIcon, TrashIcon, PlusIcon } from "lucide-react";
@@ -17,6 +19,11 @@ import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
 import { useI18n } from "../i18n";
+import {
+  ENVIRONMENT_TEMPLATES,
+  environmentTemplateFields,
+  type EnvironmentTemplate,
+} from "../lib/environment-templates";
 
 type StatusValue = "any" | "active" | "archived";
 
@@ -38,7 +45,12 @@ export function EnvironmentsList() {
   const { t } = useI18n();
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: "", description: "" });
+  const emptyForm = {
+    name: "",
+    description: "",
+    template: "empty" as EnvironmentTemplate["id"],
+  };
+  const [form, setForm] = useState(emptyForm);
   const [deleteTarget, setDeleteTarget] = useState<Env | null>(null);
   const [askDelete, setAskDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -82,11 +94,11 @@ export function EnvironmentsList() {
     try {
       await managedApi.environments.create({
         name: form.name,
-        config: { type: "cloud" },
+        ...environmentTemplateFields(form.template),
         description: form.description || undefined,
       });
       setShowCreate(false);
-      setForm({ name: "", description: "" });
+      setForm(emptyForm);
       load();
     } catch {
       // Ошибку уже показал клиент API, окно остаётся открытым.
@@ -289,6 +301,37 @@ export function EnvironmentsList() {
               <SelectOption value="cloud">Облако</SelectOption>
             </Select>
           </Field>
+          <div>
+            <div className="label" id="env-template-label">Шаблон</div>
+            <RadioGroup
+              aria-labelledby="env-template-label"
+              value={form.template}
+              onValueChange={(value) =>
+                setForm({ ...form, template: value as EnvironmentTemplate["id"] })
+              }
+              className="gap-2"
+            >
+              {ENVIRONMENT_TEMPLATES.map((template) => (
+                <Label
+                  key={template.id}
+                  htmlFor={`env-template-${template.id}`}
+                  className="flex cursor-pointer items-start gap-2 rounded-xl border border-ddc-border p-3"
+                >
+                  <RadioGroupItem
+                    id={`env-template-${template.id}`}
+                    value={template.id}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-ddc-heading">{template.label}</span>
+                    <span className="block text-xs leading-relaxed font-normal text-ddc-text-muted">
+                      {template.hint}
+                    </span>
+                  </span>
+                </Label>
+              ))}
+            </RadioGroup>
+          </div>
           <Field label="Описание (необязательно)">
             <Textarea
               value={form.description}

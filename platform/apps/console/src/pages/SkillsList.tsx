@@ -12,6 +12,7 @@ import { useApi } from "../lib/api";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { extractManagedSkillFiles } from "../lib/skill-upload";
+import { readSkillArchiveFiles } from "../lib/skill-archive";
 import { useI18n } from "../i18n";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
@@ -55,9 +56,18 @@ type SourceValue = "any" | "anthropic" | "custom";
 
 const SOURCE_OPTIONS: { value: SourceValue; label: string }[] = [
   { value: "any", label: "Все" },
-  { value: "anthropic", label: "Встроенные" },
+  { value: "anthropic", label: "Платформа" },
   { value: "custom", label: "Пользовательские" },
 ];
+
+/**
+ * Навык платформы: сервер отдаёт его в каждом рабочем пространстве с
+ * `source: "anthropic"`, как Anthropic API отдаёт свои готовые навыки.
+ * Удалить его или выпустить новую версию нельзя, подключить к агенту можно.
+ */
+function isPlatformSkill(skill: Pick<Skill, "source">): boolean {
+  return skill.source === "anthropic";
+}
 
 /* ---------- константы ---------- */
 
@@ -217,21 +227,35 @@ export function SkillsList() {
     setNvZip(null);
     try {
       if (!skill.latest_version) throw new Error("У навыка нет версий");
-      const [versionDetail, versionsRes, preview] = await Promise.all([
-        managedApi.skills.versions.retrieve(skill.latest_version, {
+      const latest = skill.latest_version;
+      // Файлы берём из zip версии. Старый предпросмотр /v1/oma/skills
+      // остаётся запасным путём, если архив скачать не удалось.
+      const loadFiles = async (): Promise<SkillFile[]> => {
+        try {
+          const response = await managedApi.skills.versions.download(latest, {
+            skill_id: skill.id,
+          });
+          return readSkillArchiveFiles(new Uint8Array(await response.arrayBuffer()));
+        } catch {
+          const preview = await api<Pick<VersionDetail, "files">>(
+            `${SKILLS_PREVIEW_API}/${skill.id}/versions/${latest}`,
+          ).catch(() => ({ files: [] }));
+          return preview.files || [];
+        }
+      };
+      const [versionDetail, versionsRes, files] = await Promise.all([
+        managedApi.skills.versions.retrieve(latest, {
           skill_id: skill.id,
         }),
         managedApi.skills.versions.list(skill.id, { limit: 100 }),
-        api<Pick<VersionDetail, "files">>(
-          `${SKILLS_PREVIEW_API}/${skill.id}/versions/${skill.latest_version}`,
-        ).catch(() => ({ files: [] })),
+        loadFiles(),
       ]);
       setDetail({
         ...skill,
         name: versionDetail.name,
         description: versionDetail.description,
       });
-      setDetailFiles(preview.files || []);
+      setDetailFiles(files);
       setDetailVersions(versionsRes.data || []);
     } catch {
       setDetailFiles([]);
@@ -327,48 +351,41 @@ export function SkillsList() {
 
   /* ---- колонки ---- */
 
-  // Описание столбцов TanStack. Одна таблица и для встроенных навыков
-  // Anthropic, и для пользовательских: столбец «Источник» их различает.
+  // Описание столбцов TanStack. Столбцы как в консоли Claude: ID, имя,
+  // источник, последняя версия, дата изменения. Одна таблица и для навыков
+  // платформы, и для пользовательских: столбец «Источник» их различает.
   // Сортировки по клику и фильтров по столбцам нет: параметр `source` на
   // сервере задаёт чип «Источник».
   const columns = useMemo<ColumnDef<Skill>[]>(
     () => [
       {
+        // Не `id`: DataTable прячет столбец `id` по умолчанию, а здесь ID
+        // виден сразу, как в консоли Claude. Скрыть его можно в «Столбцах».
+        id: "skill_id",
+        accessorKey: "id",
+        header: "ID",
+        size: 200,
+        cell: ({ row }) => (
+          <span className="block truncate font-mono text-xs text-ddc-text-muted" title={row.original.id}>
+            {row.original.id}
+          </span>
+        ),
+      },
+      {
         id: "name",
         accessorKey: "display_title",
-        header: "Название",
+        header: "Имя",
         size: 240,
         meta: { grow: true },
         cell: ({ row }) => {
           const title = row.original.display_title || row.original.name || row.original.id;
-          const subtitle =
-            row.original.source === "anthropic"
-              ? row.original.name || row.original.id
-              : row.original.id;
           return (
-            <div className="min-w-0">
-              <div className="truncate font-medium text-ddc-heading" title={title}>
-                {title}
-              </div>
-              <div className="truncate font-mono text-xs text-ddc-text-muted" title={subtitle}>
-                {subtitle}
-              </div>
-            </div>
+            <span className="block truncate font-medium text-ddc-heading" title={title}>
+              {title}
+            </span>
           );
         },
         enableHiding: false,
-      },
-      {
-        id: "description",
-        accessorKey: "description",
-        header: "Описание",
-        size: 320,
-        meta: { priority: 5 },
-        cell: ({ row }) => (
-          <span className="block truncate text-ddc-text-muted" title={row.original.description}>
-            {row.original.description || "–"}
-          </span>
-        ),
       },
       {
         id: "source",
@@ -377,8 +394,8 @@ export function SkillsList() {
         size: 180,
         cell: ({ row }) => {
           const tracked = skillSources.locks.get(row.original.id);
-          return row.original.source === "anthropic" ? (
-            <span className="chip tone-info">Встроенный</span>
+          return isPlatformSkill(row.original) ? (
+            <span className="chip tone-info">Платформа</span>
           ) : tracked ? (
             <span className="chip tone-neutral max-w-48" title={tracked.source_url}>
               <span className="truncate">{sourceLabel(tracked.source_url)}</span>
@@ -391,24 +408,30 @@ export function SkillsList() {
       {
         id: "version",
         accessorFn: (s) => s.latest_version,
-        header: "Версия",
-        size: 150,
+        header: "Последняя версия",
+        size: 160,
         meta: { priority: 3 },
-        cell: ({ row }) => (
-          <span className="text-ddc-text-muted tabular-nums">
-            {formatSkillVersion(row.original.latest_version)}
-          </span>
-        ),
+        // У навыка платформы версия это хеш файлов, его показываем как есть.
+        cell: ({ row }) =>
+          isPlatformSkill(row.original) ? (
+            <span className="font-mono text-xs text-ddc-text-muted">
+              {row.original.latest_version || "–"}
+            </span>
+          ) : (
+            <span className="text-ddc-text-muted tabular-nums">
+              {formatSkillVersion(row.original.latest_version)}
+            </span>
+          ),
       },
       {
-        id: "created",
-        accessorFn: (s) => s.created_at,
-        header: t.common.created,
+        id: "updated",
+        accessorFn: (s) => s.updated_at,
+        header: "Обновлено",
         size: 120,
         meta: { priority: 1 },
         cell: ({ row }) => (
           <span className="text-ddc-text-muted tabular-nums">
-            {formatDate(row.original.created_at)}
+            {formatDate(row.original.updated_at)}
           </span>
         ),
       },
@@ -490,15 +513,18 @@ export function SkillsList() {
       onLoadMore={loadMore}
       getRowId={(s) => s.id}
       onRowClick={handleRowClick}
-      rowActions={(skill) => [
-        {
-          label: "Удалить",
-          icon: <TrashIcon className="size-4" />,
-          destructive: true,
-          disabled: skill.source === "anthropic",
-          onSelect: () => setDeleteTarget({ skill, fromDetail: false }),
-        },
-      ]}
+      rowActions={(skill) =>
+        isPlatformSkill(skill)
+          ? []
+          : [
+              {
+                label: "Удалить",
+                icon: <TrashIcon className="size-4" />,
+                destructive: true,
+                onSelect: () => setDeleteTarget({ skill, fromDetail: false }),
+              },
+            ]
+      }
       columns={columns}
       emptyTitle={filtered ? t.skills.noMatchingSkills : t.skills.noSkillsYet}
       emptyKind="skill"
@@ -655,7 +681,7 @@ export function SkillsList() {
             <Button
               variant="danger-ghost"
               className="sm:mr-auto"
-              disabled={!detail || detailLoading}
+              disabled={!detail || detailLoading || isPlatformSkill(detail)}
               onClick={() => detail && setDeleteTarget({ skill: detail, fromDetail: true })}
             >
               <TrashIcon />
@@ -728,22 +754,37 @@ export function SkillsList() {
               );
             })()}
 
+            {isPlatformSkill(detail) && (
+              <p className="callout">
+                Встроенный навык платформы. Он есть в каждом рабочем пространстве. Удалить
+                его или выпустить новую версию нельзя, подключить к агенту можно.
+              </p>
+            )}
+
             {/* Подсказка по использованию */}
             <div>
               <div className="label">Как подключить в настройках агента</div>
               <pre className="overflow-x-auto rounded-xl border border-ddc-border bg-ddc-surface-sunken p-3 font-mono text-xs text-ddc-text-muted">
-{`"skills": [{ "type": "custom", "skill_id": "${detail.id}", "version": "latest" }]`}
+{`"skills": [{ "type": "${isPlatformSkill(detail) ? "anthropic" : "custom"}", "skill_id": "${detail.id}", "version": "latest" }]`}
               </pre>
             </div>
 
             {/* Файлы */}
             <div>
               <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="label mb-0">Файлы ({formatSkillVersion(detail.latest_version)})</div>
-                <Button variant="ghost" size="xs" onClick={startNewVersion}>
-                  <PlusIcon />
-                  Новая версия
-                </Button>
+                <div className="label mb-0">
+                  Файлы (
+                  {isPlatformSkill(detail)
+                    ? detail.latest_version
+                    : formatSkillVersion(detail.latest_version)}
+                  )
+                </div>
+                {!isPlatformSkill(detail) && (
+                  <Button variant="ghost" size="xs" onClick={startNewVersion}>
+                    <PlusIcon />
+                    Новая версия
+                  </Button>
+                )}
               </div>
               {detailFiles.length === 0 ? (
                 <p className="text-xs text-ddc-text-muted">В этой версии нет файлов.</p>

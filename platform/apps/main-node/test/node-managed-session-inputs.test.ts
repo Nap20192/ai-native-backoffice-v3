@@ -1,12 +1,48 @@
-import { zipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 import type { Session } from "@open-managed-agents/managed-agents-application";
 
+import { loadBuiltinSkills } from "../src/lib/builtin-skills.js";
 import { NodeManagedSessionInputPreparer } from "../src/lib/node-managed-session-inputs.js";
 import * as nodeManagedInputs from "../src/lib/node-managed-session-inputs.js";
 
+const SHIPPED_SKILLS = resolve(import.meta.dirname, "../../../skills/builtin");
+
 const bytes = (value: string) => new TextEncoder().encode(value);
+
+/** Skill Versions port answering for the platform skill `pdf`. */
+function platformSkillVersions() {
+  return {
+    listSkillVersions: vi.fn(async () => ({
+      type: "page" as const,
+      page: {
+        versions: [{
+          id: "skv_builtin_pdf_3f9a1c2b4d5e",
+          createdAt: "2026-10-16T00:00:00.000Z",
+          description: "PDF files: create, read, merge.",
+          directory: "pdf",
+          name: "pdf",
+          skillId: "pdf",
+          version: "3f9a1c2b4d5e",
+        }],
+        nextCursor: null,
+      },
+    })),
+    downloadSkillVersion: vi.fn(async () => ({
+      type: "found" as const,
+      file: {
+        content: zipSync({
+          "pdf/SKILL.md": bytes("---\nname: pdf\ndescription: PDF files\n---\n"),
+          "pdf/scripts/pdf_create.py": bytes("print('ok')\n"),
+        }),
+        filename: "pdf.zip",
+        mimeType: "application/zip",
+      },
+    })),
+  };
+}
 
 function managedSession(): Session {
   return {
@@ -381,28 +417,217 @@ describe("NodeManagedSessionInputPreparer", () => {
     })).rejects.toThrow(/durable session outputs/i);
   });
 
-  it("does not require binary writes for provider-owned built-in skills", async () => {
+  it("materializes a platform skill attached with type anthropic like a custom one", async () => {
+    const skillVersions = platformSkillVersions();
     const preparer = new NodeManagedSessionInputPreparer({
       files: { downloadFile: async () => { throw new Error("unexpected file download"); } },
-      skillVersions: {
-        listSkillVersions: async () => { throw new Error("unexpected skill listing"); },
-        downloadSkillVersion: async () => { throw new Error("unexpected skill download"); },
-      },
+      skillVersions,
       repositoryCredentials: { findGithubToken: async () => null },
       memorySnapshots: { materialize: async () => ({ mountStoreId: "unused" }) },
     });
     const session = managedSession();
     session.resources = [];
-    session.agent.skills = [{ type: "anthropic", skillId: "pdf" }];
+    session.agent.skills = [{ type: "anthropic", skillId: "pdf", version: "latest" }];
+    const writeFileBytes = vi.fn(async () => "written");
 
-    await expect(preparer.prepare({
+    await preparer.prepare({
       workspaceId: "workspace_inputs",
       session,
       sandbox: {
         sessionOutputMountCapabilities: () => ({ durability: "durable" as const }),
         mountSessionOutputs: async () => undefined,
+        writeFileBytes,
       } as unknown as SandboxExecutor,
-    })).resolves.toBeUndefined();
+    });
+
+    expect(skillVersions.listSkillVersions).toHaveBeenCalledWith({ skillId: "pdf", pageSize: 1 });
+    expect(skillVersions.downloadSkillVersion).toHaveBeenCalledWith({
+      skillId: "pdf",
+      version: "3f9a1c2b4d5e",
+    });
+    expect(writeFileBytes).toHaveBeenCalledWith(
+      "/workspace/.openma/skills/pdf/latest/pdf/SKILL.md",
+      expect.any(Uint8Array),
+    );
+    expect(writeFileBytes).toHaveBeenCalledWith(
+      "/workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_create.py",
+      expect.any(Uint8Array),
+    );
+  });
+
+  it("tells non-assembly harnesses where a platform skill is mounted", () => {
+    const session = managedSession();
+    session.agent.skills = [{ type: "anthropic", skillId: "pdf", version: "latest" }];
+    expect(nodeManagedInputs.buildNodeManagedSkillReminders(session)).toEqual([{
+      source: "skill:pdf",
+      text: "Built-in skill pdf is mounted at /workspace/.openma/skills/pdf/latest/. Locate and read its SKILL.md before applying it.",
+    }]);
+  });
+
+  it("points the skill list at the SKILL.md inside the archive folder", async () => {
+    const session = managedSession();
+    session.agent.skills = [
+      { type: "anthropic", skillId: "pdf", version: "latest" },
+      { type: "custom", skillId: "skill_inputs", version: "latest" },
+    ];
+    const platform = platformSkillVersions();
+    const skillVersions = {
+      ...platform,
+      listSkillVersions: vi.fn(async ({ skillId }: { skillId: string }) =>
+        skillId === "pdf"
+          ? platform.listSkillVersions()
+          : {
+              type: "page" as const,
+              page: {
+                versions: [{
+                  id: "skv_inputs_01",
+                  createdAt: "2026-09-08T00:00:00.000Z",
+                  description: "Verify mounted inputs",
+                  directory: "certification-skill",
+                  name: "certification-skill",
+                  skillId: "skill_inputs",
+                  version: "123",
+                }],
+                nextCursor: null,
+              },
+            }),
+    };
+
+    const mounts = await nodeManagedInputs.resolveNodeManagedSkillMounts(
+      session,
+      skillVersions as never,
+    );
+
+    expect(mounts).toEqual([
+      expect.objectContaining({
+        skillId: "pdf",
+        name: "pdf",
+        mountRoot: "/workspace/.openma/skills/pdf/latest/pdf/",
+        source: "builtin",
+      }),
+      expect.objectContaining({
+        skillId: "skill_inputs",
+        name: "certification-skill",
+        mountRoot: "/workspace/.openma/skills/skill_inputs/latest/certification-skill/",
+        source: "custom",
+      }),
+    ]);
+  });
+
+  it("mounts a pinned platform skill at the folder its SKILL.md names", async () => {
+    for (const entry of await loadBuiltinSkills(SHIPPED_SKILLS)) {
+      const id = entry.skill.id;
+      const pinned = entry.version.version;
+      const archive = unzipSync(entry.archive.content);
+      const manifest = new TextDecoder().decode(archive[`${id}/SKILL.md`]);
+      const skillVersions = {
+        listSkillVersions: vi.fn(async () => {
+          throw new Error("a pinned version is not listed");
+        }),
+        retrieveSkillVersion: vi.fn(async () => ({
+          type: "found" as const,
+          version: entry.version,
+        })),
+        downloadSkillVersion: vi.fn(async () => ({
+          type: "found" as const,
+          file: {
+            content: entry.archive.content,
+            filename: entry.archive.filename,
+            mimeType: "application/zip",
+          },
+        })),
+      };
+      const session = managedSession();
+      session.resources = [];
+      session.agent.skills = [{ type: "anthropic", skillId: id, version: pinned }];
+
+      const [mount] = await nodeManagedInputs.resolveNodeManagedSkillMounts(
+        session,
+        skillVersions as never,
+      );
+      expect(mount?.mountRoot).toBe(`/workspace/.openma/skills/${id}/${pinned}/${id}/`);
+      // SKILL.md commands use latest/; the note must name the pinned folder.
+      expect(manifest).toContain(`/workspace/.openma/skills/${id}/<version>/${id}/`);
+
+      const writeFileBytes = vi.fn(async () => "written");
+      await new NodeManagedSessionInputPreparer({
+        files: { downloadFile: async () => { throw new Error("unexpected file download"); } },
+        skillVersions,
+        repositoryCredentials: { findGithubToken: async () => null },
+        memorySnapshots: { materialize: async () => ({ mountStoreId: "unused" }) },
+      }).prepare({
+        workspaceId: "workspace_inputs",
+        session,
+        sandbox: {
+          sessionOutputMountCapabilities: () => ({ durability: "durable" as const }),
+          mountSessionOutputs: async () => undefined,
+          writeFileBytes,
+        } as unknown as SandboxExecutor,
+      });
+      expect(writeFileBytes).toHaveBeenCalledWith(
+        `${mount!.mountRoot}SKILL.md`,
+        expect.any(Uint8Array),
+      );
+    }
+  });
+
+  it("spells the archive folder in the mount root as the files are written", async () => {
+    const directory = "Мой навык";
+    const archive = zipSync({
+      [`${directory}/SKILL.md`]: bytes("---\nname: my-skill\ndescription: Mine\n---\n"),
+    });
+    const skillVersions = {
+      listSkillVersions: vi.fn(async () => ({
+        type: "page" as const,
+        page: {
+          versions: [{
+            id: "skv_inputs_02",
+            createdAt: "2026-09-08T00:00:00.000Z",
+            description: "Mine",
+            directory,
+            name: "my-skill",
+            skillId: "skill_inputs",
+            version: "7",
+          }],
+          nextCursor: null,
+        },
+      })),
+      retrieveSkillVersion: vi.fn(async () => {
+        throw new Error("latest is listed, not retrieved");
+      }),
+      downloadSkillVersion: vi.fn(async () => ({
+        type: "found" as const,
+        file: { content: archive, filename: "my-skill.zip", mimeType: "application/zip" },
+      })),
+    };
+    const session = managedSession();
+    session.resources = [];
+
+    const [mount] = await nodeManagedInputs.resolveNodeManagedSkillMounts(
+      session,
+      skillVersions as never,
+    );
+    expect(mount?.mountRoot).toBe(`/workspace/.openma/skills/skill_inputs/latest/${directory}/`);
+
+    const writeFileBytes = vi.fn(async () => "written");
+    await new NodeManagedSessionInputPreparer({
+      files: { downloadFile: async () => { throw new Error("unexpected file download"); } },
+      skillVersions,
+      repositoryCredentials: { findGithubToken: async () => null },
+      memorySnapshots: { materialize: async () => ({ mountStoreId: "unused" }) },
+    }).prepare({
+      workspaceId: "workspace_inputs",
+      session,
+      sandbox: {
+        sessionOutputMountCapabilities: () => ({ durability: "durable" as const }),
+        mountSessionOutputs: async () => undefined,
+        writeFileBytes,
+      } as unknown as SandboxExecutor,
+    });
+    expect(writeFileBytes).toHaveBeenCalledWith(
+      `${mount!.mountRoot}SKILL.md`,
+      expect.any(Uint8Array),
+    );
   });
 
   it("fails closed when a memory store is attached to a sandbox without memory mounts", async () => {

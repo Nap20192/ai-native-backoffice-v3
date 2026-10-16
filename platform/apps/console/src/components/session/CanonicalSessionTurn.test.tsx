@@ -868,6 +868,29 @@ describe("CanonicalSessionTurn: ошибки и предупреждения", (
     expect(box?.querySelector('a[href="/environments"]')?.textContent).toBe("Окружения");
   });
 
+  it("переполнение контекста модели объясняет по-русски, а текст сервера прячет в «Текст ошибки»", () => {
+    const raw =
+      '400: {"message":"litellm.ContextWindowExceededError: litellm.BadRequestError: This model\'s maximum context length is 262144 tokens."}';
+    const { container } = setup(errorTurnEvents({ type: "unknown_error", message: raw }));
+
+    const box = errorBox(container)!;
+    expect(box.textContent).toContain("Разговор не поместился в контекст модели");
+    const details = box.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details!.open).toBe(false);
+    expect(details!.querySelector("summary")?.textContent).toBe("Текст ошибки");
+    expect(details!.textContent).toContain("ContextWindowExceededError");
+    const visible = [...box.querySelectorAll(":scope > p")].map((node) => node.textContent).join(" ");
+    expect(visible).not.toContain("ContextWindowExceededError");
+  });
+
+  it("ошибку без подсказки показывает целиком, без «Текст ошибки»", () => {
+    const { container } = setup(errorTurnEvents({ type: "unknown_error", message: "sandbox boot failed" }));
+
+    expect(errorBox(container)?.querySelector("details")).toBeNull();
+    expect(errorBox(container)?.textContent).toContain("sandbox boot failed");
+  });
+
   it("без причины в событии говорит, что ход завершился ошибкой", () => {
     const { container } = setup(errorTurnEvents(undefined));
 

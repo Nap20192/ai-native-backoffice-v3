@@ -41,6 +41,13 @@ export interface PiModelRuntime {
   thinkingLevel?: ModelThinkingLevel;
   /** Managed Agents request priority. Model cards do not own this setting. */
   speed: "standard" | "fast";
+  /**
+   * Images from tools may go to the model: the pi catalog says the model takes
+   * images, or the model card sets `input` with "image" itself. The fallback
+   * for an unknown card model lists images too, but nobody checked that, and
+   * an endpoint without vision rejects the request, so tools send a note.
+   */
+  toolImages: boolean;
 }
 
 /**
@@ -180,6 +187,9 @@ export function createPiModelRuntime(input: PiModelCardBinding): PiModelRuntime 
     providerOptions: structuredClone(input.providerOptions ?? {}) as SimpleStreamOptions,
     ...(input.thinkingLevel !== undefined && { thinkingLevel: input.thinkingLevel }),
     speed: input.speed ?? "standard",
+    toolImages: input.piConfig?.input !== undefined
+      ? input.piConfig.input.includes("image")
+      : (catalogModel?.input.includes("image") ?? false),
   };
 }
 

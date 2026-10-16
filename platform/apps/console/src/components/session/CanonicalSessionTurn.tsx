@@ -921,6 +921,18 @@ const ERROR_HINTS: ReadonlyArray<{ matches: RegExp; hint: () => ReactNode }> = [
       </>
     ),
   },
+  {
+    // LiteLLM и vLLM: запрос длиннее окна модели (262 144 токена у Qwen3.6-35B).
+    matches: /ContextWindowExceeded|maximum context length|context_length_exceeded|prompt is too long/i,
+    hint: () => (
+      <>
+        Разговор не поместился в контекст модели. Обычно его раздувает большой вывод
+        инструмента, например прочитанная картинка или двоичный файл. Платформа обрезает такие
+        результаты, поэтому отправьте сообщение ещё раз. Если ошибка повторится, начните новую
+        сессию.
+      </>
+    ),
+  },
 ];
 
 function ConsoleLink({ label, to }: { label: string; to: string }) {
@@ -956,8 +968,18 @@ function SessionTurnError({
       role="alert"
     >
       <p className="font-medium">Ошибка сессии</p>
-      <p className="prose-wrap whitespace-pre-line">{reason}</p>
-      {hint ? <p className="prose-wrap">{hint.hint()}</p> : null}
+      {hint ? (
+        <>
+          <p className="prose-wrap">{hint.hint()}</p>
+          {/* Текст сервера нужен для разбора, но читать его первым не стоит. */}
+          <details className="text-xs">
+            <summary className="cursor-pointer">Текст ошибки</summary>
+            <p className="prose-wrap mt-1 whitespace-pre-line">{reason}</p>
+          </details>
+        </>
+      ) : (
+        <p className="prose-wrap whitespace-pre-line">{reason}</p>
+      )}
       {block.retrying ? <p className="text-xs">Повторная попытка…</p> : null}
     </div>
   );

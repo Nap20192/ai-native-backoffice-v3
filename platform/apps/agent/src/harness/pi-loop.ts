@@ -39,7 +39,7 @@ import {
 import { emitHarnessToolUseFromCall, isMcpTool } from "./default-loop";
 import { withPiRuntimeRequestOptions } from "./pi-provider";
 import { createPiToolAssembly } from "./assembly/adapters/pi";
-import { toolsToPi, valueToPiContent } from "./pi-loop-tools";
+import { capHistoryText, toolsToPi, valueToPiContent } from "./pi-loop-tools";
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -114,7 +114,7 @@ export class PiHarness implements HarnessInterface {
   private async runAgentOnce(ctx: HarnessContext): Promise<PiRunOutcome> {
     const modelMessages = await eventsToMessagesAsync(ctx.runtime.history.getEvents(), ctx.fileFetcher);
     const messages = dropTrailingAssistantPiMessages(
-      modelMessagesToPi(modelMessages, ctx.pi!.model),
+      modelMessagesToPi(modelMessages, ctx.pi!.model, ctx.pi!.toolImages),
     );
     if (messages.length === 0) {
       throw new ModelError("Pi harness cannot continue without a user message");
@@ -182,7 +182,7 @@ export class PiHarness implements HarnessInterface {
     if (!ctx.pi || ctx.pi.model.contextWindow <= 0) return;
     const events = ctx.runtime.history.getEvents();
     const modelMessages = await eventsToMessagesAsync(events, ctx.fileFetcher);
-    const messages = modelMessagesToPi(modelMessages, ctx.pi.model);
+    const messages = modelMessagesToPi(modelMessages, ctx.pi.model, ctx.pi.toolImages);
     const piTools = toolsToPi(ctx);
     const { tokens: messageTokens } = estimateContextTokens(messages);
     const systemTokens = ctx.systemPrompt.length > 0
@@ -207,7 +207,7 @@ export class PiHarness implements HarnessInterface {
 
     const events = ctx.runtime.history.getEvents();
     const modelMessages = await eventsToMessagesAsync(events, ctx.fileFetcher);
-    const messages = modelMessagesToPi(modelMessages, ctx.pi.model);
+    const messages = modelMessagesToPi(modelMessages, ctx.pi.model, ctx.pi.toolImages);
     const piTools = toolsToPi(ctx);
     const compactionCtx = {
       messages,
@@ -627,6 +627,7 @@ function piContentToWire(content: Array<TextContent | ImageContent>): ContentBlo
 function modelMessagesToPi(
   messages: ModelMessage[],
   model: Model<Api>,
+  toolImages = false,
 ): Message[] {
   const now = Date.now();
   return messages.flatMap((message, index): Message[] => {
@@ -698,7 +699,7 @@ function modelMessagesToPi(
               role: "toolResult",
               toolCallId: part.toolCallId,
               toolName: part.toolName,
-              content: toolOutputToPi(part.output),
+              content: toolOutputToPi(part.output, toolImages),
               isError: false,
               timestamp,
             }]
@@ -709,22 +710,30 @@ function modelMessagesToPi(
   });
 }
 
-function toolOutputToPi(output: unknown): Array<TextContent | ImageContent> {
+/**
+ * Stored tool output → Pi content for the next model request. Text passes
+ * capHistoryText: sessions saved before the size limits held base64 files and
+ * huge outputs that no longer fit the context window.
+ */
+function toolOutputToPi(output: unknown, images: boolean): Array<TextContent | ImageContent> {
+  if (typeof output === "string") return [{ type: "text", text: capHistoryText(output) }];
   if (!output || typeof output !== "object") return valueToPiContent(output);
   const value = output as { type?: string; value?: unknown };
-  if (value.type === "text") return [{ type: "text", text: String(value.value ?? "") }];
+  if (value.type === "text") return [{ type: "text", text: capHistoryText(String(value.value ?? "")) }];
   if (value.type === "json") return valueToPiContent(value.value);
   if (value.type === "content" && Array.isArray(value.value)) {
     return value.value.flatMap((part): Array<TextContent | ImageContent> => {
       if (!part || typeof part !== "object") return valueToPiContent(part);
       const item = part as Record<string, unknown>;
-      if (item.type === "text") return [{ type: "text", text: String(item.text ?? "") }];
+      if (item.type === "text") return [{ type: "text", text: capHistoryText(String(item.text ?? "")) }];
       if (item.type === "image-data") {
-        return [{
-          type: "image",
-          data: String(item.data ?? ""),
-          mimeType: String(item.mediaType ?? "image/png"),
-        }];
+        return valueToPiContent(
+          {
+            type: "image",
+            source: { type: "base64", media_type: String(item.mediaType ?? "image/png"), data: String(item.data ?? "") },
+          },
+          { images },
+        );
       }
       return valueToPiContent(item);
     });

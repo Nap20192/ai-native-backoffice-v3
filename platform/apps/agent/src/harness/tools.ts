@@ -194,6 +194,53 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * Base64 of a file from `base64 -w0 <file>` run through sandbox exec. The
+ * Cloudflare sandbox answers "exit=N\n<stdout>"; LiteBox answers plain stdout
+ * and appends "\n[exit N]" on failure or answers "[error: ...]". Anything that
+ * is not clean base64 is an error: raw command output must never reach the
+ * model as file content (2026-10-16, 900 KB of PNG base64 overflowed Qwen).
+ */
+export function parseBase64ExecOutput(raw: string): { ok: true; data: string } | { ok: false; error: string } {
+  const cloudflare = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
+  let code = 0;
+  let body = raw;
+  if (cloudflare) {
+    code = parseInt(cloudflare[1], 10);
+    body = cloudflare[2];
+  } else if (/^\[error: /.test(raw.trim())) {
+    return { ok: false, error: raw.trim().slice(0, 200) };
+  } else {
+    const failed = raw.match(/\n?\[exit (-?\d+)\]\s*$/);
+    if (failed) {
+      code = parseInt(failed[1], 10);
+      body = raw.slice(0, failed.index);
+    }
+  }
+  if (code !== 0) return { ok: false, error: `exit ${code}: ${body.trim().slice(0, 200)}` };
+  const data = body.replace(/\s+/g, "");
+  if (!data) return { ok: false, error: "file is empty or unreadable" };
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    // A missing file still exits 0 through the `|| ... | tr` fallback; its
+    // stderr ("No such file or directory") is the useful part for the model.
+    return { ok: false, error: `output is not base64: ${body.trim().slice(0, 160)}` };
+  }
+  return { ok: true, data };
+}
+
+/**
+ * A file read as UTF-8 text that is really binary (zip-based Office files,
+ * archives, executables): NUL bytes or many replacement characters. Such
+ * "text" is useless to the model and tokenizes at about a token per byte.
+ */
+function looksBinary(content: string): boolean {
+  if (content.includes("\u0000")) return true;
+  const sample = content.slice(0, 8_192);
+  let replaced = 0;
+  for (const ch of sample) if (ch === "\uFFFD") replaced += 1;
+  return sample.length > 0 && replaced / sample.length > 0.05;
+}
+
 /** File extensions that Read returns as IMAGE content blocks (Claude/GPT-4o/Grok native). */
 const IMAGE_EXTENSIONS: Record<string, string> = {
   png: "image/png",
@@ -498,12 +545,9 @@ export async function buildTools(
           const raw = await sandbox.exec(
             `(base64 -w0 ${shellQuote(file_path)} 2>/dev/null || base64 ${shellQuote(file_path)} | tr -d '\\n')`,
           );
-          const m = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
-          if (!m) return raw;
-          const code = parseInt(m[1], 10);
-          if (code !== 0) return `Error reading file (exit=${code}): ${m[2].slice(0, 200)}`;
-          const data = m[2].trimEnd();
-          if (!data) return "Error: file is empty or unreadable";
+          const parsed = parseBase64ExecOutput(raw);
+          if (!parsed.ok) return `Error reading file ${file_path}: ${parsed.error}`;
+          const data = parsed.data;
 
           if (imageMedia) {
             return {
@@ -520,6 +564,11 @@ export async function buildTools(
 
         // Text path
         const content = await sandbox.readFile(file_path);
+        if (looksBinary(content)) {
+          return `Error: ${file_path} is a binary file (${content.length} characters as text), ` +
+            "its bytes are not shown. Use a tool for this format: python-docx, openpyxl or " +
+            "python-pptx for Office files, pdftotext for PDF, unzip -l for archives, file and ls -l for the rest.";
+        }
         if (offset === undefined && limit === undefined) {
           return truncateResult(content);
         }

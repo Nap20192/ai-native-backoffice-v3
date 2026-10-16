@@ -4,6 +4,9 @@ import { z } from "zod";
 import type { HarnessContext } from "./interface";
 
 export function toolsToPi(ctx: HarnessContext): AgentTool[] {
+  // Images from tools reach the model only when its runtime knows the model
+  // sees them (pi catalog or an explicit model-card `input`); otherwise a note.
+  const images = ctx.pi?.toolImages === true;
   return Object.entries(ctx.tools).map(([name, raw]) => {
     const tool = raw as {
       description?: string;
@@ -32,7 +35,7 @@ export function toolsToPi(ctx: HarnessContext): AgentTool[] {
           messages: [],
           abortSignal: signal,
         });
-        return { content: valueToPiContent(value), details: value };
+        return { content: valueToPiContent(value, { images }), details: value };
       },
     };
   });
@@ -53,7 +56,76 @@ function toJsonSchema(input: unknown): Record<string, unknown> {
   }
 }
 
-export function valueToPiContent(value: unknown): Array<TextContent | ImageContent> {
-  if (typeof value === "string") return [{ type: "text", text: value }];
-  return [{ type: "text", text: JSON.stringify(value) ?? String(value) }];
+/**
+ * Largest tool result text the model gets, same as MAX_TOOL_RESULT_CHARS in
+ * tools.ts. A longer result is cut with a note: one tool call must not eat the
+ * context window (2026-10-16, four PNG pages as base64 text overflowed the
+ * 262144-token window of Qwen and broke the session for good).
+ */
+export const MAX_PI_TOOL_TEXT_CHARS = 50_000;
+
+/** Base64 longer than this in stored history is file bytes, not something to read. */
+const HISTORY_BASE64_MIN_CHARS = 4_000;
+
+export interface PiToolContentOptions {
+  /** The model accepts images in tool results. */
+  images?: boolean;
+}
+
+function cutText(text: string): string {
+  if (text.length <= MAX_PI_TOOL_TEXT_CHARS) return text;
+  return `${text.slice(0, MAX_PI_TOOL_TEXT_CHARS)}\n...(truncated, total ${text.length} chars)`;
+}
+
+function sizeOfBase64(data: string): string {
+  const bytes = Math.floor((data.length * 3) / 4);
+  return bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} bytes`;
+}
+
+type Base64Block = { type: "image" | "document"; source: { type: "base64"; media_type?: string; data?: string } };
+
+function isBase64Block(value: unknown): value is Base64Block {
+  if (!value || typeof value !== "object") return false;
+  const block = value as { type?: unknown; source?: { type?: unknown } };
+  return (block.type === "image" || block.type === "document") && block.source?.type === "base64";
+}
+
+/** Tool result value (string, content block or other object) → Pi content for the model. */
+export function valueToPiContent(value: unknown, options: PiToolContentOptions = {}): Array<TextContent | ImageContent> {
+  if (typeof value === "string") return [{ type: "text", text: cutText(value) }];
+  if (isBase64Block(value)) {
+    const mediaType = value.source.media_type ?? "application/octet-stream";
+    const data = value.source.data ?? "";
+    if (value.type === "image" && options.images) {
+      return [{ type: "image", data, mimeType: mediaType }];
+    }
+    if (value.type === "image") {
+      return [{
+        type: "text",
+        text: `[image ${mediaType}, ${sizeOfBase64(data)}: this model does not receive images, so the picture ` +
+          "is not shown. Check the result by its text instead: extract text, read the source data, or list the file.]",
+      }];
+    }
+    return [{
+      type: "text",
+      text: `[document ${mediaType}, ${sizeOfBase64(data)}: the model does not receive documents. Extract the ` +
+        "text instead, for example: pdftotext -layout file.pdf - | head -n 200]",
+    }];
+  }
+  return [{ type: "text", text: cutText(JSON.stringify(value) ?? String(value)) }];
+}
+
+/**
+ * Tool result text from stored session history, before it goes back to the
+ * model: an old base64 blob becomes a note and long text is cut. Sessions that
+ * already hold oversized results can run again.
+ */
+export function capHistoryText(text: string): string {
+  const compact = text.length >= HISTORY_BASE64_MIN_CHARS ? text.replace(/\s+/g, "") : "";
+  // Base64 alphabet only, padding anywhere: stored results may join several
+  // encoded chunks. Prose of this length always has spaces or punctuation.
+  if (compact.length >= HISTORY_BASE64_MIN_CHARS && /^[A-Za-z0-9+/=]+$/.test(compact)) {
+    return `[binary data omitted from history: ${sizeOfBase64(compact)} of base64]`;
+  }
+  return cutText(text);
 }

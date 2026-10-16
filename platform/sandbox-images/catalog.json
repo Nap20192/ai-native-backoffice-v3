@@ -1,0 +1,49 @@
+{
+  "default_image": "legacy",
+  "images": {
+    "legacy": {
+      "label": "Node 22, прежний образ",
+      "image": "docker.io/library/node:22-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8",
+      "manifest": "legacy.manifest.json",
+      "disk_gb": 4,
+      "memory_mib": 512,
+      "cpus": 1
+    },
+    "workplace": {
+      "label": "Рабочее место агента",
+      "oci_dir": "workplace-2026.10.1",
+      "disk_gb": 6,
+      "memory_mib": 1024,
+      "cpus": 2
+    },
+    "workplace-office": {
+      "label": "Рабочее место с LibreOffice",
+      "oci_dir": "workplace-office-2026.10.1",
+      "disk_gb": 8,
+      "memory_mib": 2048,
+      "cpus": 2
+    }
+  },
+  "templates": [
+    {
+      "id": "basic", "label": "Базовое", "image": "workplace",
+      "networking": { "type": "limited", "allow_package_managers": true, "allow_mcp_servers": true, "allow_web_search": false, "allowed_hosts": [] },
+      "packages": {}
+    },
+    {
+      "id": "documents", "label": "Документы и офис", "image": "workplace-office",
+      "networking": { "type": "limited", "allow_package_managers": true, "allow_mcp_servers": true, "allow_web_search": false, "allowed_hosts": [] },
+      "packages": {}
+    },
+    {
+      "id": "data", "label": "Данные", "image": "workplace",
+      "networking": { "type": "limited", "allow_package_managers": true, "allow_mcp_servers": true, "allow_web_search": false, "allowed_hosts": [] },
+      "packages": { "pip": ["duckdb", "pyarrow", "scipy"] }
+    },
+    {
+      "id": "web", "label": "Веб", "image": "workplace",
+      "networking": { "type": "unrestricted" },
+      "packages": { "pip": ["markdownify", "feedparser"] }
+    }
+  ]
+}

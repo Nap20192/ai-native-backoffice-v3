@@ -11,6 +11,7 @@ export type EnvironmentNetworkInput =
       type: "limited";
       allowMcpServers?: boolean | null;
       allowPackageManagers?: boolean | null;
+      allowWebSearch?: boolean | null;
       allowedHosts?: string[] | null;
     };
 
@@ -30,12 +31,29 @@ export type EnvironmentPackagesView = EnvironmentPackages;
 export type EnvironmentConfigInput =
   | {
       type: "cloud";
+      image?: string | null;
       networking?: EnvironmentNetworkInput | null;
       packages?: EnvironmentPackagesInput | null;
     }
   | { type: "self_hosted" };
 
 export type EnvironmentConfigView = EnvironmentConfig;
+
+export type EnvironmentConfigPolicyResult =
+  | { type: "accepted" }
+  | { type: "rejected"; field: string; message: string };
+
+/**
+ * Checks an environment config on create and update before it is stored:
+ * the sandbox image key, package names and the operator package policy.
+ * `field` is the request path, for example `config.image`. A missing config
+ * is passed as null.
+ */
+export interface EnvironmentConfigPolicyPort {
+  checkConfig(
+    config: EnvironmentConfigInput | null,
+  ): EnvironmentConfigPolicyResult | Promise<EnvironmentConfigPolicyResult>;
+}
 
 export type EnvironmentView = Environment;
 

@@ -1,21 +1,61 @@
 import type {
+  BetaCloudConfig,
+  BetaCloudConfigParams,
   BetaEnvironment,
   BetaEnvironmentDeleteResponse,
+  BetaLimitedNetwork,
+  BetaLimitedNetworkParams,
+  BetaSelfHostedConfig,
+  BetaSelfHostedConfigParams,
+  BetaUnrestrictedNetwork,
   EnvironmentCreateParams,
   EnvironmentListParams,
   EnvironmentUpdateParams,
 } from "@anthropic-ai/sdk/resources/beta/environments/environments";
 import { z } from "zod";
 
-export type EnvironmentCreateBody = Omit<EnvironmentCreateParams, "betas">;
-export type EnvironmentUpdateBody = Omit<EnvironmentUpdateParams, "betas">;
+/** OMA extension: `allow_web_search` lets a limited network use web search. */
+export type OpenMaLimitedNetworkBody = BetaLimitedNetworkParams & {
+  allow_web_search?: boolean | null;
+};
+
+/** OMA extension: `image` picks a sandbox image by catalog key, null means
+ *  the catalog default. */
+export type OpenMaCloudConfigBody = Omit<BetaCloudConfigParams, "networking"> & {
+  image?: string | null;
+  networking?: BetaUnrestrictedNetwork | OpenMaLimitedNetworkBody | null;
+};
+
+export type OpenMaEnvironmentConfigBody =
+  | OpenMaCloudConfigBody
+  | BetaSelfHostedConfigParams;
+
+export type EnvironmentCreateBody = Omit<EnvironmentCreateParams, "betas" | "config"> & {
+  config?: OpenMaEnvironmentConfigBody | null;
+};
+export type EnvironmentUpdateBody = Omit<EnvironmentUpdateParams, "betas" | "config"> & {
+  config?: OpenMaEnvironmentConfigBody | null;
+};
 export type EnvironmentListQuery = Omit<EnvironmentListParams, "betas">;
+
+export type OpenMaLimitedNetwork = BetaLimitedNetwork & { allow_web_search: boolean };
+export type OpenMaCloudConfig = Omit<BetaCloudConfig, "networking"> & {
+  image: string | null;
+  networking: BetaUnrestrictedNetwork | OpenMaLimitedNetwork;
+};
+export type EnvironmentResponse = Omit<BetaEnvironment, "config"> & {
+  config: OpenMaCloudConfig | BetaSelfHostedConfig;
+};
+
+/** Same limit as a catalog key in main-node `sandbox-catalog.ts`. */
+const imageKeySchema = z.string().min(1).max(64);
 
 const limitedNetworkInputSchema = z
   .object({
     type: z.literal("limited"),
     allow_mcp_servers: z.boolean().nullable().optional(),
     allow_package_managers: z.boolean().nullable().optional(),
+    allow_web_search: z.boolean().nullable().optional(),
     allowed_hosts: z.array(z.string()).nullable().optional(),
   })
   .strict();
@@ -40,6 +80,7 @@ const environmentConfigInputSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("cloud"),
+      image: imageKeySchema.nullable().optional(),
       networking: z
         .union([unrestrictedNetworkSchema, limitedNetworkInputSchema])
         .nullable()
@@ -86,6 +127,7 @@ const limitedNetworkResponseSchema = z
     type: z.literal("limited"),
     allow_mcp_servers: z.boolean(),
     allow_package_managers: z.boolean(),
+    allow_web_search: z.boolean(),
     allowed_hosts: z.array(z.string()),
   })
   .strict();
@@ -106,6 +148,7 @@ const environmentConfigResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("cloud"),
+      image: z.string().nullable(),
       networking: z.union([
         unrestrictedNetworkSchema,
         limitedNetworkResponseSchema,
@@ -116,7 +159,7 @@ const environmentConfigResponseSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("self_hosted") }).strict(),
 ]);
 
-export const environmentResponseSchema: z.ZodType<BetaEnvironment> = z
+export const environmentResponseSchema: z.ZodType<EnvironmentResponse> = z
   .object({
     id: z.string().min(1),
     archived_at: z.string().nullable(),

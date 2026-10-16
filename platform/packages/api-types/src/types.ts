@@ -182,6 +182,9 @@ export interface EnvironmentConfig {
   description?: string;
   config: {
     type: string; // "cloud"
+    /** OMA extension: sandbox image catalog key, null means the catalog
+     *  default (GET /v1/oma/sandbox-catalog). */
+    image?: string | null;
     packages?: {
       pip?: string[];
       npm?: string[];
@@ -195,6 +198,8 @@ export interface EnvironmentConfig {
       allowed_hosts?: string[];
       allow_mcp_servers?: boolean;
       allow_package_managers?: boolean;
+      /** OMA extension: web search for a limited network, false by default. */
+      allow_web_search?: boolean;
     };
     /** Free-form Dockerfile body — RUN/COPY/ENV lines only. Required
      *  when `image_strategy === "dockerfile"`. The platform PREPENDS

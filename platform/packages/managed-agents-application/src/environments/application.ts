@@ -11,6 +11,7 @@ import type {
   DeleteEnvironmentCommand,
   DeleteEnvironmentResult,
   EnvironmentConfigInput,
+  EnvironmentConfigPolicyPort,
   EnvironmentPackagesInput,
   EnvironmentsApplicationPort,
   ListEnvironmentsQuery,
@@ -85,17 +86,29 @@ function normalizePackages(
 
 function normalizeConfig(
   input: EnvironmentConfigInput | null | undefined,
+  current?: EnvironmentConfig,
 ): EnvironmentConfig {
   if (input?.type === "self_hosted") return { type: "self_hosted" };
   const networking = input?.type === "cloud" ? input.networking : undefined;
+  // An update that leaves `image` out keeps the stored image; null clears it.
+  const image =
+    input?.type === "cloud" && input.image === undefined && current?.type === "cloud"
+      ? current.image
+      : input?.type === "cloud"
+        ? input.image
+        : undefined;
   return {
     type: "cloud",
+    ...(image != null && { image }),
     networking:
       networking?.type === "limited"
         ? {
             type: "limited",
             allowMcpServers: networking.allowMcpServers ?? false,
             allowPackageManagers: networking.allowPackageManagers ?? false,
+            ...(networking.allowWebSearch != null && {
+              allowWebSearch: networking.allowWebSearch,
+            }),
             allowedHosts: networking.allowedHosts ?? [],
           }
         : { type: "unrestricted" },
@@ -122,6 +135,8 @@ export interface EnvironmentsApplicationServiceDependencies {
   store: EnvironmentStore;
   clock: { now(): Date };
   ids: { nextEnvironmentId(): string };
+  /** Optional: without it every config of the right shape is accepted. */
+  configPolicy?: EnvironmentConfigPolicyPort;
 }
 
 export class EnvironmentsApplicationService
@@ -131,12 +146,26 @@ export class EnvironmentsApplicationService
     private readonly dependencies: EnvironmentsApplicationServiceDependencies,
   ) {}
 
+  /** The policy's rejection as an invalid_request message, or null. */
+  private async rejectedConfig(
+    config: EnvironmentConfigInput | null,
+  ): Promise<string | null> {
+    const policy = this.dependencies.configPolicy;
+    if (policy === undefined) return null;
+    const result = await policy.checkConfig(config);
+    return result.type === "rejected"
+      ? `Invalid request field ${result.field}: ${result.message}`
+      : null;
+  }
+
   async createEnvironment(
     command: CreateEnvironmentCommand,
   ): Promise<CreateEnvironmentResult> {
     if (command.name.trim().length === 0) {
       return { type: "invalid_request", message: "Environment name must not be empty" };
     }
+    const rejected = await this.rejectedConfig(command.config ?? null);
+    if (rejected !== null) return { type: "invalid_request", message: rejected };
     const timestamp = this.dependencies.clock.now().toISOString();
     const environment: Environment = {
       id: this.dependencies.ids.nextEnvironmentId(),
@@ -185,9 +214,15 @@ export class EnvironmentsApplicationService
     if (command.name !== undefined && command.name !== null && command.name.trim().length === 0) {
       return { type: "invalid_request", message: "Environment name must not be empty" };
     }
+    if (command.config !== undefined) {
+      const rejected = await this.rejectedConfig(command.config);
+      if (rejected !== null) return { type: "invalid_request", message: rejected };
+    }
     const next: Environment = {
       ...current.environment,
-      ...(command.config !== undefined && { config: normalizeConfig(command.config) }),
+      ...(command.config !== undefined && {
+        config: normalizeConfig(command.config, current.environment.config),
+      }),
       ...(command.description !== undefined && { description: command.description }),
       ...(command.metadata !== undefined && {
         metadata: patchMetadata(current.environment.metadata, command.metadata),

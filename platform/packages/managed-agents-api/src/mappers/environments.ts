@@ -56,6 +56,7 @@ function toConfigInput(
   if (config.type === "self_hosted") return { type: config.type };
   return {
     type: config.type,
+    ...(config.image !== undefined && { image: config.image }),
     ...(config.networking !== undefined && {
       networking:
         config.networking === null
@@ -70,6 +71,9 @@ function toConfigInput(
                 ...(config.networking.allow_package_managers !== undefined && {
                   allowPackageManagers:
                     config.networking.allow_package_managers,
+                }),
+                ...(config.networking.allow_web_search !== undefined && {
+                  allowWebSearch: config.networking.allow_web_search,
                 }),
                 ...(config.networking.allowed_hosts !== undefined && {
                   allowedHosts: config.networking.allowed_hosts,
@@ -141,6 +145,7 @@ function fromConfig(config: EnvironmentConfigView): object {
   if (config.type === "self_hosted") return { type: config.type };
   return {
     type: config.type,
+    image: config.image ?? null,
     networking:
       config.networking.type === "unrestricted"
         ? { type: config.networking.type }
@@ -148,6 +153,7 @@ function fromConfig(config: EnvironmentConfigView): object {
             type: config.networking.type,
             allow_mcp_servers: config.networking.allowMcpServers,
             allow_package_managers: config.networking.allowPackageManagers,
+            allow_web_search: config.networking.allowWebSearch ?? false,
             allowed_hosts: config.networking.allowedHosts,
           },
     packages: fromPackages(config.packages),

@@ -1,0 +1,5 @@
+libreoffice-core-nogui=4:7.4.7-1+deb12u14
+libreoffice-writer-nogui=4:7.4.7-1+deb12u14
+libreoffice-calc-nogui=4:7.4.7-1+deb12u14
+libreoffice-impress-nogui=4:7.4.7-1+deb12u14
+python3-uno=4:7.4.7-1+deb12u14

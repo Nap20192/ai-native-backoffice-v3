@@ -4,6 +4,8 @@ export type EnvironmentNetwork =
       type: "limited";
       allowMcpServers: boolean;
       allowPackageManagers: boolean;
+      /** OMA extension: web search for a limited network. Absent means false. */
+      allowWebSearch?: boolean;
       allowedHosts: string[];
     };
 
@@ -19,6 +21,9 @@ export interface EnvironmentPackages {
 export type EnvironmentConfig =
   | {
       type: "cloud";
+      /** OMA extension: sandbox image catalog key. Absent or null means the
+       *  catalog's default image when the VM is created. */
+      image?: string | null;
       networking: EnvironmentNetwork;
       packages: EnvironmentPackages;
     }

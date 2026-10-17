@@ -71,7 +71,7 @@ const broken: [string, Mutate][] = [
   ["a memory_store resource", (s) => s.resources.push({ id: "res_1", type: "memory_store", memoryStoreId: "ms_1", access: "read_write", instructions: null, createdAt: "", updatedAt: "" })],
   ["a file resource", (s) => s.resources.push({ id: "res_2", type: "file", fileId: "file_1", mountPath: "/mnt/f", createdAt: "", updatedAt: "" })],
   ["vault_ids", (s) => (s.vaultIds = ["vlt_1"])],
-  ["an ACP agent", (s) => (s.agent.openma = { acp: { agent: { command: "claude-code-acp" } } })],
+  ["an old ACP harness name", (s) => (s.agent.openma = { harness: "acp-sandbox" })],
   ["an archived session", (s) => (s.archivedAt = "2026-10-16T11:00:00.000Z")],
 ];
 

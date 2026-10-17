@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
-import type { HarnessEntry, ModelOption } from "../../lib/catalog-api";
+import type { ModelOption } from "../../lib/catalog-api";
 import { ModelPicker } from "./ModelPicker";
 
 beforeAll(() => {
@@ -34,7 +34,6 @@ function option(overrides: Partial<ModelOption> = {}): ModelOption {
     max_output_tokens: 64000,
     effort_levels: ["low", "high"],
     speed_fast: true,
-    harnesses: ["pi", "claude-acp"],
     ...overrides,
   };
 }
@@ -55,22 +54,6 @@ const BUILTIN = option({
   card_id: null,
   context_window: null,
 });
-
-const CLAUDE: HarnessEntry = {
-  id: "claude-acp",
-  source: "builtin",
-  label: "Claude Agent",
-  status: "ready",
-  reason: null,
-  runtime_harness: "acp-sandbox",
-  protocols: ["anthropic-messages"],
-  supports: { effort: false, speed: false, platform_tools: false, mcp: false },
-  acp: { agent: { id: "claude-acp", command: "sh" } },
-  install: { npm: [], pip: [] },
-  install_hint: null,
-  allowed_env: null,
-  card_id: null,
-};
 
 function renderPicker(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
   const onChange = vi.fn();
@@ -154,29 +137,6 @@ describe("ModelPicker", () => {
 
     expect(onChange).toHaveBeenCalledWith(OPENAI_CARD);
     expect(screen.queryByRole("listbox")).toBeNull();
-  });
-
-  it("выключает несовместимую модель: причина видна в строке и связана через aria-describedby", async () => {
-    const { onChange } = renderPicker({ harness: CLAUDE });
-    await open();
-
-    const row = screen.getByRole("option", { name: /GPT 5/ });
-    expect(row).toHaveAttribute("aria-disabled", "true");
-    const reason =
-      "Claude Code в песочнице работает только с моделями с протоколом anthropic-messages, у модели verify-oai: openai-chat, openai-responses";
-    expect(row).toHaveTextContent(reason);
-    expect(row).toHaveAttribute("title", reason);
-    const describedBy = row.getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
-    expect(document.getElementById(describedBy as string)).toHaveTextContent(reason);
-
-    await userEvent.click(row);
-    expect(onChange).not.toHaveBeenCalled();
-    // Совместимые модели выбираются как обычно.
-    expect(screen.getByRole("option", { name: /Claude Haiku 4\.5/ })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
   });
 
   it("предлагает добавить карточку модели", async () => {

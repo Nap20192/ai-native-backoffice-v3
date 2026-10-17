@@ -83,7 +83,6 @@ export interface SessionLifecycleHooks {
   preCreateGate?: (input: {
     tenantId: string;
     agentId: string;
-    isLocalRuntime: boolean;
   }) => Promise<{ status: number; body: unknown } | null>;
   /** Refresh provider-tagged credentials for the given vault set + return
    *  any session.warning events to inject. CF: refreshProviderCredentialsForSession.
@@ -103,11 +102,6 @@ export interface SessionLifecycleHooks {
   preCreateRateLimit?: (input: {
     tenantId: string;
   }) => Promise<{ status: number; body: unknown } | null>;
-  /** Best-effort daemon dispose forward (CF RuntimeRoom). Called on DELETE. */
-  notifyDaemonDispose?: (input: {
-    runtimeId: string;
-    sessionId: string;
-  }) => Promise<void>;
   /** Resolve {file_id} ContentBlocks to inline base64 + return mount ids
    *  for the sandbox. CF: reads bytes from FILES_BUCKET. Node: returns
    *  blocks unchanged (file_id resolution lands in the Node port later). */
@@ -161,8 +155,6 @@ export interface SessionRoutesDeps {
     tenantId: string;
     environmentId: string;
   }) => Promise<EnvironmentConfig | null>;
-  /** Local-runtime sentinel — cloud sessions require explicit env_id. */
-  localRuntimeEnvId?: string;
   /** Vault credential bundling for /init. Both runtimes read from
    *  services.credentials but we keep it pluggable for future variants. */
   fetchVaultCredentials?: (input: {
@@ -202,9 +194,12 @@ function snapshotToSessionAgent(
   snapshot: AgentConfig | null,
 ): Record<string, unknown> {
   if (!snapshot) return { type: "agent", id: agentId, version: 1 };
+  // Snapshots stored before the ACP harnesses were removed may still carry
+  // `acp` and `runtime_binding`; they never reach the response.
   const {
     aux_model: _a,
     harness: _h,
+    acp: _acp,
     runtime_binding: _rb,
     appendable_prompts: _ap,
     callable_agents,
@@ -213,7 +208,7 @@ function snapshotToSessionAgent(
     updated_at: _ua,
     metadata: _md,
     ...rest
-  } = snapshot;
+  } = snapshot as AgentConfig & { acp?: unknown; runtime_binding?: unknown };
   const multiagent = (callable_agents ?? []).length > 0
     ? {
         type: "coordinator" as const,
@@ -305,7 +300,6 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
         file_id?: string;
         memory_store_id?: string;
         mount_path?: string;
-        local_path?: string;
         access?: "read_write" | "read_only";
         instructions?: string;
         url?: string;
@@ -327,19 +321,6 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
       return c.json({ error: "Maximum 8 memory_store resources per session" }, 422);
     }
 
-    for (const r of body.resources ?? []) {
-      if (
-        (r.type === "github_repository" || r.type === "github_repo") &&
-        typeof r.local_path === "string" &&
-        r.local_path.trim()
-      ) {
-        const localPath = r.local_path.trim();
-        if (!isAbsoluteHostPath(localPath)) {
-          return c.json({ error: "local_path must be an absolute filesystem path" }, 400);
-        }
-      }
-    }
-
     const seenStores = new Set<string>();
     for (const r of body.resources ?? []) {
       if (r.type === "memory_store" && r.memory_store_id) {
@@ -356,30 +337,24 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
     const agentRow = await services.agents.get({ tenantId: t, agentId });
     if (!agentRow) return c.json({ error: "Agent not found" }, 404);
 
-    const agentIsLocalRuntime = !!agentRow.runtime_binding;
-
     if (deps.lifecycle?.preCreateGate) {
       const gate = await deps.lifecycle.preCreateGate({
         tenantId: t,
         agentId,
-        isLocalRuntime: agentIsLocalRuntime,
       });
       if (gate) return c.json(gate.body as object, gate.status as 402);
     }
 
-    let envId = body.environment_id ?? wrappedEnv;
+    const envId = body.environment_id ?? wrappedEnv;
     if (!envId) {
-      if (!agentIsLocalRuntime) {
-        return c.json({ error: "environment_id is required for cloud agents" }, 400);
-      }
-      envId = deps.localRuntimeEnvId ?? "env_local_runtime";
+      return c.json({ error: "environment_id is required" }, 400);
     }
 
     const { tenant_id: _atid, ...agentSnapshot } = agentRow;
     const envSnap = deps.loadEnvironment
       ? await deps.loadEnvironment({ tenantId: t, environmentId: envId })
       : null;
-    if (!agentIsLocalRuntime && !envSnap) {
+    if (!envSnap) {
       return c.json({ error: "Environment not found" }, 404);
     }
     const vaultIds = body.vault_ids ?? [];
@@ -445,9 +420,6 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
           url: repoUrl,
           repo_url: repoUrl,
           mount_path: res.mount_path || "/workspace",
-          ...(typeof res.local_path === "string" && res.local_path.trim()
-            ? { local_path: res.local_path.trim() }
-            : {}),
           checkout: res.checkout,
         });
       } else if ((res.type === "env" || res.type === "env_secret") && res.name && res.value) {
@@ -641,15 +613,6 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
 
     // Best-effort runtime teardown — never blocks the row delete.
     await router.destroy(id).catch(() => undefined);
-
-    // Local-runtime daemon dispose.
-    const rid = (sess as unknown as { agent_snapshot?: { runtime_binding?: { runtime_id?: string } } })
-      .agent_snapshot?.runtime_binding?.runtime_id;
-    if (rid && deps.lifecycle?.notifyDaemonDispose) {
-      await deps.lifecycle
-        .notifyDaemonDispose({ runtimeId: rid, sessionId: id })
-        .catch(() => undefined);
-    }
 
     try {
       await services.sessions.delete({ tenantId: t, sessionId: id });
@@ -1295,8 +1258,3 @@ async function openSse(
   });
 }
 
-/** Host path for local runtime repo roots (POSIX or Windows drive). */
-function isAbsoluteHostPath(path: string): boolean {
-  if (path.startsWith("/")) return true;
-  return /^[A-Za-z]:[\\/]/.test(path);
-}

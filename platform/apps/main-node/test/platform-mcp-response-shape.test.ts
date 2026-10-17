@@ -81,7 +81,8 @@ describe("platform MCP response shape", () => {
     expect(shaped).not.toHaveProperty("future_field");
     expect(shaped.mcp_servers[1].env).toEqual({ API_TOKEN: "[скрыто]", REGION: "eu" });
     expect(shaped.mcp_servers[0].url).toBe("https://mcp.example.com/x");
-    expect(shaped._oma.acp.agent.env).toEqual({ OPENAI_API_KEY: "[скрыто]", MODE: "fast" });
+    // An acp block of an old agent never reaches the model (D41).
+    expect(shaped._oma).toEqual({ harness: "pi" });
     const card = shapeResponse("model_card", SAMPLES.model_card.raw, testLibs) as Record<string, any>;
     expect(Object.keys(card.custom_headers)).toEqual(["X-Auth", "X-Org"]);
     expect(card).not.toHaveProperty("api_key_preview");

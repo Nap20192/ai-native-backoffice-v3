@@ -30,7 +30,6 @@ export interface NewAgentInput {
   system?: string;
   tools?: ToolConfig[];
   harness?: string;
-  acp?: AgentConfig["acp"];
   description?: string;
   mcp_servers?: AgentConfig["mcp_servers"];
   skills?: AgentConfig["skills"];
@@ -38,7 +37,6 @@ export interface NewAgentInput {
   metadata?: Record<string, unknown>;
   aux_model?: AgentConfig["aux_model"];
   appendable_prompts?: string[];
-  runtime_binding?: AgentConfig["runtime_binding"];
   enable_general_subagent?: boolean;
 }
 
@@ -51,7 +49,6 @@ export interface UpdateAgentInput {
   system?: string | null;
   tools?: ToolConfig[];
   harness?: string;
-  acp?: AgentConfig["acp"] | null;
   description?: string | null;
   mcp_servers?: AgentConfig["mcp_servers"] | null;
   skills?: AgentConfig["skills"] | null;
@@ -60,7 +57,6 @@ export interface UpdateAgentInput {
   metadata?: Record<string, unknown>;
   aux_model?: AgentConfig["aux_model"] | null;
   appendable_prompts?: string[] | null;
-  runtime_binding?: AgentConfig["runtime_binding"] | null;
   enable_general_subagent?: boolean | null;
 }
 
@@ -75,7 +71,6 @@ const UPDATABLE_FIELDS = [
   "system",
   "tools",
   "harness",
-  "acp",
   "description",
   "mcp_servers",
   "skills",
@@ -83,7 +78,6 @@ const UPDATABLE_FIELDS = [
   "aux_model",
   "metadata",
   "appendable_prompts",
-  "runtime_binding",
   "enable_general_subagent",
 ] as const;
 
@@ -144,7 +138,6 @@ export class AgentService {
       system: opts.input.system ?? "",
       tools: opts.input.tools ?? DEFAULT_TOOLS,
       harness: opts.input.harness,
-      acp: opts.input.acp,
       description: opts.input.description,
       mcp_servers: opts.input.mcp_servers,
       skills: opts.input.skills,
@@ -152,7 +145,6 @@ export class AgentService {
       metadata: opts.input.metadata,
       aux_model: opts.input.aux_model,
       appendable_prompts: opts.input.appendable_prompts,
-      runtime_binding: opts.input.runtime_binding,
       enable_general_subagent: opts.input.enable_general_subagent,
       version: 1,
       created_at: nowIso,

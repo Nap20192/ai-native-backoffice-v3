@@ -39,7 +39,7 @@
   "layouts": [
     {
       "id": "resource-list",
-      "route": "/agents|sessions|files|evals|environments|skills|vaults|memory|model-cards|api-keys|runtimes",
+      "route": "/agents|sessions|files|evals|environments|skills|vaults|memory|model-cards|api-keys",
       "kind": "list",
       "slots": ["list-toolbar", "data-grid"],
       "states": [

@@ -39,7 +39,6 @@ const NOUN_ACC: Record<string, string> = {
   deployment: "деплоймент на паузе",
   session: "сессию",
   model_card: "карточку модели",
-  harness_card: "карточку harness",
   outcome: "результат",
   skill_version: "версию навыка",
   session_resource: "ресурс сессии",
@@ -138,8 +137,6 @@ export function confirmLabelFor(tool: string, preview: PreviewResult | null): st
 
 /* ---------- Тело одной операции ---------- */
 
-const HARNESS_ROOT_NOTE =
-  "Команда этой карточки работает в VM от root у каждого агента с этим harness. Ассистент её не меняет";
 const DEPLOYMENT_PAUSE_NOTE = "Деплоймент создаётся на паузе. Запустить его можно в консоли";
 
 /** Предупреждения, доступ, YAML или разница и пояснения по виду объекта. */
@@ -159,12 +156,6 @@ export function OperationBody({ op }: { op: PreviewOperation }) {
         </ul>
       ) : null}
 
-      {op.kind === "harness_card" && isEdit ? (
-        <p className="text-xs font-medium text-ddc-danger-text" role="note">
-          {HARNESS_ROOT_NOTE}
-        </p>
-      ) : null}
-
       {op.access.length > 0 ? (
         <div>
           <p className="text-xs font-medium text-ddc-label">Получит доступ</p>
@@ -181,13 +172,6 @@ export function OperationBody({ op }: { op: PreviewOperation }) {
       ) : (
         <YamlBlock yaml={op.afterYaml} />
       )}
-
-      {op.kind === "harness_card" && isEdit && op.beforeYaml ? (
-        <div>
-          <p className="mb-1 text-xs font-medium text-ddc-label">Команда, аргументы и пакеты сейчас</p>
-          <YamlBlock yaml={op.beforeYaml} expanded />
-        </div>
-      ) : null}
 
       {op.kind === "deployment" && !isEdit ? (
         <div className="flex flex-col gap-1">

@@ -20,7 +20,6 @@ export type DependencyTargetKind =
   | "memory"
   | "session_resource"
   | "model_card"
-  | "harness_card"
   | "vault";
 
 export interface DependencyEntry {

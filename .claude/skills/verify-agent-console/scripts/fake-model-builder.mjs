@@ -85,7 +85,7 @@ const brief = (text) => String(text ?? "").replace(/\s+/g, " ").slice(0, 300);
 
 // ---------------------------------------------------------------- сценарии ---
 
-/** 6.2: чтение, пачка, деплоймент на паузе, правка, сессия, первое сообщение, черновик harness. */
+/** 6.2: чтение, пачка, деплоймент на паузе, правка, сессия, первое сообщение. */
 function mainScript(n, L, R) {
   const step = R.length;
   const joined = allText(R);
@@ -143,13 +143,8 @@ function mainScript(n, L, R) {
       });
     case 6:
       return failIfError(5, "create_session") ?? call("send_message", { session_id: sessionId, text: `VERIFY_BUILDER_CHILD nonce=${n}` });
-    case 7:
-      return failIfError(6, "send_message") ?? call("preview_change", {
-        kind: "harness_card",
-        body: { name: `vb-harness-${n}`, protocols: ["anthropic-messages"], install: { npm: [], pip: ["vb-pkg==1.0"] } },
-      });
     default:
-      return failIfError(7, "preview_change") ?? say(`Черновик карточки harness готов, откройте форму. VERIFY_BUILDER_DRAFT_${n}`);
+      return failIfError(6, "send_message") ?? say(`Готово: окружение, навык, агент, деплоймент на паузе и сессия с первым сообщением. VERIFY_BUILDER_MAIN_DONE_${n}`);
   }
 }
 
@@ -388,7 +383,6 @@ export function decideBuilder(body, { canaryFile, oracleFile } = {}) {
   let d;
   switch (sub) {
     case "MAIN": d = mainScript(n, L, R); break;
-    case "HC": d = oneCall(n, R, () => call("update_harness_card", { harness_card_id: L["Цель"], changes: { allowed_env: ["VB_MODE"] } }), "VERIFY_BUILDER_DONE"); break;
     case "DENY": d = denyScript(n, L, R); break;
     case "BYPASS": d = bypassScript(n, L, R); break;
     case "OFF": d = offScript(n, L, R); break;

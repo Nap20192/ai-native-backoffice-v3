@@ -163,7 +163,6 @@ export interface AssistantSwitch {
 export type BodyCheckName =
   | "deployment_paused"
   | "model_card_safe"
-  | "harness_card_safe"
   | "session_create"
   | "session_event"
   | "session_update"

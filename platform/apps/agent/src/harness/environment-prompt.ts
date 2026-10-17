@@ -56,8 +56,6 @@ export interface EnvironmentPromptInput {
   snapshot?: EnvironmentPromptSnapshot;
   /** Search policy for this session; missing means not available. */
   webSearch?: EnvironmentWebSearch;
-  /** Set for an ACP client such as Claude Code, which has its own tool permissions. */
-  acpClient?: string;
 }
 
 /** Upper bound of the whole block, tags included. */
@@ -197,11 +195,8 @@ function vmLines(
 
   if (registriesOpen && installable.length > 0) {
     const commands = installable.map(installCommand).join(", ");
-    const lead = input.acpClient
-      ? "If your tool permissions allow shell commands, install a missing library or tool and continue"
-      : "If a library or tool is missing, install it and continue";
     lines.push(
-      `${lead}: ${commands}. A missing package is not a reason to stop, and the three-failures rule does not apply to installing it. Tell the user which packages you installed, so they can add them to the environment.`,
+      `If a library or tool is missing, install it and continue: ${commands}. A missing package is not a reason to stop, and the three-failures rule does not apply to installing it. Tell the user which packages you installed, so they can add them to the environment.`,
     );
   } else {
     lines.push(

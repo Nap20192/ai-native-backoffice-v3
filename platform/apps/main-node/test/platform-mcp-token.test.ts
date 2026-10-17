@@ -227,7 +227,10 @@ describe("routes outside the allowlist", () => {
     ["POST", "/v1/oma/skills/install"],
     ["POST", "/v1/oma/model_cards/mc_1/archive"],
     ["DELETE", "/v1/oma/model_cards/mc_1"],
+    // Harness cards are gone (D41): no token opens their routes.
     ["DELETE", "/v1/oma/harness_cards/hc_1"],
+    ["POST", "/v1/oma/harness_cards/hc_1"],
+    ["GET", "/v1/oma/harnesses"],
   ];
 
   it.each(denied)("%s %s gives 403", async (method, path) => {
@@ -249,7 +252,6 @@ describe("body rules of the allowlist (2.4)", () => {
     ["deployment with paused false", "/v1/deployments", { name: "d", _oma: { paused: false } }],
     ["model card with base_url", "/v1/oma/model_cards/mc_1", { base_url: "https://evil.test" }],
     ["model card with api_key", "/v1/oma/model_cards/mc_1", { api_key: "x" }],
-    ["harness card with command", "/v1/oma/harness_cards/hc_1", { name: "n", command: "sh" }],
     ["session with initial_events", "/v1/sessions", { ...sessionBody, initial_events: [] }],
     ["session with budget", "/v1/sessions", { ...sessionBody, budget: { amount: 1 } }],
     ["session with vault_ids", "/v1/sessions", { ...sessionBody, vault_ids: ["vlt_1"] }],
@@ -277,7 +279,6 @@ describe("body rules of the allowlist (2.4)", () => {
     const ok: [string, unknown, Record<string, string>?][] = [
       ["/v1/deployments", { name: "d", _oma: { paused: true } }],
       ["/v1/oma/model_cards/mc_1", { model: "m" }],
-      ["/v1/oma/harness_cards/hc_1", { name: "n", allowed_env: ["A"] }],
       ["/v1/sessions", { ...sessionBody, resources: [{ type: "file", file_id: "file_1" }], metadata: { oma_created_via: "assistant" } }],
       ["/v1/sessions/sesn_2/events", message, { "if-match": '"3"' }],
     ];

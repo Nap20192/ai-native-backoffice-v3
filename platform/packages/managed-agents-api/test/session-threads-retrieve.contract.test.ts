@@ -190,10 +190,7 @@ describe("Managed Agents API — GET /v1/sessions/:session_id/threads/:thread_id
               name: sessionView.agent.name,
               openma: {
                 appendablePrompts: ["prompt_review"],
-                runtimeBinding: {
-                  runtimeId: "runtime_pi",
-                  acpAgentId: "pi",
-                },
+                harness: "pi",
               },
               skills: [],
               system: sessionView.agent.system,
@@ -223,10 +220,7 @@ describe("Managed Agents API — GET /v1/sessions/:session_id/threads/:thread_id
       agent: {
         _oma: {
           appendable_prompts: ["prompt_review"],
-          runtime_binding: {
-            runtime_id: "runtime_pi",
-            acp_agent_id: "pi",
-          },
+          harness: "pi",
         },
       },
     });

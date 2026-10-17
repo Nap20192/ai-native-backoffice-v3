@@ -5,8 +5,6 @@ import { OmaResources } from "./oma.js";
 import type {} from "./agents.js";
 
 export type {
-  OpenMaAgentAcp,
-  OpenMaAgentAcpParams,
   OpenMaAgentExtension,
   OpenMaAgentExtensionParams,
   OpenMaAgentModelParams,
@@ -17,7 +15,6 @@ export type {
   OpenMaMcpServerParams,
   OpenMaStdioMcpServer,
   OpenMaStdioMcpServerParams,
-  OpenMaAgentRuntimeBindingParams,
   OpenMaJsonValue,
   OpenMaProviderOptions,
 } from "./agents.js";

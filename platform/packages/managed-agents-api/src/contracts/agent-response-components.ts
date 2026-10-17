@@ -159,30 +159,6 @@ export const agentModelResponseSchema = z
   })
   .strict() satisfies z.ZodType<BetaManagedAgentsModelConfig>;
 
-const openMaAgentAcpResponseSchema = z
-  .object({
-    agent: z
-      .object({
-        id: z.string().min(1).optional(),
-        command: z.string().min(1),
-        args: z.array(z.string()).optional(),
-        env: z.record(z.string(), z.string()).optional(),
-        cwd: z.string().min(1).optional(),
-      })
-      .strict(),
-    restart: z
-      .object({
-        mode: z.enum(["never", "on-crash", "always"]),
-        max_restarts: z.number().int().min(0).optional(),
-        window_ms: z.number().int().positive().optional(),
-      })
-      .strict()
-      .optional(),
-    idle_timeout_ms: z.number().int().positive().optional(),
-    per_turn_timeout_ms: z.number().int().positive().optional(),
-  })
-  .strict();
-
 const openMaContextManagementResponseSchema = z
   .object({
     edits: z.array(
@@ -227,15 +203,6 @@ export const openMaAgentExtensionResponseSchema = z
     context_management: openMaContextManagementResponseSchema.optional(),
     model_settings: openMaModelSettingsResponseSchema.optional(),
     harness: z.string().min(1).optional(),
-    acp: openMaAgentAcpResponseSchema.optional(),
-    runtime_binding: z
-      .object({
-        runtime_id: z.string().min(1),
-        acp_agent_id: z.string().min(1),
-        local_skill_blocklist: z.array(z.string().min(1)).optional(),
-      })
-      .strict()
-      .optional(),
     enable_general_subagent: z.boolean().optional(),
   })
   .strict();

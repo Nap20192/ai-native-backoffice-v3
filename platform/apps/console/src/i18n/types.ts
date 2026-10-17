@@ -67,7 +67,6 @@ export interface Messages {
     memoryStores: string;
     modelCards: string;
     apiKeys: string;
-    localRuntimes: string;
     integrations: string;
     members: string;
   };
@@ -278,13 +277,5 @@ export interface Messages {
     noMemoryStoresYet: string;
     mountPathHint: string;
     settingsArchiveHint: string;
-  };
-
-  // Runtimes
-  runtimes: {
-    connectRuntime: string;
-    searchRuntimes: string;
-    noMatchingRuntimes: string;
-    noRuntimesYet: string;
   };
 }

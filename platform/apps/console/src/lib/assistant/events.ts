@@ -47,7 +47,7 @@ export type ThreadItem =
   | {
       kind: "draft";
       id: string;
-      draftKind: "model_card" | "harness_card";
+      draftKind: "model_card";
       body: Record<string, unknown>;
     };
 
@@ -125,9 +125,6 @@ const KIND_SINGULAR: Record<string, string> = {
   eval_runs: "прогон оценки",
   models: "карточка модели",
   model_card: "карточка модели",
-  harnesses: "harness",
-  harness_card: "карточка harness",
-  harness_cards: "карточка harness",
   outcome: "результат",
 };
 
@@ -147,8 +144,6 @@ const KIND_PLURAL: Record<string, string> = {
   sessions: "сессии",
   eval_runs: "прогоны оценок",
   models: "карточки моделей",
-  harnesses: "harness",
-  harness_cards: "карточки harness",
 };
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -234,7 +229,6 @@ const TOOL_KIND: Record<string, { kind: string; action: "create" | "update"; idF
   update_memory_store: { kind: "memory_store", action: "update" },
   update_deployment: { kind: "deployment", action: "update" },
   update_model_card: { kind: "model_card", action: "update" },
-  update_harness_card: { kind: "harness_card", action: "update" },
   send_message: { kind: "message", action: "create" },
   update_session: { kind: "session", action: "update", idField: "session_id" },
   add_session_resource: { kind: "session", action: "update", idField: "session_id" },
@@ -344,7 +338,6 @@ const APPLIED_NOUN: Record<string, { noun: string; gender: "m" | "f" | "n"; href
   deployment: { noun: "деплоймент на паузе", gender: "m" },
   session: { noun: "сессия", gender: "f", href: (id) => (id ? `/sessions/${encodeURIComponent(id)}` : null) },
   model_card: { noun: "карточка модели", gender: "f", href: () => "/model-cards" },
-  harness_card: { noun: "карточка harness", gender: "f", href: () => "/harnesses" },
 };
 
 const PAST: Record<"create" | "update", Record<"m" | "f" | "n", string>> = {
@@ -454,7 +447,7 @@ export function buildThread(events: readonly Event[]): ThreadItem[] {
 
       if (tool === "preview_change") {
         const draftKind = s(input.kind);
-        if (res && !failed && (draftKind === "model_card" || draftKind === "harness_card")) {
+        if (res && !failed && draftKind === "model_card") {
           items.push({ kind: "draft", id, draftKind, body: parseToolInput(input.body) });
           continue;
         }

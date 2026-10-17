@@ -222,10 +222,10 @@ describe("ProposalCard: правка", () => {
 describe("ProposalCard: блокировки в preview", () => {
   it("ошибка схемы: причина, «Применить» выключена, «Отклонить» работает", async () => {
     mockPlatformMcp([
-      { tool: "update_harness_card", schema_error: "Поле command не принимается", operations: [], preview_digest: null },
+      { tool: "update_model_card", schema_error: "Поле provider не принимается", operations: [], preview_digest: null },
     ]);
-    renderInRouter(<ProposalCard item={proposalItem({ tool: "update_harness_card" })} sessionId={SID} />);
-    expect(await screen.findByText("Поле command не принимается")).toBeInTheDocument();
+    renderInRouter(<ProposalCard item={proposalItem({ tool: "update_model_card" })} sessionId={SID} />);
+    expect(await screen.findByText("Поле provider не принимается")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Применить" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Отклонить" })).toBeEnabled();
   });
@@ -293,36 +293,6 @@ describe("ProposalCard: особые виды", () => {
     expect(screen.getByText("Деплоймент создаётся на паузе. Запустить его можно в консоли")).toBeInTheDocument();
     const runs = screen.getByRole("list", { name: "Ближайшие запуски" });
     expect(within(runs).getAllByRole("listitem")).toHaveLength(3);
-  });
-
-  it("карточка harness: строка про root и текущая команда без сворачивания", async () => {
-    const before = ["name: H", "command: my-agent", "args:", ...Array.from({ length: 30 }, (_, i) => `  - a${i}`), "install:", "  npm: [x]"].join("\n");
-    mockPlatformMcp([
-      {
-        tool: "update_harness_card",
-        preview_digest: "h1",
-        operations: [
-          {
-            index: 0,
-            tool: "update_harness_card",
-            kind: "harness_card",
-            target_id: "hc_1",
-            name: "H",
-            class: "edit",
-            before_yaml: before,
-            after_yaml: before.replace("name: H", "name: H2"),
-          },
-        ],
-      },
-    ]);
-    renderInRouter(<ProposalCard item={proposalItem({ tool: "update_harness_card" })} sessionId={SID} />);
-    expect(
-      await screen.findByText("Команда этой карточки работает в VM от root у каждого агента с этим harness. Ассистент её не меняет"),
-    ).toBeInTheDocument();
-    const current = screen.getByText("Команда, аргументы и пакеты сейчас").parentElement as HTMLElement;
-    expect(within(current).getByText(/command: my-agent/)).toBeInTheDocument();
-    expect(within(current).getByText(/a29/)).toBeInTheDocument();
-    expect(within(current).queryByRole("button", { name: "Показать целиком" })).toBeNull();
   });
 });
 

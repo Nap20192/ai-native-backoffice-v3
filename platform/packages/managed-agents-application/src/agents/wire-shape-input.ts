@@ -6,7 +6,6 @@ import type {
   AgentSkillInput,
   AgentToolInput,
 } from "../domain/agent-definition";
-import type { AgentAcpConfig, AgentRuntimeBinding } from "../domain/agent";
 
 /** OpenAI / Anthropic wire field names (snake_case) — not application port surface types. */
 export interface AgentContextManagementEditWireInput {
@@ -43,8 +42,6 @@ export interface AgentOpenMaInput {
   contextManagement?: AgentContextManagementWireInput | null;
   openaiModelSettings?: AgentOpenAiModelSettingsWireInput | null;
   harness?: string | null;
-  acp?: AgentAcpConfig | null;
-  runtimeBinding?: AgentRuntimeBinding | null;
   enableGeneralSubagent?: boolean | null;
   /** Internal protocol-adapter state, never accepted from the public API. */
   compatibility?: JsonObject | null;

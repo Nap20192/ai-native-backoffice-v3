@@ -59,7 +59,6 @@ describe("assistant danger class", () => {
     const memory = fake.addMemory(store.id, "/a.md", "текст");
     const skill = fake.addSkill("Навык", { "SKILL.md": "x" });
     fake.addModelCard({ id: "mc_1" });
-    fake.addHarnessCard({ id: "hc_1" });
 
     const cases: [string, Record<string, unknown>, string][] = [
       ["archive_object", { kind: "agent", id: agent.id }, "danger"],
@@ -82,8 +81,6 @@ describe("assistant danger class", () => {
       ["delete_object", { kind: "memory", id: memory.id, parent_id: store.id }, "danger"],
       ["archive_object", { kind: "model_card", id: "mc_1" }, "danger"],
       ["delete_object", { kind: "model_card", id: "mc_1" }, "danger"],
-      ["archive_object", { kind: "harness_card", id: "hc_1" }, "danger"],
-      ["delete_object", { kind: "harness_card", id: "hc_1" }, "danger"],
       ["update_session", { session_id: sessionId, title: "Новое" }, "update"],
       ["update_session", { session_id: archivedSession, title: "Новое" }, "out_of_v1"],
       ["add_session_resource", { session_id: sessionId, file_id: file.id }, "create"],

@@ -24,14 +24,12 @@ import { Skeleton } from "../components/Skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ModelCard } from "@open-managed-agents/api-types";
-import { useHarnesses, useModelOptions, type HarnessEntry, type ModelOption } from "../lib/catalog-api";
-import { useArchivedHarnessCard } from "../lib/harness-cards-api";
+import { useModelOptions, type ModelOption } from "../lib/catalog-api";
 import type { AgentRecord as Agent } from "../types/agent";
-import { findHarness, findModel, harnessIdOf, isAcpHarness } from "./agents/agent-harness";
+import { findModel } from "./agents/agent-model";
 import { AgentFormDialog } from "./agents/AgentFormDialog";
 import { formatDateTime, speedLabel, toolLabel } from "./agents/format";
 import { restoreVersionBody } from "./agents/restore-version";
-import { HARNESS_LABELS, harnessLabel } from "./agents/harness-text";
 import { effortLabel, effortOf, sourceLabel } from "./agents/model-format";
 import { useCrumbName } from "../lib/crumb-names";
 import { useI18n } from "../i18n";
@@ -109,17 +107,10 @@ export function AgentDetail() {
   const agent = managedAgent;
   const versions = versionsRes?.data ?? [];
 
-  // Каталог нужен подписям модели и harness. Пока он грузится или не пришёл,
-  // строки показывают значения из самого агента.
+  // Каталог нужен подписи модели. Пока он грузится или не пришёл, строка
+  // показывает значение из самого агента.
   const modelsQuery = useModelOptions();
-  const harnessesQuery = useHarnesses();
-  const harnessId = harnessIdOf(agent);
-  const harnessEntry = findHarness(harnessesQuery.data?.data, harnessId);
   const modelOption = findModel(modelsQuery.data?.data, modelIdOf(agent?.model));
-  // ACP-агент с id вне каталога: карточку могли удалить, это узнаём отдельным запросом.
-  const missingHarness =
-    harnessesQuery.isSuccess && !harnessEntry && harnessId !== "pi" && isAcpHarness(agent);
-  const archivedCard = useArchivedHarnessCard(harnessId, missingHarness);
   useCrumbName(id, agent?.name);
   const error = agentError instanceof Error ? agentError.message : agentError ? String(agentError) : "";
 
@@ -242,14 +233,6 @@ export function AgentDetail() {
             <PropertyRow label="ID"><span className="font-mono">{agent.id}</span></PropertyRow>
             <PropertyRow label="Модель">
               <ModelSummary model={agent.model} option={modelOption} />
-            </PropertyRow>
-            <PropertyRow label="Harness">
-              <HarnessSummary
-                id={harnessId}
-                entry={harnessEntry}
-                catalogLoaded={harnessesQuery.isSuccess}
-                deleted={Boolean(archivedCard.data)}
-              />
             </PropertyRow>
             <PropertyRow label="Версия"><span className="tabular-nums">v{agent.version}</span></PropertyRow>
             <PropertyRow label="Инструменты">{toolsLabel}</PropertyRow>
@@ -475,42 +458,6 @@ function ModelSummary({
           {effort && <Badge variant="neutral">Усилие: {effortLabel(effort, { lower: true })}</Badge>}
           {fast && <Badge variant="neutral">Быстрая</Badge>}
           {option && <Badge variant="neutral">{sourceLabel(option.source)}</Badge>}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** Harness агента: подпись, ID и чипы состояния записи. */
-function HarnessSummary({
-  id,
-  entry,
-  catalogLoaded,
-  deleted,
-}: {
-  id: string;
-  entry: HarnessEntry | undefined;
-  catalogLoaded: boolean;
-  deleted: boolean;
-}) {
-  const label = entry ? harnessLabel(entry) : (HARNESS_LABELS[id] ?? id);
-  // Устаревший ai-sdk уже назван в подписи, второй чип только путал бы.
-  const notFound = catalogLoaded && !entry && id !== "ai-sdk";
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-        <span className="font-medium">{label}</span>
-        {label !== id && <span className="font-mono text-xs">{id}</span>}
-      </span>
-      {(entry?.status === "unverified" || entry?.status === "unavailable" || notFound) && (
-        <span className="flex flex-wrap gap-1.5">
-          {entry?.status === "unverified" && <Badge variant="neutral">Не проверено</Badge>}
-          {entry?.status === "unavailable" && (
-            <Badge variant="warning" title={entry.reason ?? undefined}>
-              Недоступно
-            </Badge>
-          )}
-          {notFound && <Badge variant="warning">{deleted ? "Удалён" : "Не найден"}</Badge>}
         </span>
       )}
     </div>

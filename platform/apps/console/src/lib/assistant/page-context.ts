@@ -49,7 +49,6 @@ const QUERY_KEYS = new Set([
   "agent_id",
   "environment",
   "model",
-  "harness",
   "from",
   "to",
   "sort",
@@ -76,9 +75,7 @@ export const LIST_TITLES: Record<string, string> = {
   skills: "Навыки",
   memory: "Хранилища памяти",
   "model-cards": "Карточки моделей",
-  harnesses: "Harness",
   evals: "Оценки",
-  runtimes: "Локальные среды",
   members: "Участники",
   "api-keys": "API-ключи",
 };

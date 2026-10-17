@@ -1,7 +1,6 @@
-// main-node resolves a fresh harness for every turn. A stateful harness
-// (acp-sandbox keeps its ACP agent process alive) must be disposed after the
-// turn, or each turn leaves one more agent process running in the sandbox.
-// "shutdown" keeps the native ACP session so the next turn resumes it.
+// main-node resolves a fresh harness for every turn. A harness with
+// `dispose` is disposed with "shutdown" after the turn, so the next turn
+// starts clean.
 
 import { describe, expect, it } from "vitest";
 

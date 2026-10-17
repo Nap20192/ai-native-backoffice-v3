@@ -243,16 +243,16 @@ describe("memory store", () => {
   });
 });
 
-describe("model and harness", () => {
+describe("model", () => {
   beforeEach(async () => {
     await seed.agent("agent_live", {
       model: { id: "card-model" },
-      openma: { harness: "acp-sandbox", acp: { agent: { id: "my-harness", command: "run" } } },
+      openma: { harness: "pi" },
     });
     await seed.agent("agent_old", {
       model: { id: "card-model" },
       archivedAt: "2026-10-02T00:00:00.000Z",
-      openma: { harness: "acp-sandbox", acp: { agent: { id: "my-harness", command: "run" } } },
+      openma: { harness: "pi" },
     });
   });
 
@@ -262,27 +262,6 @@ describe("model and harness", () => {
       expect(ids(report.blocking)).toEqual(["agent:agent_live"]);
       expect(ids(report.affected)).toEqual(["agent:agent_old"]);
     }
-  });
-
-  it("harness archive looks at live agents, delete at every agent", async () => {
-    expect(ids((await check("harness", "my-harness", "archive")).blocking)).toEqual(["agent:agent_live"]);
-    expect(ids((await check("harness", "my-harness", "delete")).blocking)).toEqual([
-      "agent:agent_live",
-      "agent:agent_old",
-    ]);
-  });
-
-  it("harness delete sees an old version of an agent", async () => {
-    const current = await stores.agents.findCurrent({ workspaceId: "workspace_crud", agentId: "agent_live" });
-    await stores.agents.replaceCurrent({
-      workspaceId: "workspace_crud",
-      agentId: "agent_live",
-      expectedVersion: 1,
-      next: { ...current!, openma: {}, version: 2 },
-    });
-    await stores.agents.deleteCurrent({ workspaceId: "workspace_crud", agentId: "agent_old" });
-    expect(ids((await check("harness", "my-harness", "archive")).blocking)).toEqual([]);
-    expect(ids((await check("harness", "my-harness", "delete")).blocking)).toEqual(["agent:agent_live"]);
   });
 });
 

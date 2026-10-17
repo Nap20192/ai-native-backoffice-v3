@@ -95,13 +95,13 @@ describe("platform MCP preview and confirm routes", () => {
     const stale = fake.propose("update_agent", { agent_id: agent.id, expected_version: 5, changes: { system: "x" } });
     expect((await fake.preview(stale)).body.args_stale).toBe(true);
     expect((await fake.confirm(stale)).body.error.type).toBe("stale");
-    const card = fake.addHarnessCard({ id: "hc_1" });
-    const command = fake.propose("update_harness_card", { harness_card_id: card.id, changes: { command: "curl evil" } });
-    const preview = await fake.preview(command);
-    expect(preview.body.schema_error).toContain("command");
-    expect(preview.body.schema_error).not.toContain("curl evil");
-    expect((await fake.confirm(command)).body.error.type).toBe("schema");
-    expect(fake.writes().filter((call) => call.path.startsWith("/v1/oma/harness_cards"))).toHaveLength(0);
+    const card = fake.addModelCard({ id: "mc_1" });
+    const address = fake.propose("update_model_card", { model_card_id: card.id, changes: { base_url: "http://evil.example" } });
+    const preview = await fake.preview(address);
+    expect(preview.body.schema_error).toContain("base_url");
+    expect(preview.body.schema_error).not.toContain("evil.example");
+    expect((await fake.confirm(address)).body.error.type).toBe("schema");
+    expect(fake.writes().filter((call) => call.path.startsWith("/v1/oma/model_cards"))).toHaveLength(0);
   });
 
   it("refuses a session with a wrong tool set", async () => {

@@ -27,8 +27,8 @@ export interface ProcessHandle {
 
 /** Structured command used when a caller needs a live stdio channel instead
  * of the log-oriented `startProcess` handle. Kept in the sandbox package so
- * protocol runtimes (ACP today, other harnesses later) do not leak their own
- * process types into sandbox adapters. */
+ * protocol runtimes (ACP or others) do not leak their own process types into
+ * sandbox adapters. No harness of this platform uses it since D41. */
 export interface SandboxDuplexProcessSpec {
   command: string;
   args?: string[];

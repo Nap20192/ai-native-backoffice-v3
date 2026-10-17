@@ -70,17 +70,13 @@ import { buildNodeSkillsRoutes } from "../lib/node-skills-routes.js";
 import { buildSkillSourcesRoutes, createSourceFetcher } from "../lib/skill-sources.js";
 import { SqlKvStore } from "@open-managed-agents/kv-store/adapters/sql";
 
-import { buildNodeHttpInferenceProxyRoutes } from "../lib/http-inference-proxy.js";
-import { agentConfigGuard } from "../lib/agent-config-guard.js";
-import { buildHarnessCatalogRoutes, buildModelOptionsRoutes } from "../lib/catalog-routes.js";
-import { agentForGuard, buildHarnessCardRoutesFor, createModelsHarnessWiring } from "../lib/models-harness-wiring.js";
+import { agentConfigGuard, storedAgentForGuard } from "../lib/agent-config-guard.js";
+import { buildModelOptionsRoutes, createWorkspaceCatalog } from "../lib/catalog-routes.js";
 import { dependenciesPort } from "@open-managed-agents/app/modules/dependencies";
 import {
   buildCrudDependencyRoutes,
-  harnessCardDependencyCheck,
   modelCardDependencyCheck,
 } from "../lib/crud-dependencies.js";
-import { resolveSandboxInferenceBearer, sandboxInferenceCipher } from "../lib/sandbox-inference-token.js";
 import { buildNodeHttpMcpProxyRoutes } from "../lib/http-mcp-proxy.js";
 import { createNodeAccessLossRuntime } from "../lib/mcp-access-loss.js";
 import { buildTraceRoutes } from "../lib/trace/routes.js";
@@ -126,7 +122,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     realtimeDescription,
     sessionRegistry,
     resolveNodeMcpProxyTarget,
-    resolveNodeInferenceUpstream,
     managedRuntimeRunner,
     managedRuntimeReaders,
     managedSessionRuntimeStream,
@@ -255,12 +250,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       // request; any other token gives null here (builder-agent.md, 3.3).
       const platformMcpActor = await platformMcp.tokens.resolve({ token, method, path });
       if (platformMcpActor !== null) return platformMcpActor;
-      // A sandbox inference token (oma_sbx_) opens only its session's
-      // inference proxy; any other token gives null here without decryption.
-      if (secrets !== null) {
-        const sandboxInference = await resolveSandboxInferenceBearer({ cipher: sandboxInferenceCipher(secrets), token });
-        if (sandboxInference !== null) return sandboxInference;
-      }
       if (managedEnvironmentWorkSessionTokenCrypto === null) return null;
       const scoped = await authenticateEnvironmentWorkSessionBearer({
         token,
@@ -359,32 +348,32 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     return c.json({ error: result.type }, 409);
   });
 
-  // Models and harness (docs/plans/models-harness.md): catalog routes,
-  // harness cards and the guard that checks an agent's model and harness
-  // before the shared route stores it.
-  const modelsHarness = createModelsHarnessWiring({ config, sql, dialect, modelCards: modelCardsService });
-  v1.route("/oma/model_options", buildModelOptionsRoutes(modelsHarness.catalog));
-  v1.route("/oma/harnesses", buildHarnessCatalogRoutes(modelsHarness.catalog));
+  // Models (docs/plans/models-harness.md): the model catalog route and the
+  // guard that checks an agent's model and harness before the shared route
+  // stores it. Only the built-in Pi loop runs agents (D41).
+  const catalog = createWorkspaceCatalog({
+    listCards: (workspaceId) => modelCardsService.list({ tenantId: workspaceId }),
+    serverKey: {
+      available: Boolean(config.model.apiKey?.trim()),
+      baseUrl: config.model.baseUrl ?? null,
+    },
+  });
+  v1.route("/oma/model_options", buildModelOptionsRoutes(catalog));
   // Archive and delete check dependencies (docs/plans/crud.md, 1.2 and 1.3).
   const crudDependenciesFor = (workspaceId: string) =>
     managedPlatform.app({ workspaceId }).port(dependenciesPort);
   v1.route("/oma/dependencies", buildCrudDependencyRoutes({
     dependenciesFor: crudDependenciesFor,
     modelCards: modelCardsService,
-    harnessCards: modelsHarness.cardStore,
   }));
-  v1.route("/oma/harness_cards", buildHarnessCardRoutesFor(
-    modelsHarness,
-    harnessCardDependencyCheck(crudDependenciesFor),
-  ));
   v1.use("/agents/*", agentConfigGuard({
-    catalog: modelsHarness.catalog.catalog,
+    models: async (workspaceId) => (await catalog.modelOptions(workspaceId)).data,
     loadAgent: async (workspaceId, agentId) => {
       const found = await managedPlatform
         .app({ workspaceId })
         .port(managedAgentsPortTokens.agents)
         .retrieveAgent({ agentId });
-      return found.type === "found" ? agentForGuard(found.agent) : null;
+      return found.type === "found" ? storedAgentForGuard(found.agent) : null;
     },
   }));
 
@@ -456,10 +445,9 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     router: sessionRouter,
     outputs: nodeOutputsAdapter(outputsRoot),
     lifecycle: nodeSessionLifecycleHooks,
-    // Node has no per-tenant cloud environments yet — every agent is treated
-    // as a local runtime. The package's loadEnvironment hook returns a
-    // synthetic snapshot so session create doesn't 404 on missing env_id.
-    localRuntimeEnvId: "env-local-runtime",
+    // Node has no per-tenant cloud environments on this legacy route. The
+    // loadEnvironment hook returns a synthetic snapshot for the environment_id
+    // the request names, so session create doesn't 404.
     loadEnvironment: async ({ environmentId }) => {
       return {
         id: environmentId,
@@ -471,9 +459,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   v1.route("/oma/mcp-proxy", buildNodeHttpMcpProxyRoutes({
     resolveTarget: resolveNodeMcpProxyTarget,
     accessLoss: await createNodeAccessLossRuntime(sql),
-  }));
-  v1.route("/oma/inference-proxy", buildNodeHttpInferenceProxyRoutes({
-    resolveUpstream: resolveNodeInferenceUpstream,
   }));
   v1.route("/vaults", managedVaultsRoutes);
   v1.route("/vaults", managedCredentialsRoutes);
@@ -582,7 +567,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       };
     },
   }));
-  v1.get("/oma/runtimes", (c) => c.json({ data: [] }));
   v1.get("/oma/stats", async (c) => {
     const tenantId = c.get("tenant_id");
     const managedApp = managedPlatform.app({ workspaceId: tenantId });

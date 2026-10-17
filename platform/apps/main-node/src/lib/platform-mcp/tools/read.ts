@@ -67,8 +67,6 @@ export const LIST_KINDS: Readonly<Record<string, ListKind>> = {
   },
   eval_runs: { shape: "eval_run", path: () => "/v1/oma/evals/runs" },
   models: { shape: "model_card", path: () => "/v1/oma/model_cards" },
-  harnesses: { shape: "harness", path: () => "/v1/oma/harnesses" },
-  harness_cards: { shape: "harness_card", path: () => "/v1/oma/harness_cards" },
 };
 
 export interface RoutePage {
@@ -161,7 +159,7 @@ export const listTool: ToolDef<z.infer<typeof listArgs>> = {
   routes: [
     ROUTES.agents, ROUTES.agentVersions, ROUTES.environments, ROUTES.skills, ROUTES.skillVersions, ROUTES.files,
     ROUTES.memoryStores, ROUTES.memories, ROUTES.vaults, ROUTES.credentials, ROUTES.deployments, ROUTES.deploymentRuns,
-    ROUTES.sessions, ROUTES.sessionResources, ROUTES.evalRuns, ROUTES.modelCards, ROUTES.modelOptions, ROUTES.harnesses, ROUTES.harnessCards,
+    ROUTES.sessions, ROUTES.sessionResources, ROUTES.evalRuns, ROUTES.modelCards, ROUTES.modelOptions,
   ],
   precondition: null,
   async run(ctx, args) {
@@ -220,7 +218,6 @@ export const GET_KINDS: Readonly<Record<string, { shape: ShapeKind; path(id: str
   session: { shape: "session", path: (id) => `/v1/sessions/${enc(id)}` },
   eval_run: { shape: "eval_run", path: (id) => `/v1/oma/evals/runs/${enc(id)}` },
   model_card: { shape: "model_card", revisionField: "updated_at", path: (id) => `/v1/oma/model_cards/${enc(id)}` },
-  harness_card: { shape: "harness_card", revisionField: "updated_at", path: (id) => `/v1/oma/harness_cards/${enc(id)}` },
 };
 
 const getArgs = z
@@ -240,7 +237,7 @@ export const getTool: ToolDef<z.infer<typeof getArgs>> = {
   routes: [
     ROUTES.agent, ROUTES.environment, ROUTES.skill, ROUTES.skillVersion, ROUTES.file, ROUTES.memoryStore, ROUTES.memory,
     ROUTES.vault, ROUTES.credential, ROUTES.deployment, ROUTES.deploymentRun, ROUTES.session, ROUTES.evalRun,
-    ROUTES.modelCard, ROUTES.harnessCard,
+    ROUTES.modelCard,
   ],
   precondition: null,
   async run(ctx, args) {

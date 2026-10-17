@@ -7,6 +7,7 @@ export type TraceSpanKind =
   | "sandbox"
   | "sandbox_phase"
   | "harness_start"
+  /** Stored spans of old ACP turns only: the projector no longer makes them (D41). */
   | "acp_prompt"
   | "agent_step"
   | "model_call"
@@ -90,6 +91,7 @@ export type TraceSpanWrite = Omit<TraceSpan, "version" | "deleted" | "updated_at
 export type TraceTurnState = "open" | "settling" | "complete" | "repaired" | "not_built";
 
 export interface TraceCoverage {
+  /** `turn_only` stays for stored turns of old ACP harnesses. */
   model_calls: "measured" | "by_events" | "turn_only" | "absent";
   tools: "measured" | "by_events" | "absent";
   sandbox: "phases" | "attempts";

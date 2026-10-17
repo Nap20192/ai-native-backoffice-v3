@@ -120,6 +120,7 @@ describe("CRUD wiring on main-node", () => {
     const cp = await boot();
     expect((await call(cp, "GET", "/v1/oma/dependencies/agent/agent_x?operation=pause")).status).toBe(400);
     expect((await call(cp, "GET", "/v1/oma/dependencies/model_card/mdl_x?operation=delete")).status).toBe(404);
-    expect((await call(cp, "GET", "/v1/oma/dependencies/harness_card/hcard_x?operation=delete")).status).toBe(404);
+    // Harness cards are gone (D41): harness_card is an unknown kind now.
+    expect((await call(cp, "GET", "/v1/oma/dependencies/harness_card/hcard_x?operation=delete")).status).toBe(400);
   });
 });

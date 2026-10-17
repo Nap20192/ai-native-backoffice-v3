@@ -7,7 +7,6 @@ import { Spinner } from "@/components/ui/spinner";
 import type { ThreadItem } from "../../lib/assistant/events";
 import { Markdown } from "../Markdown";
 import { BatchProposalCard } from "./BatchProposalCard";
-import { HarnessCardDraftCard } from "./HarnessCardDraftCard";
 import { MessageProposalCard } from "./MessageProposalCard";
 import { ModelCardDraftCard } from "./ModelCardDraftCard";
 import { ProposalCard } from "./ProposalCard";
@@ -98,11 +97,7 @@ export function AssistantThread({
           case "proposal":
             return <Proposal key={item.id} item={item} sessionId={sessionId} />;
           case "draft":
-            return item.draftKind === "model_card" ? (
-              <ModelCardDraftCard key={item.id} body={item.body} />
-            ) : (
-              <HarnessCardDraftCard key={item.id} body={item.body} />
-            );
+            return <ModelCardDraftCard key={item.id} body={item.body} />;
           case "error":
             return (
               <div key={item.id} className="callout-danger" role="alert">

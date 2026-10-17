@@ -1,5 +1,7 @@
 # Страница сессии как в консоли Claude
 
+> **2026-10-17.** Остался только harness Pi, решение D41 в [decisions-2026-10-17.md](../decisions-2026-10-17.md). Файла `default-loop.ts` больше нет, события хода пишет только `pi-loop.ts`.
+
 Владелец прислал экраны страницы сессии из консоли Claude и просит сделать так же. Образец описан в [03-sessions.md](../cma-console/03-sessions.md), разделы 4..14, скриншоты лежат в `.audit/cma-screens/03-sessions/`. Раскладку, плотность и поведение повторяем один в один. Цвета и шрифты берём только из токенов DDC (`platform/apps/console/src/styles/ddc-tokens.css`). Тексты пишем свои, по-русски, по правилам `.claude/skills/unslop/SKILL.md`.
 
 План уточняет единицы K5, K5b, K5c из [console-parity.md](console-parity.md) и вкладку инструментов C2 из [models-harness-analytics.md](models-harness-analytics.md). Для страницы сессии действует разбиение на файлы из этого документа. Файлы `tool-stats.ts` и `ToolsPanel.tsx` из плана C2 не заводим, их работу делают `session-stats.ts` и `ToolsTab.tsx`.

@@ -26,7 +26,6 @@ function option(overrides: Partial<ModelOption> = {}): ModelOption {
     max_output_tokens: 64000,
     effort_levels: ["low", "medium", "high", "max"],
     speed_fast: true,
-    harnesses: ["pi", "claude-acp"],
     ...overrides,
   };
 }

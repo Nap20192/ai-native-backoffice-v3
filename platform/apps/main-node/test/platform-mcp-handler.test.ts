@@ -36,7 +36,7 @@ describe("platform MCP handler", () => {
       requestInit: { headers: { authorization: "Bearer endpoint-token" } },
     });
     const tools = await client.listTools();
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(36);
     expect(tools.find((tool) => tool.name === "get")?.inputSchema).toMatchObject({ type: "object" });
     const result = await client.callTool({ name: "get", arguments: { kind: "agent", id: "agent_pr" } });
     expect(result.isError).toBe(false);
@@ -75,7 +75,7 @@ describe("platform MCP handler", () => {
     const app = mount(fake);
     const headers = { authorization: "Bearer endpoint-token", "content-type": "application/json" };
     const list = await app.request("/v1/oma/platform-mcp", { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
-    expect(((await list.json()) as any).result.tools).toHaveLength(28);
+    expect(((await list.json()) as any).result.tools).toHaveLength(36);
     const before = fake.calls.length;
     const call = await fake.call("list", { kind: "agents" });
     expect(call.isError).toBe(true);

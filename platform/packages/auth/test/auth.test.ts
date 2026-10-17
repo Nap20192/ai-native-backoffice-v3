@@ -6,9 +6,6 @@ import {
   allowsApiKeyRequest,
   createAuthMiddleware,
   type ApiKeyResolution,
-  type AuthMiddlewareDeps,
-  type AuthSession,
-  type BearerTokenRequest,
 } from "../src/index";
 
 function dependencies() {
@@ -33,7 +30,6 @@ function dependencies() {
       if (
         path !== "/v1/sessions/session_01"
         && path !== "/v1/environments/env_01/work/work_01/heartbeat"
-        && path !== "/v1/oma/inference-proxy/session_01/v1/messages"
       ) return null;
       return {
         tenantId: "workspace_session",
@@ -204,25 +200,9 @@ describe("managed worker bearer authentication", () => {
     expect(header.status).toBe(403);
   });
 
-  it("accepts a scoped Work session token through x-api-key on inference-proxy", async () => {
-    const deps = dependencies();
-    const app = new Hono();
-    app.use("*", createAuthMiddleware(deps));
-    app.post("/v1/oma/inference-proxy/:sessionId/*", (context) =>
-      context.json({ tenantId: context.get("tenant_id") }),
-    );
-
-    const response = await app.request(
-      "/v1/oma/inference-proxy/session_01/v1/messages",
-      { method: "POST", headers: { "x-api-key": "session-token" } },
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ tenantId: "workspace_session" });
-    expect(deps.resolveApiKey).not.toHaveBeenCalled();
-  });
-
-  it("rejects conflicting inference-proxy credentials", async () => {
+  // The hosted inference proxy was removed with the ACP harnesses (D41):
+  // a Work session token no longer opens anything through x-api-key.
+  it("refuses a Work session token through x-api-key on the removed inference proxy", async () => {
     const deps = dependencies();
     const app = new Hono();
     app.use("*", createAuthMiddleware(deps));
@@ -232,17 +212,16 @@ describe("managed worker bearer authentication", () => {
 
     const response = await app.request(
       "/v1/oma/inference-proxy/session_01/v1/messages",
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer session-token",
-          "x-api-key": "other-token",
-        },
-      },
+      { method: "POST", headers: { "x-api-key": "session-token" } },
     );
 
     expect(response.status).toBe(401);
-    expect(deps.resolveBearerToken).not.toHaveBeenCalled();
+    expect(
+      allowsApiKeyRequest(
+        { tenantId: "workspace_session", credential: { type: "environment_work_session" } as ApiKeyResolution["credential"] },
+        { path: "/v1/oma/inference-proxy/session_01/v1/messages", transport: "x-api-key" },
+      ),
+    ).toBe(false);
   });
 
   it("rejects an unresolved bearer without falling through to cookie auth", async () => {
@@ -257,135 +236,6 @@ describe("managed worker bearer authentication", () => {
 
     expect(response.status).toBe(401);
     expect(deps.resolveSession).not.toHaveBeenCalled();
-  });
-});
-
-describe("sandbox inference token", () => {
-  function sandboxDependencies() {
-    const sandboxToken: ApiKeyResolution = {
-      tenantId: "workspace_sandbox",
-      credential: {
-        type: "sandbox_inference",
-        sessionId: "ses_1",
-        expiresAt: "2026-10-16T12:00:00.000Z",
-      },
-    };
-    return {
-      disabled: false,
-      resolveSession: vi.fn(async (): Promise<AuthSession | null> => null),
-      resolveApiKey: vi.fn(async (_token: string): Promise<ApiKeyResolution | null> => null),
-      resolveBearerToken: vi.fn(async ({ token }: BearerTokenRequest) =>
-        token === "sandbox-token" ? sandboxToken : null),
-      defaultTenantForUser: vi.fn(async () => null),
-      hasMembership: vi.fn(async () => false),
-      ensureTenantForUser: vi.fn(async () => "workspace_default"),
-    } satisfies AuthMiddlewareDeps;
-  }
-
-  function sandboxApp() {
-    const deps = sandboxDependencies();
-    const app = new Hono<{ Variables: { tenant_id: string; auth_credential?: unknown } }>();
-    app.use("*", createAuthMiddleware(deps));
-    app.post("/v1/oma/inference-proxy/:sessionId/*", (context) =>
-      context.json({
-        tenantId: context.get("tenant_id"),
-        credential: context.get("auth_credential"),
-      }),
-    );
-    app.post("/v1/agents", (context) => context.json({ ok: true }));
-    app.get("/v1/oma/harness_cards", (context) => context.json({ ok: true }));
-    return { app, deps };
-  }
-
-  it.each([
-    ["bearer", { Authorization: "Bearer sandbox-token" }],
-    ["x-api-key", { "x-api-key": "sandbox-token" }],
-  ])("opens the inference proxy of its own session through %s", async (_transport, headers) => {
-    const { app, deps } = sandboxApp();
-
-    const response = await app.request(
-      "/v1/oma/inference-proxy/ses_1/anthropic/v1/messages",
-      { method: "POST", headers },
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      tenantId: "workspace_sandbox",
-      credential: {
-        type: "sandbox_inference",
-        sessionId: "ses_1",
-        expiresAt: "2026-10-16T12:00:00.000Z",
-      },
-    });
-    expect(deps.resolveApiKey).not.toHaveBeenCalled();
-  });
-
-  it("is refused on the inference proxy of another session", async () => {
-    const { app } = sandboxApp();
-
-    const other = await app.request(
-      "/v1/oma/inference-proxy/ses_2/anthropic/v1/messages",
-      { method: "POST", headers: { Authorization: "Bearer sandbox-token" } },
-    );
-    const prefix = await app.request(
-      "/v1/oma/inference-proxy/ses_10/anthropic/v1/messages",
-      { method: "POST", headers: { "x-api-key": "sandbox-token" } },
-    );
-
-    expect(other.status).toBe(403);
-    await expect(other.json()).resolves.toEqual({
-      error: "Bearer token is not authorized for this resource",
-    });
-    expect(prefix.status).toBe(403);
-  });
-
-  it("is refused on the managed API and on harness cards", async () => {
-    const { app } = sandboxApp();
-
-    const agents = await app.request("/v1/agents", {
-      method: "POST",
-      headers: { Authorization: "Bearer sandbox-token" },
-    });
-    const cards = await app.request("/v1/oma/harness_cards", {
-      headers: { Authorization: "Bearer sandbox-token" },
-    });
-
-    expect(agents.status).toBe(403);
-    await expect(agents.json()).resolves.toEqual({
-      type: "error",
-      error: {
-        type: "permission_error",
-        message: "Bearer token is not authorized for this resource",
-      },
-    });
-    expect(cards.status).toBe(403);
-  });
-});
-
-describe("allowsApiKeyRequest for a sandbox inference token", () => {
-  const resolution: ApiKeyResolution = {
-    tenantId: "workspace_sandbox",
-    credential: {
-      type: "sandbox_inference",
-      sessionId: "ses_1",
-      expiresAt: "2026-10-16T12:00:00.000Z",
-    },
-  };
-
-  it.each([
-    ["/v1/oma/inference-proxy/ses_1", "bearer", true],
-    ["/v1/oma/inference-proxy/ses_1/anthropic/v1/messages", "bearer", true],
-    ["/v1/oma/inference-proxy/ses_1/openai/v1/chat/completions", "x-api-key", true],
-    ["/v1/oma/inference-proxy/ses%5F1/anthropic/v1/messages", "bearer", true],
-    ["/v1/oma/inference-proxy/ses_2/anthropic/v1/messages", "bearer", false],
-    ["/v1/oma/inference-proxy/ses_1x/anthropic/v1/messages", "bearer", false],
-    ["/v1/oma/inference-proxy/%E0%A4%A/anthropic/v1/messages", "bearer", false],
-    ["/v1/oma/inference-proxy/", "bearer", false],
-    ["/v1/oma/mcp-proxy/ses_1/server", "bearer", false],
-    ["/v1/sessions/ses_1", "bearer", false],
-    ["/v1/oma/harness_cards", "x-api-key", false],
-  ] as const)("%s through %s: %s", (path, transport, allowed) => {
-    expect(allowsApiKeyRequest(resolution, { path, transport })).toBe(allowed);
   });
 });
 

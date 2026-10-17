@@ -16,7 +16,6 @@ export type DependencyTargetKind =
   | "memory"
   | "session_resource"
   | "model"
-  | "harness"
   | "vault";
 
 export type DependencyOperation = "archive" | "delete";

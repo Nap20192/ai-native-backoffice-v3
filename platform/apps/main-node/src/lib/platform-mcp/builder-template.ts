@@ -48,7 +48,6 @@ export const BUILDER_WRITE_TOOLS = [
   "update_memory_store",
   "update_deployment",
   "update_model_card",
-  "update_harness_card",
   "send_message",
   "update_session",
   "add_session_resource",

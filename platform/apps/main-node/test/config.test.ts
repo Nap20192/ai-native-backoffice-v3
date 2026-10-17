@@ -163,23 +163,9 @@ describe("loadNodeConfig", () => {
     }
   });
 
-  it("reads SANDBOX_GATEWAY_BASE_URL as the origin the session VM calls", () => {
-    expect(loadNodeConfig(minimal).http.sandboxGatewayBaseUrl).toBeUndefined();
-    expect(loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: "  " }).http.sandboxGatewayBaseUrl).toBeUndefined();
-    expect(loadNodeConfig({
-      ...minimal,
-      SANDBOX_GATEWAY_BASE_URL: "http://host.boxlite.internal:8795/",
-    }).http.sandboxGatewayBaseUrl).toBe("http://host.boxlite.internal:8795");
-    for (const bad of ["host.boxlite.internal:8795", "ftp://gw", "https://gw/v1", "https://user:pass@gw"]) {
-      expect(() => loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: bad })).toThrow(/SANDBOX_GATEWAY_BASE_URL/);
-    }
-    let error: Error | undefined;
-    try {
-      loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: "gw", SMTP_HOST: "smtp", SMTP_PORT: "abc" });
-    } catch (caught) {
-      error = caught as Error;
-    }
-    expect(error?.message).toContain("2 problems");
+  it("ignores SANDBOX_GATEWAY_BASE_URL: no agent in the VM calls the server for its model (D41)", () => {
+    const config = loadNodeConfig({ ...minimal, SANDBOX_GATEWAY_BASE_URL: "not a url" });
+    expect(config.http).not.toHaveProperty("sandboxGatewayBaseUrl");
   });
 
   it("keeps the serverless-mode requirements", () => {
@@ -212,10 +198,6 @@ describe("redactNodeConfig", () => {
     expect(redacted).toContain("\"bucket\":\"mem\"");
     expect(redacted).toContain("\"gid\"");
     expect(redacted).toContain("\"kind\":\"mysql\"");
-    expect(JSON.stringify(redactNodeConfig(loadNodeConfig({
-      ...minimal,
-      SANDBOX_GATEWAY_BASE_URL: "http://host.boxlite.internal:8795",
-    })))).toContain("\"sandboxGatewayBaseUrl\":\"http://host.boxlite.internal:8795\"");
     // The provider's own namespace is opaque to the control plane and is not echoed.
     expect(redacted).not.toContain("environment");
   });

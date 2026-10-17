@@ -6,17 +6,10 @@
  * tools, MCP stdio, unknown toolsets, metadata, etc.). Full-field UI is
  * tracked separately in #155 — this module only guarantees round-trips.
  */
-import type { EffortLevel, HarnessEntry, ModelOption } from "../../lib/catalog-api";
+import type { EffortLevel, ModelOption } from "../../lib/catalog-api";
 import type { AgentRecord as Agent } from "../../types/agent";
 import yaml from "js-yaml";
-import {
-  applyHarness,
-  compatibility,
-  findModel,
-  harnessIdOf,
-  pickDefaultModel,
-  type HarnessTarget,
-} from "./agent-harness";
+import { dropLegacyHarness } from "./legacy-harness";
 import { effortOf } from "./model-format";
 
 export function parseAgentConfigText(
@@ -173,10 +166,6 @@ export type FormState = {
   modelEffort: "" | EffortLevel;
   /** Скорость модели. Пустая строка и `standard` значат обычную скорость. */
   modelSpeed: "" | "standard" | "fast";
-  /** Id harness: `pi` для встроенного цикла, id записи каталога для ACP. */
-  harness: string;
-  /** Блок `_oma.acp`, который форма запишет при смене harness. `null` у встроенного цикла. */
-  harnessAcp: Record<string, unknown> | null;
   auxiliaryModel: string;
   auxiliaryModelSpeed: "" | "standard" | "fast";
   appendablePrompts: string[];
@@ -197,8 +186,6 @@ export const INITIAL_FORM: FormState = {
   model: "",
   modelEffort: "",
   modelSpeed: "",
-  harness: "pi",
-  harnessAcp: null,
   auxiliaryModel: "",
   auxiliaryModelSpeed: "",
   appendablePrompts: [],
@@ -223,6 +210,7 @@ const RESPONSE_ONLY_KEYS = new Set([
   "archived_at",
 ]);
 
+/** Поля OMA на верхнем уровне старого ответа агента. Форма их не отправляет. */
 const OMA_ONLY_KEYS = new Set([
   "runtime_binding",
   "harness",
@@ -312,14 +300,6 @@ export function configToForm(config: Record<string, unknown>): FormState {
     model: modelIdOf(config.model) || (typeof config.model === "string" ? config.model : ""),
     modelEffort: effortOf(config.model),
     modelSpeed: modelSpeedOf(config.model),
-    harness: harnessIdOf(config),
-    harnessAcp:
-      openma?.harness === "acp-sandbox" &&
-      openma.acp &&
-      typeof openma.acp === "object" &&
-      !Array.isArray(openma.acp)
-        ? structuredClone(openma.acp as Record<string, unknown>)
-        : null,
     auxiliaryModel: modelIdOf(openma?.aux_model),
     auxiliaryModelSpeed: modelSpeedOf(openma?.aux_model),
     appendablePrompts: Array.isArray(openma?.appendable_prompts)
@@ -379,18 +359,12 @@ export function agentToForm(agent: Agent): FormState {
   return configToForm(agent as unknown as Record<string, unknown>);
 }
 
-/** Форма запишет ACP-агента: усилие и скорость ему не передаются. */
-function isAcpForm(form: FormState): boolean {
-  return form.harnessAcp !== null;
-}
-
 export function buildModelValue(
   form: FormState,
   existingModel?: unknown,
 ): string | Record<string, unknown> {
-  const acp = isAcpForm(form);
-  const effort = acp ? "" : form.modelEffort;
-  const speed = acp ? "" : form.modelSpeed;
+  const effort = form.modelEffort;
+  const speed = form.modelSpeed;
   if (
     existingModel &&
     typeof existingModel === "object" &&
@@ -447,46 +421,6 @@ export function applyModelChoice(form: FormState, option: ModelOption): ModelCho
     effortReset,
     speedReset,
   };
-}
-
-export interface HarnessChoiceResult {
-  form: FormState;
-  /** Модель заменена, потому что прежняя не работает с новым harness. */
-  modelReplaced: { from: string; to: string } | null;
-}
-
-/**
- * Выбор harness в форме. Записывает id и блок ACP из записи каталога. Если
- * текущая модель из каталога не подходит новому harness, берёт модель по
- * умолчанию, а пустую модель заполняет ею же. Модель, которой нет в каталоге
- * (её задали в YAML), остаётся как есть.
- */
-export function applyHarnessChoice(
-  form: FormState,
-  entry: HarnessEntry,
-  options: ModelOption[] | undefined,
-): HarnessChoiceResult {
-  let next: FormState = {
-    ...form,
-    harness: entry.id,
-    harnessAcp: entry.acp ? structuredClone(entry.acp) : null,
-  };
-  if (!options) return { form: next, modelReplaced: null };
-
-  const current = findModel(options, form.model);
-  if (form.model === "") {
-    const pick = pickDefaultModel(options, entry);
-    if (pick) next = applyModelChoice(next, pick).form;
-    return { form: next, modelReplaced: null };
-  }
-  if (current && !compatibility(entry, current).ok) {
-    const pick = pickDefaultModel(options, entry);
-    if (pick) {
-      next = applyModelChoice(next, pick).form;
-      return { form: next, modelReplaced: { from: form.model, to: pick.handle } };
-    }
-  }
-  return { form: next, modelReplaced: null };
 }
 
 /** Form-managed built-in toolset entry only. */
@@ -810,6 +744,7 @@ export function mergeFormIntoConfig(
   } else {
     delete openma.appendable_prompts;
   }
+  dropLegacyHarness(openma, forUpdate);
   if (Object.keys(openma).length > 0) payload._oma = openma;
   else delete payload._oma;
 
@@ -841,13 +776,5 @@ export function mergeFormIntoConfig(
     }
   }
 
-  // Harness. Тот же id оставляет блок агента как есть, со своей обёрткой и
-  // своими переменными. Другой id пишет блок из каталога или убирает его.
-  if (form.harness !== harnessIdOf(base)) {
-    const target: HarnessTarget = isAcpForm(form)
-      ? { id: form.harness, runtime_harness: "acp-sandbox", acp: form.harnessAcp as HarnessTarget["acp"] }
-      : { id: form.harness, runtime_harness: null, acp: null };
-    return applyHarness(payload, target, { forUpdate });
-  }
   return payload;
 }

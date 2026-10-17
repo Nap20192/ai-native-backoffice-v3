@@ -56,7 +56,6 @@ export const ru: Messages = {
     memoryStores: "Хранилища памяти",
     modelCards: "Карточки моделей",
     apiKeys: "API-ключи",
-    localRuntimes: "Локальные среды",
     integrations: "Интеграции",
     members: "Участники",
   },
@@ -260,12 +259,5 @@ export const ru: Messages = {
     mountPathHint: "Путь монтирования будет",
     settingsArchiveHint:
       "Чтобы заархивировать или удалить хранилище, используйте действия в шапке страницы.",
-  },
-
-  runtimes: {
-    connectRuntime: "Подключить среду",
-    searchRuntimes: "Поиск сред…",
-    noMatchingRuntimes: "Среды не найдены",
-    noRuntimesYet: "Сред пока нет",
   },
 };

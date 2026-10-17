@@ -500,69 +500,6 @@ export const updateModelCardTool: ToolDef<z.infer<typeof updateModelCardArgs>> =
   },
 };
 
-// ---------- harness card ----------
-
-export const harnessCardChanges = z
-  .object({
-    name: z.string().min(1).max(200).optional(),
-    install: z
-      .object({ npm: z.array(z.string().min(1)).optional(), pip: z.array(z.string().min(1)).optional() })
-      .strict()
-      .optional(),
-    protocols: z.array(z.enum(["anthropic-messages", "openai-chat", "openai-responses"])).min(1).optional(),
-    allowed_env: z.array(z.string().min(1)).optional(),
-  })
-  .strict();
-
-const updateHarnessCardArgs = z
-  .object({ harness_card_id: z.string().min(1), changes: harnessCardChanges, expected_updated_at: z.string().min(1).optional() })
-  .strict();
-
-export const HARNESS_COMMAND_NOTE =
-  "Команда этой карточки работает в VM от root у каждого агента с этим harness. Ассистент её не меняет";
-
-export const updateHarnessCardTool: ToolDef<z.infer<typeof updateHarnessCardArgs>> = {
-  name: "update_harness_card",
-  group: "write",
-  description: "Изменить name, install, protocols или allowed_env карточки harness. Команду меняет человек. Ждёт подтверждения.",
-  args: updateHarnessCardArgs,
-  routes: [ROUTES.harnessCardUpdate],
-  precondition: "if_match",
-  op: {
-    targetKind: "harness_card",
-    targetKey: (args) => `harness_card:${args.harness_card_id}`,
-    async plan(ctx, args) {
-      const found = await readObject(ctx, "harness_card", `/v1/oma/harness_cards/${encodeId(args.harness_card_id)}`, "updated_at");
-      if (!found) return notFoundPlan("Карточка harness не найдена");
-      const cls = classifyEdit({ archived: Boolean(found.raw?.archived_at) });
-      return {
-        ...emptyPlan(cls.cls),
-        reason: cls.reason,
-        targetId: args.harness_card_id,
-        revision: found.revision,
-        state: { archived: Boolean(found.raw?.archived_at) },
-        before: found.clean,
-        after: mergeAfter(found.clean, args.changes),
-        argsStale: args.expected_updated_at !== undefined && args.expected_updated_at !== found.revision,
-        details: {
-          note: HARNESS_COMMAND_NOTE,
-          command: (found.clean as any)?.command,
-          args: (found.clean as any)?.args,
-          install: (found.clean as any)?.install,
-        },
-      };
-    },
-    async write(ctx, args, _plan, revision) {
-      const response = await ctx.api.post(`/v1/oma/harness_cards/${encodeId(args.harness_card_id)}`, args.changes, ifMatch(revision));
-      return writeOutcome(ctx, response, (json) => ({
-        targetId: args.harness_card_id,
-        revision: response.headers.get("etag") ?? json?.updated_at ?? null,
-        summary: "Карточка harness изменена",
-      }));
-    },
-  },
-};
-
 // ---------- memory ----------
 
 const writeMemoryArgs = z
@@ -644,7 +581,6 @@ export const UPDATE_TOOLS = [
   updateMemoryStoreTool,
   updateDeploymentTool,
   updateModelCardTool,
-  updateHarnessCardTool,
   pauseDeploymentTool,
   unpauseDeploymentTool,
   runDeploymentTool,

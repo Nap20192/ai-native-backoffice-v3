@@ -121,7 +121,7 @@ export function checkHarnessConformance(fixture: TraceTurnFixture, level: Harnes
     if (span.end_ms === null && span.status !== "waiting") problems.push(`open ${span.kind} ${span.span_id}`);
   }
   if (level >= 1) {
-    if (spansOfKind(trace, "model_call").length === 0 && spansOfKind(trace, "acp_prompt").length === 0) problems.push("level 1 needs model calls");
+    if (spansOfKind(trace, "model_call").length === 0) problems.push("level 1 needs model calls");
     if (coverage.model_calls === "absent") problems.push("level 1 needs model_calls coverage");
   }
   if (level >= 2) {

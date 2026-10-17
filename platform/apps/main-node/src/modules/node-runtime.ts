@@ -65,7 +65,6 @@ export async function createNodeRuntime(
   const {
     platformMcp,
     resolveNodeMcpProxyTarget,
-    resolveNodeInferenceUpstream,
     managedRuntimeRunner,
     managedRuntimeReaders,
     managedSessionExecutionWorker,
@@ -276,7 +275,6 @@ export async function createNodeRuntime(
     realtimeDescription,
     sessionRegistry,
     resolveNodeMcpProxyTarget,
-    resolveNodeInferenceUpstream,
     managedRuntimeRunner,
     managedRuntimeReaders,
     managedSessionExecutionWorker,

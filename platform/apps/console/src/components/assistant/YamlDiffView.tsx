@@ -243,17 +243,14 @@ export const YAML_COLLAPSE_LINES = 20;
 export function YamlBlock({
   yaml,
   className,
-  expanded = false,
 }: {
   yaml: string | null;
   className?: string;
-  /** Показывать всё без сворачивания (команда карточки harness). */
-  expanded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const lines = splitLines(yaml);
   if (lines.length === 0) return null;
-  const long = !expanded && lines.length > YAML_COLLAPSE_LINES;
+  const long = lines.length > YAML_COLLAPSE_LINES;
   const shown = long && !open ? lines.slice(0, YAML_COLLAPSE_LINES) : lines;
   return (
     <div className={cn("assistant-yaml-block", className)}>

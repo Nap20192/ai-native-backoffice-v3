@@ -16,7 +16,6 @@ import { nanoid } from "nanoid";
 import { resolveNodeProcessMode, validateNodeProcessEnvironment, type NodeProcessMode } from "./process-mode.js";
 import { resolveRealtimeFanout, type RealtimeFanoutConfig } from "./realtime-fanout.js";
 import { parseAllowHosts } from "./lib/skill-sources.js";
-import { normalizeSandboxGatewayBaseUrl } from "./lib/sandbox-hosted-inference.js";
 import { PLATFORM_MCP_ENDPOINT_PATH } from "@open-managed-agents/auth";
 
 export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
@@ -96,11 +95,6 @@ export interface NodeConfig {
     host: string;
     port: number;
     publicBaseUrl: string | undefined;
-    /**
-     * SANDBOX_GATEWAY_BASE_URL: the origin an ACP agent in the session VM
-     * calls for the inference proxy. Without it the VM uses PUBLIC_BASE_URL.
-     */
-    sandboxGatewayBaseUrl: string | undefined;
     gatewayOrigin: string;
     consoleDir: string | undefined;
     /** CONSOLE_BRANDING_DIR: branding.json plus the logo, favicon, and stylesheet it names. */
@@ -300,11 +294,6 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     }
     return url.toString();
   });
-  const sandboxGatewayBaseUrl = attempt<string | undefined>(
-    undefined,
-    () => normalizeSandboxGatewayBaseUrl(env.SANDBOX_GATEWAY_BASE_URL) ?? undefined,
-  );
-
   const config: NodeConfig = {
     processMode,
     database,
@@ -351,7 +340,6 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
       // 0 asks the OS for an ephemeral port (tests and local tooling rely on it).
       port: integer("PORT", 8787, { min: 0, max: 65535 }),
       publicBaseUrl: env.PUBLIC_BASE_URL,
-      sandboxGatewayBaseUrl,
       gatewayOrigin: env.GATEWAY_ORIGIN ?? env.PUBLIC_BASE_URL ?? "http://localhost:8787",
       consoleDir: env.CONSOLE_DIR,
       brandingDir: env.CONSOLE_BRANDING_DIR,

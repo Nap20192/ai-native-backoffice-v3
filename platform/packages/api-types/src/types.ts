@@ -88,47 +88,10 @@ export interface AgentConfig {
     provider_options?: Record<string, unknown>;
     speed?: "standard" | "fast";
   };
+  /** Harness name. Only the Pi loop exists: unset, "default" or "pi".
+   * Stored agents may still carry a removed name ("ai-sdk", "acp-sandbox",
+   * "acp-proxy"); the runtime maps it to Pi. */
   harness?: string;
-  /** ACP process configuration for the `acp-sandbox` harness. The process is
-   * spawned inside the session Sandbox through SandboxDuplexProcessPort; the
-   * OpenMA host retains ownership of the ACP loop and canonical event stream. */
-  acp?: {
-    agent: {
-      /** Canonical ACP registry id. Enables the matching native-state adapter;
-       * legacy records without it fall back to matching the command basename. */
-      id?: string;
-      command: string;
-      args?: string[];
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-    };
-    restart?: {
-      mode: "never" | "on-crash" | "always";
-      max_restarts?: number;
-      window_ms?: number;
-    };
-    idle_timeout_ms?: number;
-    per_turn_timeout_ms?: number;
-  };
-  /**
-   * When set, agent runs on a user-registered local ACP runtime instead of
-   * OMA's cloud SessionDO loop. `harness` MUST be "acp-proxy" for this to
-   * take effect; SessionDO routes the AcpProxyHarness which proxies via the
-   * RuntimeRoom DO addressed by `runtime_id` to the daemon, which spawns the
-   * ACP child identified by `acp_agent_id` (matching KNOWN_ACP_AGENTS).
-   */
-  runtime_binding?: {
-    runtime_id: string;
-    acp_agent_id: string;
-    /**
-     * Skill ids the user wants HIDDEN from this agent's ACP child. Default
-     * (omitted / empty) = all locally-detected skills allowed. Each id matches
-     * a skill the daemon reported in the runtime hello manifest's
-     * `local_skills[acp_agent_id]`. Daemon enforces by NOT symlinking the
-     * blocked dir into spawn cwd's CLAUDE_CONFIG_DIR.
-     */
-    local_skill_blocklist?: string[];
-  };
   description?: string;
   metadata?: Record<string, unknown>;
   /**
@@ -615,7 +578,7 @@ export interface AgentThreadContextCompactedEvent extends EventBase {
    * Optional for backward compat: an event without `summary` is a pure
    * notification (UI signal), and derive falls back to "no compaction
    * happened" — i.e. it shows the full pre-boundary history. New events
-   * emitted by DefaultHarness always include `summary`.
+   * emitted by the Pi harness always include `summary`.
    */
   summary?: ContentBlock[];
   /**
@@ -1091,8 +1054,6 @@ export interface SessionResource {
   // They go to separate KV keys: secret:{sessionId}:{resourceId}
   credential_id?: string;
   mount_path?: string;
-  /** Host filesystem path for a repository on a local ACP runtime (not cloned in cloud). */
-  local_path?: string;
   access?: "read_write" | "read_only";
   /**
    * Per-attachment guidance the agent receives alongside the store's

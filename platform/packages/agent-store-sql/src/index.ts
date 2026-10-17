@@ -327,7 +327,7 @@ export class SqlAgentStore implements AgentStore {
     if (!Number.isInteger(input.limit) || input.limit < 1) {
       throw new Error("Agent list limit must be a positive integer");
     }
-    const needles = [input.skillId, input.skillVersion, input.model, input.harness]
+    const needles = [input.skillId, input.skillVersion, input.model]
       .filter((value): value is string => value !== undefined);
     const conditions = ["workspace_id = ?"];
     const parameters: Array<string | number> = [input.workspaceId];

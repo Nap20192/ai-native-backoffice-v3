@@ -7,7 +7,15 @@ const FORBIDDEN: [string, string][] = [
   ["POST", "/v1/vaults/vlt_1/credentials"],
   ["POST", "/v1/vaults/vlt_1/credentials/cred_1"],
   ["POST", "/v1/oma/model_cards"],
+  // Harness cards and the harness catalog are gone (D41).
+  ["GET", "/v1/oma/harnesses"],
+  ["GET", "/v1/oma/harness_cards"],
+  ["GET", "/v1/oma/harness_cards/hc_1"],
   ["POST", "/v1/oma/harness_cards"],
+  ["POST", "/v1/oma/harness_cards/hc_1"],
+  ["POST", "/v1/oma/harness_cards/hc_1/archive"],
+  ["DELETE", "/v1/oma/harness_cards/hc_1"],
+  ["GET", "/v1/oma/dependencies/harness_card/hc_1"],
   ["GET", "/v1/oma/api_keys"],
   ["POST", "/v1/oma/api_keys"],
   ["GET", "/v1/oma/me/cli-tokens"],
@@ -43,12 +51,12 @@ const FORBIDDEN: [string, string][] = [
 ];
 
 describe("platform MCP tool table", () => {
-  it("has 37 tools: 10 reads, 1 draft and 26 writes", () => {
+  it("has 36 tools: 10 reads, 1 draft and 25 writes", () => {
     const groups = [...TOOL_TABLE.values()].map((tool) => tool.group);
-    expect(TOOL_TABLE.size).toBe(37);
+    expect(TOOL_TABLE.size).toBe(36);
     expect(groups.filter((group) => group === "read")).toHaveLength(10);
     expect(groups.filter((group) => group === "draft")).toHaveLength(1);
-    expect(groups.filter((group) => group === "write" || group === "batch")).toHaveLength(26);
+    expect(groups.filter((group) => group === "write" || group === "batch")).toHaveLength(25);
   });
 
   it("allows exactly the 11 read and draft tools without asking", () => {
@@ -68,8 +76,9 @@ describe("platform MCP tool table", () => {
         expect(tool.routes.length, tool.name).toBeGreaterThan(0);
       }
     }
-    const existing = ["update_agent", "restore_agent_version", "update_environment", "create_skill_version", "update_memory_store", "update_deployment", "update_model_card", "update_harness_card", "send_message", "write_memory"];
+    const existing = ["update_agent", "restore_agent_version", "update_environment", "create_skill_version", "update_memory_store", "update_deployment", "update_model_card", "send_message", "write_memory"];
     for (const name of existing) expect(TOOL_TABLE.get(name)?.precondition, name).not.toBe("new_object");
+    expect(TOOL_TABLE.has("update_harness_card")).toBe(false);
     expect(TOOL_TABLE.get("update_agent")?.precondition).toBe("version_in_body");
     expect(TOOL_TABLE.get("write_memory")?.precondition).toBe("content_sha256_or_new_path");
     expect(TOOL_TABLE.get("send_message")?.precondition).toBe("if_match");
@@ -97,13 +106,10 @@ describe("platform MCP tool table", () => {
       "DELETE /v1/memory_stores/:id",
       "POST /v1/oma/model_cards/:id/archive",
       "DELETE /v1/oma/model_cards/:id",
-      "POST /v1/oma/harness_cards/:id/archive",
-      "DELETE /v1/oma/harness_cards/:id",
     ];
     expect(checks).toEqual({
       "POST /v1/deployments": "deployment_paused",
       "POST /v1/oma/model_cards/:id": "model_card_safe",
-      "POST /v1/oma/harness_cards/:id": "harness_card_safe",
       "POST /v1/sessions": "session_create",
       "POST /v1/sessions/:id/events": "session_event",
       "POST /v1/sessions/:id": "session_update",
@@ -127,8 +133,6 @@ describe("platform MCP tool table", () => {
     deny("POST", "/v1/oma/model_cards/mc_1", { base_url: "https://evil.example.com" });
     deny("POST", "/v1/oma/model_cards/mc_1", { api_key: "k" });
     pass("POST", "/v1/oma/model_cards/mc_1", { model: "qwen" });
-    deny("POST", "/v1/oma/harness_cards/hc_1", { command: "rm" });
-    pass("POST", "/v1/oma/harness_cards/hc_1", { name: "n", install: { npm: [] } });
 
     const session = { agent: { type: "agent", id: "a", version: 2 }, environment_id: "e", metadata: { oma_created_via: "assistant" } };
     pass("POST", "/v1/sessions", session);
@@ -169,7 +173,7 @@ describe("platform MCP tool table", () => {
     pass("POST", "/v1/sessions/sesn_1/resources", { type: "memory_store", memory_store_id: "ms_1" });
     deny("POST", "/v1/sessions/sesn_1/resources", { type: "github_repository", url: "u", authorization_token: "t" });
     deny("POST", "/v1/sessions/sesn_1/resources", { type: "file", file_id: "f", authorization_token: "t" });
-    for (const [method, path] of [["DELETE", "/v1/agents/agent_1"], ["POST", "/v1/environments/env_1/archive"], ["DELETE", "/v1/oma/harness_cards/hc_1"]]) {
+    for (const [method, path] of [["DELETE", "/v1/agents/agent_1"], ["POST", "/v1/environments/env_1/archive"], ["DELETE", "/v1/oma/model_cards/mc_1"]]) {
       deny(method, path, null);
       pass(method, path, null, { issuer: "handler", headers: withIfMatch });
     }

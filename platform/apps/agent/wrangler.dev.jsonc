@@ -42,8 +42,8 @@
     { "binding": "MEMORY_BUCKET", "bucket_name": "managed-agents-memory" }
   ],
 
-  // MAIN service binding so AcpProxyHarness can call into the main worker's
-  // /v1/oma/internal/runtime-attach-harness endpoint to reach RuntimeRoom DO.
+  // MAIN service binding back to the main worker (integration session and
+  // vault calls).
   "services": [
     { "binding": "MAIN", "service": "managed-agents" }
   ],

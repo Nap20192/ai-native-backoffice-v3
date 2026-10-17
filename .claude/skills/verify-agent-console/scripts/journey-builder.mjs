@@ -2,7 +2,7 @@
 // Сценарий «ассистент платформы» verify-agent-console (docs/plans/builder-agent.md, раздел 6).
 // Playwright, консоль на русском, фейковая модель (fake-model.mjs с fake-model-builder.mjs).
 //   6.2 основной путь: панель по Ctrl I, установка ассистента, пачка «окружение, навык, агент»,
-//       деплоймент на паузе, правка агента, сессия, первое сообщение, черновик harness и правка карточки;
+//       деплоймент на паузе, правка агента, сессия, первое сообщение;
 //   6.3 отказ, прямое подтверждение, обход политики, встроенные инструменты, выключатель;
 //   6.4 чужое пространство, второй участник, прямой вход;
 //   6.5 и 6.6 в journey-builder-guard.mjs: подложенные указания, смена объекта после preview;
@@ -71,7 +71,6 @@ const names = {
   dep: `vb-dep-${nonce}`,
   session: `vb-session-${nonce}`,
   input: `vb-input-${nonce}.txt`,
-  harness: `vb-harness-${nonce}`,
 };
 const ids = {};
 const created = { sessions: [], agents: [], environments: [] };
@@ -823,7 +822,8 @@ async function stepMain() {
   });
   const afterMsg = await clickAndWait(sid, msg, "Отправить");
   const childTurn = await waitIdle(child.id, 0, TURN_TIMEOUT);
-  await check("vb.message_sent", "в vb-session ровно одно user.message с текстом карточки, ход агента ответил VERIFY_CHILD_DONE", () => {
+  await check("vb.message_sent", "в vb-session ровно одно user.message с текстом карточки, ход агента ответил VERIFY_CHILD_DONE, ход ассистента закрыт end_turn", () => {
+    assert(afterMsg.stop?.type === "end_turn", `ход ассистента после «Отправить»: stop ${JSON.stringify(afterMsg.stop)}`);
     const users = childTurn.events.filter((e) => e.type === "user.message");
     assert(users.length === 1 && textOf(users[0].content) === childText, `user.message: ${users.map((e) => textOf(e.content)).join(" | ")}`);
     const answer = childTurn.events.filter((e) => e.type === "agent.message").map((e) => textOf(e.content)).join(" ");
@@ -832,85 +832,23 @@ async function stepMain() {
   });
   saveJson("20-child-session-events", childTurn.events);
 
-  // Черновик карточки harness и форма.
-  const draft = panel().locator('article[data-kind="harness_card_draft"]').last();
-  await draft.waitFor({ timeout: 30_000 });
-  await shot("harness-draft");
-  await check("vb.harness_draft", "черновик карточки harness с названием, протоколом и пакетом pip, без команды", async () => {
-    assert(afterMsg.stop?.type === "end_turn", `stop ${JSON.stringify(afterMsg.stop)}`);
-    const text = await draft.textContent();
-    assert(text.includes(names.harness) && text.includes("anthropic-messages") && text.includes("vb-pkg==1.0"), `черновик «${text.slice(0, 200)}»`);
-    return "черновик";
-  });
-  const cardsBefore = await api("GET", "/v1/oma/harness_cards");
-  await draft.getByRole("button", { name: "Открыть форму" }).click();
-  const dialog = page.getByRole("dialog", { name: "Новый harness" });
-  await dialog.waitFor({ timeout: 15_000 });
-  await shot("harness-form");
-  const formState = {
-    name: await dialog.locator("#harness-card-name").inputValue(),
-    id: await dialog.locator("#harness-card-id").inputValue(),
-    command: await dialog.locator("#harness-card-command").inputValue(),
-    args: await dialog.locator("#harness-card-args").inputValue(),
-    cwd: await dialog.locator("#harness-card-cwd").inputValue(),
-    pip: await dialog.locator("#harness-card-pip").inputValue(),
-  };
-  await dialog.locator("#harness-card-id").fill(names.harness);
-  await dialog.locator("#harness-card-command").fill("vb-acp");
-  await dialog.getByRole("button", { name: "Создать", exact: true }).click();
-  await dialog.waitFor({ state: "hidden", timeout: 15_000 });
-  const cardsAfter = await api("GET", "/v1/oma/harness_cards");
-  const hc = (cardsAfter.data ?? []).find((c) => c.harness_id === names.harness);
-  ids.harnessCard = hc?.id;
-  await check("vb.harness_form", "«Открыть форму» открыл «Новый harness» с полями черновика, ID, команда, аргументы и папка пустые; карточка создана", () => {
-    assert(formState.name === names.harness, `название «${formState.name}»`);
-    assert(formState.pip.includes("vb-pkg==1.0"), `pip «${formState.pip}»`);
-    assert(!formState.id && !formState.command && !formState.args && !formState.cwd, `заполнено: ${JSON.stringify(formState)}`);
-    assert(!(cardsBefore.data ?? []).some((c) => c.harness_id === names.harness), "карточка была до клика");
-    assert(hc && hc.command === "vb-acp" && hc.status === "unverified", `карточка ${JSON.stringify(hc)}`);
-    assert(hc.protocols.includes("anthropic-messages") && hc.install.pip.includes("vb-pkg==1.0"), `протоколы и пакеты ${JSON.stringify(hc)}`);
-    return hc.id;
-  });
-
-  // Правка карточки harness.
-  await openPanel();
-  const hcTurn = await sendPanel([`VERIFY_BUILDER_HC nonce=${nonce}`, `Цель: ${ids.harnessCard}`].join("\n"));
-  const hcCard = card("update_harness_card");
-  await cardReady(hcCard);
-  await shot("harness-update-card");
-  await check("vb.harness_update_card", "карточка правки harness со строкой про root, команда vb-acp видна", async () => {
-    assert(hcTurn.stop?.type === "requires_action", `stop ${JSON.stringify(hcTurn.stop)}`);
-    const text = await hcCard.textContent();
-    assert(text.includes("Команда этой карточки работает в VM от root"), "нет строки про root");
-    assert(text.includes("vb-acp"), "команда не видна");
-    return "карточка";
-  });
-  const afterHc = await clickAndWait(sid, hcCard, "Применить");
-  await check("vb.harness_updated", "после «Применить» в allowed_env есть VB_MODE, команда прежняя, модель ответила VERIFY_BUILDER_DONE", async () => {
-    const after = await api("GET", `/v1/oma/harness_cards/${ids.harnessCard}`);
-    assert(after.allowed_env.includes("VB_MODE") && after.command === "vb-acp", JSON.stringify(after));
-    const text = afterHc.events.filter((e) => e.type === "agent.message").map((e) => textOf(e.content)).join(" ");
-    assert(text.includes(`VERIFY_BUILDER_DONE_${nonce}`), "нет VERIFY_BUILDER_DONE");
-    return after.updated_at;
-  });
-
   // Журнал, подтверждения, фейк.
   const { rows, confirmations } = await actions(sid);
   saveJson("21-main-actions", { rows, confirmations });
-  await check("vb.action_log", "журнал действий: 11 строк в порядке шагов, все ok, от тестового пользователя; три строки пачки с одним tool_use_id, op_index 0..2 и одним confirmation_id", () => {
+  await check("vb.action_log", "журнал действий: 9 строк в порядке шагов, все ok, от тестового пользователя; три строки пачки с одним tool_use_id, op_index 0..2 и одним confirmation_id", () => {
     const batchUseId = batchUse?.id;
     // Строка пачки несёт инструмент своей операции, вызов пачки виден по tool_use_id.
     const got = rows.map((r) => (r.tool_use_id === batchUseId ? `apply_changes#${r.op_index}:${r.tool}` : r.tool));
-    const want = ["search_docs", "list", "apply_changes#0:create_environment", "apply_changes#1:create_skill", "apply_changes#2:create_agent", "create_deployment", "update_agent", "create_session", "send_message", "preview_change", "update_harness_card"];
+    const want = ["search_docs", "list", "apply_changes#0:create_environment", "apply_changes#1:create_skill", "apply_changes#2:create_agent", "create_deployment", "update_agent", "create_session", "send_message"];
     assert(JSON.stringify(got) === JSON.stringify(want), `строки ${got.join(", ")}`);
     assert(rows.every((r) => r.result === "ok" && r.user_id === user.user_id), `результаты ${rows.map((r) => r.result).join(",")}`);
     const batchRows = rows.filter((r) => r.tool_use_id === batchUseId);
     assert(new Set(batchRows.map((r) => r.confirmation_id)).size === 1 && batchRows[0].confirmation_id, "у строк пачки разные confirmation_id");
     return `${rows.length} строк`;
   });
-  await check("vb.confirmations", "шесть подтверждений allow, отпечаток каждого равен отпечатку preview консоли, в сессии шесть user.tool_confirmation", async () => {
+  await check("vb.confirmations", "пять подтверждений allow, отпечаток каждого равен отпечатку preview консоли, в сессии пять user.tool_confirmation", async () => {
     const allow = confirmations.filter((c) => c.result === "allow");
-    assert(allow.length === 6, `подтверждений allow ${allow.length}`);
+    assert(allow.length === 5, `подтверждений allow ${allow.length}`);
     for (const c of allow) {
       const seen = previews.filter((p) => p.tool_use_id === c.tool_use_id).map((p) => p.digest);
       assert(seen.includes(c.preview_digest), `${c.tool_use_id}: отпечаток не из preview консоли`);
@@ -918,14 +856,14 @@ async function stepMain() {
     }
     const events = await listEvents(sid);
     const tc = events.filter((e) => e.type === "user.tool_confirmation");
-    assert(tc.length === 6, `user.tool_confirmation ${tc.length}`);
+    assert(tc.length === 5, `user.tool_confirmation ${tc.length}`);
     return `${allow.length} подтверждений`;
   });
-  await check("vb.fake_tools", "в запросах сессии ассистента к модели только mcp__platform__*, без create_harness_card и запрещённых", () => {
-    const reqs = fakeFor("BUILDER_MAIN").concat(fakeFor("BUILDER_HC"));
-    assert(reqs.length >= 10, `запросов ${reqs.length}`);
+  await check("vb.fake_tools", "в запросах сессии ассистента к модели только mcp__platform__*, без инструментов карточек harness и запрещённых", () => {
+    const reqs = fakeFor("BUILDER_MAIN");
+    assert(reqs.length >= 7, `запросов ${reqs.length}`);
     const all = new Set(reqs.flatMap((r) => r.tools ?? []));
-    const bad = [...all].filter((n) => !n.startsWith("mcp__platform__") || /create_harness_card|create_model_card|exec|archive|delete/.test(n));
+    const bad = [...all].filter((n) => !n.startsWith("mcp__platform__") || /harness_card|create_model_card|exec|archive|delete/.test(n));
     assert(bad.length === 0, `лишние имена: ${bad.join(", ")}`);
     const fails = reqs.filter((r) => String(r.decision).startsWith("fail"));
     assert(fails.length === 0, `решения фейка: ${fails.map((r) => r.reply_text).join(" | ")}`);
@@ -937,9 +875,9 @@ async function stepMain() {
   const list = panel().locator('ul[aria-label="Журнал действий"] > li');
   await list.first().waitFor({ timeout: 15_000 });
   await shot("changes-tab");
-  await check("vb.changes_tab", "на вкладке «Изменения» 11 строк", async () => {
+  await check("vb.changes_tab", "на вкладке «Изменения» 9 строк", async () => {
     const n = await list.count();
-    assert(n === 11, `строк ${n}`);
+    assert(n === 9, `строк ${n}`);
     return `${n} строк`;
   });
   await panel().getByRole("tab", { name: "Чат" }).click();
@@ -955,7 +893,7 @@ async function stepMain() {
     assert(box.y > 100 && box.y + box.height >= 840, `лист ${JSON.stringify(box)}`);
     return `y=${Math.round(box.y)} h=${Math.round(box.height)}`;
   });
-  cover("builder-batch", "builder-deployment", "builder-update", "builder-session", "builder-message", "builder-harness-draft", "builder-changes");
+  cover("builder-batch", "builder-deployment", "builder-update", "builder-session", "builder-message", "builder-changes");
 }
 
 /** Деплоймент на паузе не запускался: проверка через 2 минуты после создания. */
@@ -1560,7 +1498,7 @@ function writeSummary(abortError) {
     `- URL: ${BASE}, фейк ${run.FAKE_URL}, git ${run.GIT_REV}; хэши изменений: консоль ${run.CONSOLE_TREE_HASH}, сервер ${run.SERVER_TREE_HASH}`,
     `- учётка ${user.email}, пространство ${user.tenant_id}; участник ${member?.user_id ?? "—"}, второй пользователь ${foreign?.user_id ?? "—"}`,
     `- ассистент ${ids.builderAgent ?? "—"} v${ids.builderVersion ?? "?"}, окружение ${ids.builderEnv ?? "—"}, карточка модели ${names.card}; nonce ${nonce}`,
-    `- разговор 6.2 ${ids.mainSession ?? "—"}; окружение ${ids.env ?? "—"}, навык ${ids.skill ?? "—"}, агент ${ids.agent ?? "—"}, деплоймент ${ids.deployment ?? "—"}, сессия ${ids.childSession ?? "—"}, карточка harness ${ids.harnessCard ?? "—"}`,
+    `- разговор 6.2 ${ids.mainSession ?? "—"}; окружение ${ids.env ?? "—"}, навык ${ids.skill ?? "—"}, агент ${ids.agent ?? "—"}, деплоймент ${ids.deployment ?? "—"}, сессия ${ids.childSession ?? "—"}`,
     "",
     "## Проверки",
     "",

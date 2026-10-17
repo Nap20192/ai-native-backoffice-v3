@@ -1057,13 +1057,13 @@ async function stepCreateAgent() {
   await effortBox.filter({ hasText: AGENT_EFFORT.label }).waitFor({ timeout: 10_000 });
   const formShot = await shot("agent-form-model-effort");
   cover("agent-form");
-  const okFormModel = await check("agent.form_model_effort", `в режиме «Форма» выбраны модель ${MODEL} (ключ сервера, без карточек моделей) и усилие «${AGENT_EFFORT.label}», harness «Встроенный цикл»`, async () => {
+  const okFormModel = await check("agent.form_model_effort", `в режиме «Форма» выбраны модель ${MODEL} (ключ сервера, без карточек моделей) и усилие «${AGENT_EFFORT.label}», выбора harness в форме нет`, async () => {
     assert(option, `модели ${MODEL} нет в GET /v1/oma/model_options: ${(options.data ?? []).map((o) => o.handle).join(", ").slice(0, 300)}`);
     assert(option.source === "builtin", `источник ${option.source}, ожидался builtin (ключ сервера)`);
     assert((option.effort_levels ?? []).includes(AGENT_EFFORT.level), `уровни усилия модели: ${JSON.stringify(option.effort_levels)}`);
     assert((await dialog.getByText("Модели не настроены").count()) === 0, "в форме предупреждение «Модели не настроены»");
-    const harnessText = plain(await harnessBox.textContent());
-    assert(harnessText.includes("Встроенный цикл"), `Harness: «${harnessText}»`);
+    // С 2026-10-17 ход ведёт только Pi (D41), поле «Harness» из формы убрано.
+    assert((await harnessBox.count()) === 0, "в форме осталось поле «Harness»");
     const modelText = plain(await modelBox.textContent());
     assert(modelText.includes(option.label) && modelText.includes(MODEL), `Модель: «${modelText}»`);
     const effortText = plain(await effortBox.textContent());
@@ -1111,7 +1111,7 @@ async function stepCreateAgent() {
   cover("agent-detail");
   const agent = await api("GET", `/v1/agents/${ids.agent}`);
   saveJson("31-agent", agent);
-  const okCreated = await check("agent.created", `агент сохранён из формы: имя, модель ${MODEL} с усилием ${AGENT_EFFORT.level}, системный промпт, без _oma.harness`, () => {
+  const okCreated = await check("agent.created", `агент сохранён из формы: имя, модель ${MODEL} с усилием ${AGENT_EFFORT.level}, системный промпт, без _oma.harness и _oma.acp`, () => {
     const modelId = typeof agent.model === "string" ? agent.model : agent.model?.id;
     assert(agent.name === names.agent, `name ${agent.name}`);
     assert(modelId === MODEL, `model ${JSON.stringify(agent.model)}`);
@@ -1131,13 +1131,12 @@ async function stepCreateAgent() {
     assert(enabled !== false, "bash отключён");
     return "api/31-agent.json";
   });
-  await check("agent.detail_ui", `карточка агента в консоли показывает модель, «Усилие: ${AGENT_EFFORT.label.toLowerCase()}» и harness «Встроенный цикл»`, async () => {
+  await check("agent.detail_ui", `карточка агента в консоли показывает модель и «Усилие: ${AGENT_EFFORT.label.toLowerCase()}»`, async () => {
     const props = page.getByRole("region", { name: "Свойства агента" }).first();
     await props.getByText(`Усилие: ${AGENT_EFFORT.label.toLowerCase()}`).first().waitFor({ timeout: 10_000 }).catch(() => {});
     const text = plain(await props.textContent());
     assert(text.includes(MODEL), "в «Свойства агента» нет модели");
     assert(text.includes(`Усилие: ${AGENT_EFFORT.label.toLowerCase()}`), `нет «Усилие: ${AGENT_EFFORT.label.toLowerCase()}»: ${text.slice(0, 200)}`);
-    assert(text.includes("Встроенный цикл"), `нет строки Harness «Встроенный цикл»: ${text.slice(0, 200)}`);
     return ariaFile;
   });
   record("agent.no_environment_field", "окружение выбирается в сессии, у агента его нет (поля в форме нет)",

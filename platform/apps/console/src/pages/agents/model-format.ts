@@ -73,3 +73,7 @@ export function modelMetaLine(option: ModelOption): string {
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 }
+
+/** Пояснения под полями, когда смена модели сбросила усилие или скорость. */
+export const EFFORT_RESET_NOTE = "Усилие сброшено: модель его не поддерживает";
+export const SPEED_RESET_NOTE = "Скорость сброшена: модель не поддерживает быструю скорость";

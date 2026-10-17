@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
 import { ChevronDownIcon } from "lucide-react";
 
@@ -13,10 +13,8 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
 
-import type { HarnessEntry, ModelOption } from "../../lib/catalog-api";
-import { modelDisabledReason } from "./agent-harness";
+import type { ModelOption } from "../../lib/catalog-api";
 import { modelMetaLine } from "./model-format";
 
 interface ModelPickerProps {
@@ -26,8 +24,6 @@ interface ModelPickerProps {
   /** Модели из `GET /v1/oma/model_options`. `undefined`, пока они грузятся. */
   options: ModelOption[] | undefined;
   loading?: boolean;
-  /** Выбранный harness: несовместимые с ним модели видны, но выключены. */
-  harness?: HarnessEntry;
   /** `null` приходит от пункта `emptyLabel`. */
   onChange: (option: ModelOption | null) => void;
   /** Пункт сверху списка, который снимает выбор. Нужен вспомогательной модели. */
@@ -41,8 +37,7 @@ interface ModelPickerProps {
 const TRIGGER_CLS =
   "w-full justify-between gap-2 border-input bg-ddc-surface px-3.5 font-normal text-ddc-text hover:bg-ddc-surface focus-visible:border-ddc-ring focus-visible:ring-2 focus-visible:ring-ddc-ring/30 focus-visible:outline-hidden";
 
-const ITEM_CLS =
-  "h-auto min-h-[var(--menu-picker-row-h)] cursor-pointer items-start py-1.5 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:pointer-events-auto data-[disabled=true]:opacity-100";
+const ITEM_CLS = "h-auto min-h-[var(--menu-picker-row-h)] cursor-pointer items-start py-1.5";
 
 /** Название модели, её handle моноширинным шрифтом и бейдж «По умолчанию». */
 function ModelName({ option }: { option: ModelOption }) {
@@ -64,15 +59,13 @@ function ModelName({ option }: { option: ModelOption }) {
 /**
  * Выбор модели для агента. Список на `Popover` и `Command`: поиск по handle и
  * названию, группы «Карточки моделей» и «Ключ сервера», у строки серая строка
- * с источником, провайдером и контекстом. Несовместимая с harness модель видна,
- * но выключена: причина стоит в строке, в `title` и в `aria-describedby`.
+ * с источником, провайдером и контекстом.
  */
 export function ModelPicker({
   id,
   value,
   options,
   loading,
-  harness,
   onChange,
   emptyLabel,
   placeholder = "Выберите модель…",
@@ -81,7 +74,6 @@ export function ModelPicker({
   "aria-invalid": ariaInvalid,
 }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
-  const baseId = useId();
   const selected = options?.find((option) => option.handle === value);
 
   const cards = (options ?? []).filter((option) => option.source === "card");
@@ -92,38 +84,22 @@ export function ModelPicker({
     setOpen(false);
   };
 
-  const renderItem = (option: ModelOption) => {
-    const reason = modelDisabledReason(option, harness);
-    const reasonId = `${baseId}-${option.handle}-reason`;
-    return (
-      <CommandItem
-        key={option.handle}
-        value={`${option.handle} ${option.label}`}
-        disabled={reason !== null}
-        onSelect={() => choose(option)}
-        data-checked={option.handle === value}
-        title={reason ?? undefined}
-        aria-describedby={reason ? reasonId : undefined}
-        className={ITEM_CLS}
-      >
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className={cn("block min-w-0", reason && "opacity-60")}>
-            <ModelName option={option} />
-          </span>
-          {reason ? (
-            <span
-              id={reasonId}
-              className="text-xs leading-4 text-ddc-warning-text [overflow-wrap:anywhere]"
-            >
-              {reason}
-            </span>
-          ) : (
-            <span className="truncate text-xs text-ddc-text-muted">{modelMetaLine(option)}</span>
-          )}
+  const renderItem = (option: ModelOption) => (
+    <CommandItem
+      key={option.handle}
+      value={`${option.handle} ${option.label}`}
+      onSelect={() => choose(option)}
+      data-checked={option.handle === value}
+      className={ITEM_CLS}
+    >
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="block min-w-0">
+          <ModelName option={option} />
         </span>
-      </CommandItem>
-    );
-  };
+        <span className="truncate text-xs text-ddc-text-muted">{modelMetaLine(option)}</span>
+      </span>
+    </CommandItem>
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

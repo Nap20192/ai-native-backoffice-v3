@@ -15,7 +15,6 @@ export const HELP_TOPICS = [
   "deployment",
   "memory",
   "model_card",
-  "harness",
   "outcome",
   "danger",
   "limits",
@@ -60,10 +59,6 @@ const RULES: Record<Topic, { text: string; tools: string[]; schema?: SchemaKind 
   model_card: {
     text: "Новую карточку модели создаёт человек в форме консоли по черновику preview_change. Ключ, адрес, провайдер и заголовки ассистент не меняет.",
     tools: ["preview_change", "update_model_card", "request_secret"],
-  },
-  harness: {
-    text: "Новую карточку harness создаёт человек в форме консоли. Ассистент правит только name, install, protocols и allowed_env. Команду, аргументы и рабочую папку меняет человек.",
-    tools: ["preview_change", "update_harness_card", "list"],
   },
   outcome: {
     text: "Черновик outcome собирает preview_change с kind outcome: описание, рубрика и max_iterations. Задаёт outcome человек в диалоге сессии.",

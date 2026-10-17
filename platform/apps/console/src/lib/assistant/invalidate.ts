@@ -22,7 +22,6 @@ const LIST_PATH: Record<string, string> = {
   message: "/v1/sessions",
   session_resource: "/v1/sessions",
   model_card: "/v1/oma/model_cards",
-  harness_card: "/v1/oma/harness_cards",
 };
 
 /** Пути списков, которые затронула запись, без повторов и по порядку. */

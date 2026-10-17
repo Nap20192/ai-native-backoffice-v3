@@ -15,10 +15,6 @@
 // backed by SqlClient + a new api_keys table + better-auth on PG/sqlite.
 
 import { createMiddleware } from "hono/factory";
-import {
-  extractHostedInferenceProxyToken,
-  isHostedInferenceProxyPath,
-} from "@open-managed-agents/inference-proxy";
 
 export interface AuthSession {
   userId: string;
@@ -39,13 +35,6 @@ export interface ApiKeyResolution {
         workId: string;
         claimedAt: string;
         generation: number;
-      }
-    | {
-        /** Short-lived token an ACP agent in the session sandbox uses to call
-         * the model through the hosted inference proxy of that session only. */
-        type: "sandbox_inference";
-        sessionId: string;
-        expiresAt: string;
       }
     | PlatformMcpActorCredential;
 }
@@ -138,23 +127,7 @@ function environmentWorkPath(environmentId: string): string {
   return `/v1/environments/${encodeURIComponent(environmentId)}/work`;
 }
 
-const INFERENCE_PROXY_ROOT = "/v1/oma/inference-proxy/";
-
-/** Session id of an inference proxy path, decoded; null for any other path
- * or a malformed escape. */
-function inferenceProxySessionOf(path: string): string | null {
-  if (!path.startsWith(INFERENCE_PROXY_ROOT)) return null;
-  const segment = path.slice(INFERENCE_PROXY_ROOT.length).split("/", 1)[0] ?? "";
-  if (segment.length === 0) return null;
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
-}
-
-/** Environment service keys are Bearer-only and cannot escape their Work API.
- * A sandbox inference token opens only the inference proxy of its session. */
+/** Environment service keys are Bearer-only and cannot escape their Work API. */
 export function allowsApiKeyRequest(
   resolution: ApiKeyResolution,
   request: Pick<BearerTokenRequest, "path"> & { transport: "bearer" | "x-api-key" },
@@ -166,9 +139,6 @@ export function allowsApiKeyRequest(
     if (credential.kind === "route") return platformMcpRouteAllowed(credential, request.path);
     return false;
   }
-  if (resolution.credential?.type === "sandbox_inference") {
-    return inferenceProxySessionOf(request.path) === resolution.credential.sessionId;
-  }
   if (resolution.credential?.type === "environment") {
     if (request.transport !== "bearer") return false;
     const root = environmentWorkPath(resolution.credential.environmentId);
@@ -177,8 +147,7 @@ export function allowsApiKeyRequest(
   if (resolution.credential?.type === "environment_work_session") {
     // The cryptographic Work-token resolver already validates the exact
     // Session/Work route, method, claim generation, and expiry.
-    if (request.transport === "bearer") return true;
-    return request.transport === "x-api-key" && isHostedInferenceProxyPath(request.path);
+    return request.transport === "bearer";
   }
 
   // A workspace key may administer Work through the normal x-api-key API,
@@ -277,31 +246,6 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps) {
       // middleware (apps/main has its own auth.ts), so the blast radius is
       // dev-only.
       c.set("user_id", "default");
-      return next();
-    }
-
-    if (isHostedInferenceProxyPath(c.req.path)) {
-      const presented = extractHostedInferenceProxyToken(c.req.raw.headers);
-      if (presented.status === "missing") {
-        return c.json(authenticationFailure(c.req.path, "Unauthorized"), 401);
-      }
-      if (presented.status === "mismatch") {
-        return c.json(authenticationFailure(c.req.path, "Conflicting credentials"), 401);
-      }
-      const resolved = await resolvePresentedApiCredential(deps, {
-        token: presented.token,
-        method: c.req.method,
-        path: c.req.path,
-        transport: presented.transport,
-      });
-      if (!resolved) {
-        const message = presented.transport === "bearer"
-          ? "Invalid bearer token"
-          : "Invalid API key";
-        return c.json(authenticationFailure(c.req.path, message), 401);
-      }
-      const denied = await applyResolvedCredential(deps, c, resolved, presented.transport);
-      if (denied) return denied;
       return next();
     }
 

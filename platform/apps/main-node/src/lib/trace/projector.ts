@@ -1,4 +1,3 @@
-import { isAcpHarness } from "./harness-coverage.js";
 import { spanIdFor, turnSpanIdFor, type TraceIdSpace } from "./ids.js";
 import type {
   TraceAttrs,
@@ -145,7 +144,6 @@ class Projector implements TraceProjector {
   private readonly sessionId: string;
   private readonly harness: string | null;
   private readonly mode: "live" | "history";
-  private readonly acp: boolean;
   private readonly runnerPhases: boolean;
   private readonly nodes = new Map<string, Node>();
   private readonly dirty = new Set<string>();
@@ -177,7 +175,6 @@ class Projector implements TraceProjector {
     this.sessionId = options.sessionId;
     this.harness = options.harness ?? null;
     this.mode = options.mode ?? "live";
-    this.acp = isAcpHarness(options.harness);
     this.runnerPhases = options.runnerPhases === true;
   }
 
@@ -242,12 +239,11 @@ class Projector implements TraceProjector {
   private coverage(): TraceCoverage {
     const spans = this.spans();
     const models = spans.filter((span) => span.kind === "model_call");
-    const prompts = spans.filter((span) => span.kind === "acp_prompt");
     const tools = spans.filter((span) => span.kind === "tool_call");
     const execs = spans.filter((span) => span.kind === "tool_exec");
     const modelCalls: TraceCoverage["model_calls"] = models.length > 0
       ? models.every((span) => span.precision === "measured") ? "measured" : "by_events"
-      : prompts.length > 0 ? "turn_only" : "absent";
+      : "absent";
     const executed = tools.filter((span) => span.status !== "waiting" && span.status !== "denied" && span.status !== "cancelled");
     const toolCoverage: TraceCoverage["tools"] = tools.length === 0
       ? "absent"
@@ -861,7 +857,7 @@ class Projector implements TraceProjector {
     const key = id ?? `${thread}:${at}`;
     const atMs = num(frame, "at_ms");
     const node = this.open({
-      kind: this.acp ? "acp_prompt" : "model_call",
+      kind: "model_call",
       space: "events",
       key,
       parent: this.parentFor(thread),

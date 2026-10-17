@@ -1,13 +1,12 @@
 // Dependencies of archive and delete in main-node (docs/plans/crud.md, 1.2,
-// A4, A13, A14). node-http.ts mounts the route and hands the checks to the
-// model card and harness card routes; the logic stays here.
+// A4, A13, A14). node-http.ts mounts the route and hands the check to the
+// model card routes; the logic stays here.
 //
 // - GET /v1/oma/dependencies/:kind/:id?operation=archive|delete answers the
-//   report of the workspace application. Cards are found by their id here:
-//   model_card turns into the agents with that model_id, harness_card into
-//   the agents with that harness_id.
-// - modelCardDependencyCheck, harnessCardDependencyCheck: the checks the
-//   card routes run before archive and delete.
+//   report of the workspace application. A model card is found by its id
+//   here and turns into the agents with that model_id.
+// - modelCardDependencyCheck: the check the card routes run before archive
+//   and delete.
 import { Hono, type Context } from "hono";
 import { buildDependencyRoutes } from "@open-managed-agents/managed-agents-api";
 import type { DependenciesApplicationPort } from "@open-managed-agents/managed-agents-application";
@@ -16,21 +15,18 @@ import {
   type ModelCardDependencyCheck,
 } from "@open-managed-agents/http-routes";
 import type { ModelCardService } from "@open-managed-agents/model-cards-store";
-import type { HarnessCardDependencyCheck, HarnessCardStore } from "./harness-cards/index.js";
 
 export type DependenciesForWorkspace = (workspaceId: string) => DependenciesApplicationPort;
 
 export interface CrudDependencyRoutesDeps {
   dependenciesFor: DependenciesForWorkspace;
   modelCards: ModelCardService;
-  /** null on MySQL: no harness cards there. */
-  harnessCards: HarnessCardStore | null;
 }
 
 /** The report of one card or an empty report, as the card routes expect it. */
 async function reportOf(
   dependencies: DependenciesApplicationPort,
-  kind: "model" | "harness",
+  kind: "model",
   id: string,
   operation: "archive" | "delete",
 ) {
@@ -45,13 +41,6 @@ export function modelCardDependencyCheck(
 ): ModelCardDependencyCheck {
   return ({ tenantId, modelId, operation }) =>
     reportOf(dependenciesFor(tenantId), "model", modelId, operation);
-}
-
-export function harnessCardDependencyCheck(
-  dependenciesFor: DependenciesForWorkspace,
-): HarnessCardDependencyCheck {
-  return ({ workspaceId, harnessId, operation }) =>
-    reportOf(dependenciesFor(workspaceId), "harness", harnessId, operation);
 }
 
 function workspaceOf(c: Context): string {
@@ -96,20 +85,6 @@ export function buildCrudDependencyRoutes(deps: CrudDependencyRoutesDeps): Hono 
       },
       { tenantId, card, operation },
     ), 200);
-  });
-
-  app.get("/harness_card/:id", async (c) => {
-    const operation = operationOf(c);
-    if (operation === null) return invalidOperation(c);
-    const workspaceId = workspaceOf(c);
-    const card = deps.harnessCards === null
-      ? null
-      : await deps.harnessCards.get(workspaceId, c.req.param("id"));
-    if (card === null) return cardNotFound(c, "harness_card", c.req.param("id"));
-    return c.json(
-      await reportOf(deps.dependenciesFor(workspaceId), "harness", card.harness_id, operation),
-      200,
-    );
   });
 
   app.route("/", buildDependencyRoutes((c) => deps.dependenciesFor(workspaceOf(c))));

@@ -29,10 +29,9 @@ describe("platform MCP read tools", () => {
     fake.addMemory(store.id, "/other/b.md", "b");
     const filtered = parse((await fake.call("list", { kind: "memories", filter: { memory_store_id: store.id, path_prefix: "/notes" } })).text);
     expect(filtered.data.map((m: { path: string }) => m.path)).toEqual(["/notes/a.md"]);
-    fake.addHarnessCard({ id: "hc_1", name: "Codex локально" });
-    const cards = parse((await fake.call("list", { kind: "harness_cards", filter: { q: "codex" } })).text);
-    expect(cards.data).toHaveLength(1);
-    expect(fake.calls.some((call) => call.path.includes("path_prefix=%2Fnotes") || call.path.includes("q=codex"))).toBe(false);
+    expect(fake.calls.some((call) => call.path.includes("path_prefix=%2Fnotes"))).toBe(false);
+    // Harness cards are gone (D41): list has no such kind.
+    expect((await fake.call("list", { kind: "harness_cards" })).isError).toBe(true);
     const missing = await fake.call("list", { kind: "memories" });
     expect(missing.isError).toBe(true);
   });
@@ -167,25 +166,25 @@ describe("platform MCP write tools", () => {
     expect((await fake.preview(badCron)).body.invalid).toBe("Расписание cron не разбирается");
   });
 
-  it("keeps keys, addresses and commands of the cards out of the assistant's hands", async () => {
+  it("keeps keys and addresses of the model cards out of the assistant's hands", async () => {
     const fake = setup();
     const card = fake.addModelCard({ id: "mc_1" });
     for (const field of ["api_key", "custom_headers", "provider", "base_url"]) {
       const result = await fake.call("update_model_card", { model_card_id: card.id, changes: { [field]: "x" } });
       expect(result.isError, field).toBe(true);
     }
-    const harness = fake.addHarnessCard({ id: "hc_1" });
-    for (const field of ["command", "args", "cwd", "harness_id", "env"]) {
-      expect((await fake.call("update_harness_card", { harness_card_id: harness.id, changes: { [field]: "x" } })).isError, field).toBe(true);
-    }
     expect(fake.writes().filter((call) => call.path.startsWith("/v1/oma/"))).toHaveLength(0);
-    const ok = await fake.confirmAndRun("update_harness_card", { harness_card_id: harness.id, changes: { name: "Новое", install: { npm: ["pkg"] }, protocols: ["openai-chat"], allowed_env: ["MODE"] } });
-    expect(ok.isError, ok.text).toBe(false);
-    expect(fake.harnessCard(harness.id)).toMatchObject({ name: "Новое", command: "agent" });
     const modelDraft = parse((await fake.call("preview_change", { kind: "model_card", body: { model_id: "qwen", model: "qwen", api_key: "k", custom_headers: { A: "b" } } })).text);
     expect(modelDraft.after_yaml).not.toMatch(/api_key|custom_headers/);
-    const harnessDraft = parse((await fake.call("preview_change", { kind: "harness_card", body: { name: "Мой", install: { npm: ["a"] }, protocols: ["openai-chat"], allowed_env: [], command: "rm", args: ["-rf"], cwd: "/", harness_id: "x" } })).text);
-    expect(harnessDraft.after_yaml).not.toMatch(/command|args|cwd|harness_id/);
+  });
+
+  it("has no harness card tools (D41)", async () => {
+    const fake = setup();
+    expect((await fake.call("update_harness_card", { harness_card_id: "hc_1", changes: { name: "x" } })).isError).toBe(true);
+    expect((await fake.call("preview_change", { kind: "harness_card", body: { name: "Мой" } })).isError).toBe(true);
+    expect((await fake.call("archive_object", { kind: "harness_card", id: "hc_1" })).isError).toBe(true);
+    expect((await fake.call("help", { topic: "harness" })).isError).toBe(true);
+    expect(fake.writes()).toHaveLength(0);
   });
 
   it("creates skills by the spec, uploads files and writes memory on a free and a taken path", async () => {

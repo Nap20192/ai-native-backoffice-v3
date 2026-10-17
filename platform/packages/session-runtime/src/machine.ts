@@ -39,8 +39,8 @@ import type { OrphanTurn, RuntimeAdapter, TurnId } from "./ports";
 import type { SandboxPort } from "@open-managed-agents/sandbox";
 
 /**
- * Pluggable harness — both CF and Node want the same default-loop
- * harness, but the machine doesn't import it directly so we keep the
+ * Pluggable harness — both CF and Node want the same Pi harness, but
+ * the machine doesn't import it directly so we keep the
  * package's dep graph small (no `@open-managed-agents/agent` dep).
  *
  * The shell wires this with:

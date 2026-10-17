@@ -51,8 +51,8 @@ export const SECRET_FIELDS: readonly SecretField[] = [
     kind: "agent",
     path: "_oma.acp.agent.env{secret}",
     label: "secret",
-    source: "P/managed-agents-api/src/contracts/agents.ts:171",
-    note: "значения env с секретным именем у ACP-агента",
+    source: "сохранённые версии агентов до D41 (openma.acp)",
+    note: "значения env с секретным именем у старого ACP-агента: API их не отдаёт, сканер их по-прежнему скрывает",
   },
   {
     kind: "session",
@@ -72,8 +72,8 @@ export const SECRET_FIELDS: readonly SecretField[] = [
     kind: "session",
     path: "agent._oma.acp.agent.env{secret}",
     label: "secret",
-    source: "P/managed-agents-api/src/contracts/agents.ts:171",
-    note: "ACP-агент в конфигурации сессии",
+    source: "сохранённые сессии до D41 (agent.openma.acp)",
+    note: "старый ACP-агент в конфигурации сессии, как у агента",
   },
   {
     kind: "session",

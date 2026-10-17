@@ -51,6 +51,7 @@ export function genaiSpanName(span: TraceSpan): string {
   switch (span.kind) {
     case "turn":
     case "subagent": return `invoke_agent ${span.name}`;
+    // Stored spans of old ACP turns still export.
     case "acp_prompt": return `invoke_agent ${span.harness ?? span.name}`;
     case "model_call": return `chat ${span.model ?? span.name}`;
     case "tool_call": return `execute_tool ${span.tool?.name ?? span.name}`;

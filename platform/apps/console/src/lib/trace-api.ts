@@ -23,6 +23,10 @@ import { useApi } from "./api";
  * Отсутствующее поле читается как пустое, лишнее игнорируется.
  */
 
+/**
+ * `acp_prompt` встречается только в старых трейсах: сервер такие отрезки больше
+ * не пишет. Вид остаётся в списке, иначе разбор выбросил бы сохранённые отрезки.
+ */
 export type TraceSpanKind =
   | "turn" | "sandbox" | "sandbox_phase" | "harness_start" | "acp_prompt"
   | "agent_step" | "model_call" | "tool_call" | "tool_wait" | "tool_exec" | "subagent"

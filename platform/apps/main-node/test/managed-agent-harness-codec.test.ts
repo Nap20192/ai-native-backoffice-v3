@@ -50,17 +50,6 @@ const session: Session = {
       },
       appendablePrompts: ["prompt_review"],
       harness: "pi",
-      acp: {
-        agent: { id: "pi", command: "pi-acp", args: ["--stdio"] },
-        restart: { mode: "on-crash", maxRestarts: 2, windowMs: 30_000 },
-        idleTimeoutMs: 60_000,
-        perTurnTimeoutMs: 120_000,
-      },
-      runtimeBinding: {
-        runtimeId: "runtime_local",
-        acpAgentId: "pi",
-        localSkillBlocklist: ["unsafe-skill"],
-      },
       enableGeneralSubagent: true,
     },
     skills: [{ type: "custom", skillId: "skill_review", version: "3" }],
@@ -276,22 +265,30 @@ describe("managed Agent to legacy Node harness codec", () => {
       },
       appendable_prompts: ["prompt_review"],
       harness: "pi",
-      acp: {
-        agent: { id: "pi", command: "pi-acp", args: ["--stdio"] },
-        restart: { mode: "on-crash", max_restarts: 2, window_ms: 30_000 },
-        idle_timeout_ms: 60_000,
-        per_turn_timeout_ms: 120_000,
-      },
-      runtime_binding: {
-        runtime_id: "runtime_local",
-        acp_agent_id: "pi",
-        local_skill_blocklist: ["unsafe-skill"],
-      },
       enable_general_subagent: true,
       version: 4,
       created_at: "2026-08-26T00:00:00.000Z",
       updated_at: "2026-08-26T00:00:01.000Z",
     });
+  });
+
+  it("passes a legacy harness name to the registry and drops stored ACP fields (D41)", () => {
+    const legacy = {
+      ...session,
+      agent: {
+        ...session.agent,
+        openma: {
+          harness: "acp-sandbox",
+          // Fields of an agent saved before D41; the domain no longer has them.
+          acp: { agent: { id: "claude-acp", command: "claude-agent-acp" } },
+          runtimeBinding: { runtimeId: "runtime_local", acpAgentId: "claude-acp" },
+        },
+      },
+    } as unknown as Session;
+    const encoded = toLegacyHarnessAgentConfig(legacy) as unknown as Record<string, unknown>;
+    expect(encoded.harness).toBe("acp-sandbox");
+    expect(encoded).not.toHaveProperty("acp");
+    expect(encoded).not.toHaveProperty("runtime_binding");
   });
 
   it("creates a non-mutating executable copy for confirmed tool execution", () => {

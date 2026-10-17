@@ -24,7 +24,7 @@ import {
   type ToolDef,
 } from "./common";
 
-export const ARCHIVE_KINDS = ["agent", "environment", "session", "deployment", "memory_store", "model_card", "harness_card"] as const;
+export const ARCHIVE_KINDS = ["agent", "environment", "session", "deployment", "memory_store", "model_card"] as const;
 export const DELETE_KINDS = [
   "agent",
   "environment",
@@ -36,7 +36,6 @@ export const DELETE_KINDS = [
   "memory",
   "session_resource",
   "model_card",
-  "harness_card",
 ] as const;
 
 type DangerKind = (typeof DELETE_KINDS)[number] | (typeof ARCHIVE_KINDS)[number];
@@ -195,17 +194,6 @@ const SPECS: Readonly<Record<DangerKind, KindSpec>> = {
     dependency: "model_card",
     routes: { archive: ROUTES.modelCardArchive, unarchive: ROUTES.modelCardUnarchive, delete: ROUTES.modelCardDelete },
   },
-  harness_card: {
-    noun: "карточка harness",
-    notFound: "Карточка harness не найдена",
-    shape: "harness_card",
-    path: (t) => `/v1/oma/harness_cards/${enc(t.id)}`,
-    revisionField: "updated_at",
-    revisionOf: async (_ctx, _t, found) => found.revision ?? found.raw?.created_at ?? null,
-    precondition: "if_match",
-    dependency: "harness_card",
-    routes: { archive: ROUTES.harnessCardArchive, unarchive: ROUTES.harnessCardUnarchive, delete: ROUTES.harnessCardDelete },
-  },
 };
 
 const BUILDER_ROLE = "builder";
@@ -334,7 +322,7 @@ function makeOp(operation: Operation): ToolDef<any>["op"] {
 
 function routesOf(operation: Operation): RouteRule[] {
   const rules = Object.values(SPECS).flatMap((spec) => (spec.routes[operation] ? [spec.routes[operation]!] : []));
-  const reads = [ROUTES.agent, ROUTES.environment, ROUTES.session, ROUTES.deployment, ROUTES.file, ROUTES.skill, ROUTES.skillVersion, ROUTES.memoryStore, ROUTES.memory, ROUTES.sessionResource, ROUTES.modelCard, ROUTES.harnessCard];
+  const reads = [ROUTES.agent, ROUTES.environment, ROUTES.session, ROUTES.deployment, ROUTES.file, ROUTES.skill, ROUTES.skillVersion, ROUTES.memoryStore, ROUTES.memory, ROUTES.sessionResource, ROUTES.modelCard];
   const dependencies = operation === "unarchive" ? [] : Object.values(DEPENDENCY_ROUTES);
   return [...rules, ...reads, ...dependencies];
 }

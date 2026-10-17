@@ -1,7 +1,6 @@
-// The managed runner hands the turn's user message to the harness. Harnesses
-// that take the prompt from `ctx.userMessage` (acp-sandbox: Claude Code and
-// other ACP agents in the sandbox) otherwise fail with "Could not extract text
-// from user message — empty turn".
+// The managed runner hands the turn's user message to the harness in
+// `ctx.userMessage`. Pi reads the turn from the history, so a turn without
+// text still runs.
 
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -66,18 +65,12 @@ describe("latestAcceptedUserMessage", () => {
 describe("harnessUserMessage", () => {
   const confirmation = [{ type: "user.tool_confirmation", result: "allow", toolUseId: "toolu_1" }];
 
-  it("refuses an acp-sandbox turn without prompt text, naming the events", () => {
-    expect(() => harnessUserMessage(confirmation, "acp-sandbox")).toThrow(
-      /acp-sandbox.*no user message text.*user\.tool_confirmation/,
-    );
+  it("gives an empty prompt to a turn without text (Pi reads the history)", () => {
+    expect(harnessUserMessage(confirmation)).toEqual({ type: "user.message", content: [] });
   });
 
-  it("lets other harnesses take an empty prompt (they read the history)", () => {
-    expect(harnessUserMessage(confirmation, undefined)).toEqual({ type: "user.message", content: [] });
-  });
-
-  it("passes the prompt text to acp-sandbox", () => {
-    expect(harnessUserMessage([{ type: "user.message", content: [{ type: "text", text: "run" }] }], "acp-sandbox"))
+  it("passes the prompt text", () => {
+    expect(harnessUserMessage([{ type: "user.message", content: [{ type: "text", text: "run" }] }]))
       .toEqual({ type: "user.message", content: [{ type: "text", text: "run" }] });
   });
 });

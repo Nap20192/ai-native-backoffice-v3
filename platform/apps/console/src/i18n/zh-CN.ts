@@ -56,7 +56,6 @@ export const zhCN: Messages = {
     memoryStores: "记忆存储",
     modelCards: "模型卡",
     apiKeys: "API 密钥",
-    localRuntimes: "本地运行时",
     integrations: "集成",
     members: "成员",
   },
@@ -256,12 +255,5 @@ export const zhCN: Messages = {
     noMemoryStoresYet: "还没有记忆存储",
     mountPathHint: "挂载路径将变为",
     settingsArchiveHint: "如需归档或删除此存储，请使用页面顶部的操作按钮。",
-  },
-
-  runtimes: {
-    connectRuntime: "连接运行时",
-    searchRuntimes: "搜索运行时…",
-    noMatchingRuntimes: "没有匹配的运行时",
-    noRuntimesYet: "还没有运行时",
   },
 };

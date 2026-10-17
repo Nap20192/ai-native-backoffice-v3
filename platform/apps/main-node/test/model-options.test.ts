@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { BUILTIN_HARNESSES } from "../src/lib/harness-catalog.js";
 import {
   listModelOptions,
   type ModelOptionCard,
@@ -50,18 +49,16 @@ function deps(cards: ModelOptionCard[], available = false): ModelOptionsDeps {
   };
 }
 
-const harnesses = [...BUILTIN_HARNESSES];
-
 describe("listModelOptions", () => {
   it("is empty without cards and without a server key", async () => {
-    expect(await listModelOptions(deps([]), "ws_1", harnesses)).toEqual({
+    expect(await listModelOptions(deps([]), "ws_1")).toEqual({
       builtin_available: false,
       data: [],
     });
   });
 
   it("lists the Pi anthropic catalog when the server has a key", async () => {
-    const result = await listModelOptions(deps([], true), "ws_1", harnesses);
+    const result = await listModelOptions(deps([], true), "ws_1");
     const anthropic = builtinProviders().find((provider) => provider.id === "anthropic")!.getModels();
     expect(result.builtin_available).toBe(true);
     expect(result.data.map((option) => option.handle)).toEqual(anthropic.map((model) => model.id));
@@ -81,7 +78,7 @@ describe("listModelOptions", () => {
       max_output_tokens: pi.maxTokens,
       effort_levels: piEffort(pi),
       speed_fast: true,
-      harnesses: ["pi", "claude-acp"],
+      harnesses: ["pi"],
     });
     expect(sonnet.effort_levels).toEqual(["low", "medium", "high", "max"]);
   });
@@ -89,7 +86,7 @@ describe("listModelOptions", () => {
   it("hides a built-in model behind an active card with the same handle", async () => {
     const result = await listModelOptions(deps([
       card({ id: "mc_same", model_id: "claude-sonnet-4-6", model: "claude-sonnet-4-6" }),
-    ], true), "ws_1", harnesses);
+    ], true), "ws_1");
     const matches = result.data.filter((option) => option.handle === "claude-sonnet-4-6");
     expect(matches).toHaveLength(1);
     expect(matches[0]).toMatchObject({ source: "card", card_id: "mc_same" });
@@ -99,7 +96,7 @@ describe("listModelOptions", () => {
     const result = await listModelOptions(deps([
       card({ model_id: "claude-sonnet-4-6", archived_at: "2026-10-15T00:00:00.000Z" }),
       card({ model_id: "gone", archived_at: "2026-10-15T00:00:00.000Z" }),
-    ], true), "ws_1", harnesses);
+    ], true), "ws_1");
     expect(result.data.some((option) => option.handle === "gone")).toBe(false);
     expect(result.data.find((option) => option.handle === "claude-sonnet-4-6")!.source).toBe("builtin");
   });
@@ -111,7 +108,7 @@ describe("listModelOptions", () => {
       card({ model_id: "newer", created_at: "2026-10-05T00:00:00.000Z" }),
       card({ id: "mc_z", model_id: "same-time-z", created_at: "2026-10-03T00:00:00.000Z" }),
       card({ id: "mc_a", model_id: "same-time-a", created_at: "2026-10-03T00:00:00.000Z" }),
-    ], true), "ws_1", harnesses);
+    ], true), "ws_1");
     expect(result.data.slice(0, 5).map((option) => option.handle)).toEqual([
       "default", "newer", "same-time-z", "same-time-a", "older",
     ]);
@@ -132,7 +129,7 @@ describe("listModelOptions", () => {
       card({ model_id: "oai", model: "gpt-5", provider: "openai" }),
       card({ model_id: "oai-plain", model: "gpt-4o", provider: "oai" }),
       custom,
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     const byHandle = new Map(result.data.map((option) => [option.handle, option]));
 
     const opus = piModel("anthropic", "claude-opus-4-7");
@@ -180,46 +177,30 @@ describe("listModelOptions", () => {
   it("turns speed off for an API without fast mode", async () => {
     const result = await listModelOptions(deps([
       card({ model_id: "gem", model: "my-gemini", provider: "custom-gemini", pi_config: { api: "google-generative-ai" } }),
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     expect(result.data[0]).toMatchObject({ api: "google-generative-ai", speed_fast: false, effort_levels: [] });
   });
 
-  it("derives proxy protocols and compatible harnesses from the provider", async () => {
+  it("derives protocols from the provider and lists the one harness pi (D41)", async () => {
     const result = await listModelOptions(deps([
       card({ model_id: "anthropic-card", provider: "anthropic" }),
       card({ model_id: "deepseek-card", model: "deepseek-v4-pro", provider: "deepseek" }),
       card({ model_id: "router-card", model: "anthropic/claude-sonnet-4.5", provider: "openrouter" }),
       card({ model_id: "openai-card", model: "gpt-5", provider: "openai" }),
       card({ model_id: "google-card", model: "gemini-2.5-pro", provider: "google" }),
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     const byHandle = new Map(result.data.map((option) => [option.handle, option]));
-    expect(byHandle.get("anthropic-card")).toMatchObject({
-      protocols: ["anthropic-messages"],
-      harnesses: ["pi", "claude-acp"],
-    });
-    expect(byHandle.get("deepseek-card")!.protocols).toEqual(["openai-chat", "anthropic-messages"]);
-    expect(byHandle.get("deepseek-card")!.harnesses).toEqual(
-      expect.arrayContaining(["pi", "claude-acp", "opencode"]),
-    );
+    expect(byHandle.get("anthropic-card")).toMatchObject({ protocols: ["anthropic-messages"], harnesses: ["pi"] });
+    expect(byHandle.get("deepseek-card")).toMatchObject({ protocols: ["openai-chat", "anthropic-messages"], harnesses: ["pi"] });
     expect(byHandle.get("router-card")).toMatchObject({ protocols: [], harnesses: ["pi"] });
-    expect(byHandle.get("openai-card")).toMatchObject({
-      protocols: ["openai-chat", "openai-responses"],
-      harnesses: ["pi", "codex-acp", "opencode", "kimi-code", "pi-acp"],
-    });
-    expect(byHandle.get("google-card")).toMatchObject({ protocols: ["gemini"], harnesses: ["pi", "gemini"] });
-  });
-
-  it("lists compatible harnesses whatever their status", async () => {
-    const unavailable = harnesses.map((entry) =>
-      entry.runtime_harness ? { ...entry, status: "unavailable" as const, reason: "x" } : entry);
-    const result = await listModelOptions(deps([card({ model_id: "a" })]), "ws_1", unavailable);
-    expect(result.data[0]!.harnesses).toEqual(["pi", "claude-acp"]);
+    expect(byHandle.get("openai-card")).toMatchObject({ protocols: ["openai-chat", "openai-responses"], harnesses: ["pi"] });
+    expect(byHandle.get("google-card")).toMatchObject({ protocols: ["gemini"], harnesses: ["pi"] });
   });
 
   it("falls back to the handle and nulls for a model unknown to Pi", async () => {
     const result = await listModelOptions(deps([
       card({ model_id: "mystery", model: "no-such-model-xyz", provider: "custom-llm" }),
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     expect(result.data[0]).toEqual({
       handle: "mystery",
       label: "mystery",
@@ -244,7 +225,7 @@ describe("listModelOptions", () => {
       card({ model_id: "new-claude", model: "claude-not-in-pi-yet", provider: "anthropic" }),
       card({ model_id: "compat", model: "my-model", provider: "ant-compatible", base_url: "https://llm.local/v1" }),
       card({ model_id: "oai-compat", model: "my-model", provider: "oai-compatible", base_url: "https://llm.local/v1" }),
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     const byHandle = new Map(result.data.map((option) => [option.handle, option]));
     expect(byHandle.get("new-claude")).toMatchObject({
       label: "new-claude",
@@ -259,7 +240,7 @@ describe("listModelOptions", () => {
       provider: "anthropic-compatible",
       api: "anthropic-messages",
       protocols: ["anthropic-messages"],
-      harnesses: ["pi", "claude-acp"],
+      harnesses: ["pi"],
     });
     expect(byHandle.get("oai-compat")).toMatchObject({
       provider: "openai-compatible",
@@ -273,20 +254,20 @@ describe("listModelOptions", () => {
     // findPiCatalogModel("gpt-5") alone finds the azure entry with another API.
     const result = await listModelOptions(deps([
       card({ model_id: "oai", model: "gpt-5", provider: "openai" }),
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     expect(result.data[0]).toMatchObject({ api: "openai-responses", speed_fast: true });
   });
 
   it("survives a malformed pi_config", async () => {
     const result = await listModelOptions(deps([
       card({ model_id: "broken", model: "custom-x", provider: "custom", pi_config: { api: "openai-completions", thinkingLevelMap: 42 } as Record<string, unknown> }),
-    ]), "ws_1", harnesses);
+    ]), "ws_1");
     expect(result.data[0]!.handle).toBe("broken");
   });
 
   it("never returns key material", async () => {
     const withKey = { ...card({ model_id: "k" }), api_key_preview: "abcd", api_key: "sk-secret" } as ModelOptionCard;
-    const result = await listModelOptions(deps([withKey]), "ws_1", harnesses);
+    const result = await listModelOptions(deps([withKey]), "ws_1");
     expect(JSON.stringify(result)).not.toContain("abcd");
     expect(JSON.stringify(result)).not.toContain("sk-secret");
   });

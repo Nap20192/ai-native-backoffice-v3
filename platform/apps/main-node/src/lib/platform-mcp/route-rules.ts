@@ -104,14 +104,6 @@ export const ROUTES = {
   modelCardUnarchive: post("/v1/oma/model_cards/:id/unarchive"),
   modelCardDelete: del("/v1/oma/model_cards/:id", IF_MATCH),
   modelOptions: get("/v1/oma/model_options"),
-
-  harnesses: get("/v1/oma/harnesses"),
-  harnessCards: get("/v1/oma/harness_cards"),
-  harnessCard: get("/v1/oma/harness_cards/:id"),
-  harnessCardUpdate: post("/v1/oma/harness_cards/:id", "harness_card_safe"),
-  harnessCardArchive: post("/v1/oma/harness_cards/:id/archive", IF_MATCH),
-  harnessCardUnarchive: post("/v1/oma/harness_cards/:id/unarchive"),
-  harnessCardDelete: del("/v1/oma/harness_cards/:id", IF_MATCH),
 } as const satisfies Record<string, RouteRule>;
 
 /**
@@ -128,7 +120,6 @@ export const DEPENDENCY_KINDS = [
   "skill_version",
   "memory_store",
   "model_card",
-  "harness_card",
 ] as const;
 
 export type DependencyKind = (typeof DEPENDENCY_KINDS)[number];

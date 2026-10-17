@@ -55,10 +55,8 @@ export type DeleteAgentRecordResult =
 
 /**
  * Agents that reference another object (docs/plans/crud.md, 1.3). Every set
- * filter must match. `harness` matches `openma.harness` or the ACP agent id
- * `openma.acp.agent.id`, the key a harness card is found by. With
- * `allVersions` the old versions of every agent are searched too and each
- * matching version comes back as its own record.
+ * filter must match. With `allVersions` the old versions of every agent are
+ * searched too and each matching version comes back as its own record.
  */
 export interface ListReferencingAgentRecords {
   workspaceId: string;
@@ -68,7 +66,6 @@ export interface ListReferencingAgentRecords {
   skillId?: string;
   skillVersion?: string;
   model?: string;
-  harness?: string;
 }
 
 export interface AgentListPosition {
@@ -109,7 +106,7 @@ export interface AgentStore {
 /** True when the agent matches every filter of {@link ListReferencingAgentRecords}. */
 export function agentReferences(
   agent: AgentRecord,
-  filter: Pick<ListReferencingAgentRecords, "skillId" | "skillVersion" | "model" | "harness">,
+  filter: Pick<ListReferencingAgentRecords, "skillId" | "skillVersion" | "model">,
 ): boolean {
   if (filter.skillId !== undefined) {
     const matches = agent.skills.some((skill) =>
@@ -120,11 +117,5 @@ export function agentReferences(
     return false;
   }
   if (filter.model !== undefined && agent.model.id !== filter.model) return false;
-  if (filter.harness !== undefined) {
-    const openma = agent.openma;
-    if (openma?.harness !== filter.harness && openma?.acp?.agent.id !== filter.harness) {
-      return false;
-    }
-  }
   return true;
 }

@@ -194,8 +194,6 @@ export class DependenciesApplicationService implements DependenciesApplicationPo
         return { type: "report", report: EMPTY_REPORT };
       case "model":
         return this.model(query);
-      case "harness":
-        return this.harness(query);
       case "vault":
         return this.vault(query);
     }
@@ -260,7 +258,7 @@ export class DependenciesApplicationService implements DependenciesApplicationPo
   }
 
   private async agentsWhere(
-    filter: { skillId?: string; skillVersion?: string; model?: string; harness?: string },
+    filter: { skillId?: string; skillVersion?: string; model?: string },
     state: "live" | "archived" | "any_version",
     note: (agent: AgentRecord) => string,
   ): Promise<Rows> {
@@ -576,32 +574,6 @@ export class DependenciesApplicationService implements DependenciesApplicationPo
       report: report(
         [await this.agentsWhere(filter, "live", () => "агент работает на этой модели")],
         [await this.agentsWhere(filter, "archived", () => "агент в архиве")],
-      ),
-    };
-  }
-
-  private async harness(query: CheckDependenciesQuery): Promise<CheckDependenciesResult> {
-    const filter = { harness: query.id };
-    if (query.operation === "archive") {
-      return {
-        type: "report",
-        report: report(
-          [await this.agentsWhere(filter, "live", () => "агент работает на этом harness")],
-          [],
-        ),
-      };
-    }
-    return {
-      type: "report",
-      report: report(
-        [await this.agentsWhere(
-          filter,
-          "any_version",
-          (agent) => agent.archivedAt === null
-            ? "агент работает на этом harness"
-            : "агент в архиве, его ход читает карточку",
-        )],
-        [],
       ),
     };
   }

@@ -44,8 +44,6 @@ function formatAgent(agent: AgentConfig) {
         : { id: agent.aux_model.id, speed: agent.aux_model.speed || ("standard" as const) };
   }
   if (agent.harness) oma.harness = agent.harness;
-  if (agent.acp) oma.acp = agent.acp;
-  if (agent.runtime_binding) oma.runtime_binding = agent.runtime_binding;
   if (agent.appendable_prompts && agent.appendable_prompts.length > 0) {
     oma.appendable_prompts = agent.appendable_prompts;
   }
@@ -63,15 +61,17 @@ function formatAgent(agent: AgentConfig) {
         }
       : null;
 
+  // Agents stored before the ACP harnesses were removed may still carry
+  // `acp` and `runtime_binding`. Drop them so they never reach the response.
   const {
     aux_model: _aux,
     harness: _harness,
-    acp: _acp,
-    runtime_binding: _rb,
     appendable_prompts: _ap,
     callable_agents: _ca,
+    acp: _acp,
+    runtime_binding: _rb,
     ...rest
-  } = agent;
+  } = agent as AgentConfig & { acp?: unknown; runtime_binding?: unknown };
 
   return {
     type: "agent" as const,
@@ -175,8 +175,6 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
       _oma?: {
         aux_model?: string | { id: string; speed?: "standard" | "fast" };
         harness?: string;
-        acp?: AgentConfig["acp"];
-        runtime_binding?: AgentConfig["runtime_binding"];
         appendable_prompts?: string[];
       };
     }>();
@@ -189,20 +187,12 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
       callable_agents: ma.list ?? raw.callable_agents,
       aux_model: raw._oma?.aux_model,
       harness: raw._oma?.harness ?? raw.harness,
-      acp: raw._oma?.acp,
-      runtime_binding: raw._oma?.runtime_binding,
       appendable_prompts: raw._oma?.appendable_prompts,
     };
 
     if (!body.name) return c.json({ error: "name is required" }, 400);
-    if (body.harness === "acp-sandbox" && !body.acp?.agent?.command) {
-      return c.json(
-        { error: "_oma.acp.agent.command is required for acp-sandbox" },
-        422,
-      );
-    }
-    if (!body.runtime_binding && !body.model) {
-      return c.json({ error: "model is required for cloud agents" }, 400);
+    if (!body.model) {
+      return c.json({ error: "model is required" }, 400);
     }
 
     if (deps.validateAgentLimits) {
@@ -211,8 +201,7 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
     }
 
     const tenantId = c.var.tenant_id;
-    const isLocalRuntime = !!body.runtime_binding;
-    if (!isLocalRuntime && deps.validateModel) {
+    if (deps.validateModel) {
       const r = await deps.validateModel(tenantId, body.model);
       if (!r.valid) return c.json({ error: r.error }, 400);
       if (body.aux_model !== undefined) {
@@ -230,7 +219,6 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
         system: body.system,
         tools: body.tools,
         harness: body.harness,
-        acp: body.acp,
         description: body.description,
         mcp_servers: body.mcp_servers,
         skills: body.skills,
@@ -238,7 +226,6 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
         metadata: body.metadata,
         aux_model: body.aux_model,
         appendable_prompts: body.appendable_prompts,
-        runtime_binding: body.runtime_binding,
         enable_general_subagent: (body as { enable_general_subagent?: boolean })
           .enable_general_subagent,
       },
@@ -383,8 +370,6 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
       _oma?: {
         aux_model?: string | { id: string; speed?: "standard" | "fast" } | null;
         harness?: string;
-        acp?: AgentConfig["acp"] | null;
-        runtime_binding?: AgentConfig["runtime_binding"] | null;
         appendable_prompts?: string[] | null;
       };
     };
@@ -405,37 +390,20 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
       callable_agents: callableAgents,
       aux_model: raw._oma?.aux_model,
       harness: raw._oma?.harness ?? raw.harness,
-      acp: raw._oma?.acp,
-      runtime_binding: raw._oma?.runtime_binding,
       appendable_prompts: raw._oma?.appendable_prompts,
     };
-
-    const effectiveHarness = body.harness ?? existing.harness;
-    const effectiveAcp = body.acp === null ? undefined : (body.acp ?? existing.acp);
-    if (effectiveHarness === "acp-sandbox" && !effectiveAcp?.agent?.command) {
-      return c.json(
-        { error: "_oma.acp.agent.command is required for acp-sandbox" },
-        422,
-      );
-    }
 
     if (deps.validateAgentLimits) {
       const limitCheck = deps.validateAgentLimits(body);
       if (!limitCheck.ok) return c.json({ error: limitCheck.error }, 400);
     }
 
-    const effectiveBinding =
-      body.runtime_binding === null
-        ? null
-        : (body.runtime_binding ?? existing.runtime_binding);
-    const isLocalRuntime = !!effectiveBinding;
-
-    if (!isLocalRuntime && deps.validateModel && body.model !== undefined) {
+    if (deps.validateModel && body.model !== undefined) {
       const eff = body.model ?? existing.model;
       const r = await deps.validateModel(tenantId, eff);
       if (!r.valid) return c.json({ error: r.error }, 400);
     }
-    if (!isLocalRuntime && deps.validateModel && body.aux_model !== undefined) {
+    if (deps.validateModel && body.aux_model !== undefined) {
       const aux =
         body.aux_model === null ? undefined : (body.aux_model ?? existing.aux_model);
       if (aux !== undefined) {
@@ -455,7 +423,6 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
           system: body.system,
           tools: body.tools,
           harness: body.harness,
-          acp: body.acp,
           description: body.description,
           mcp_servers: body.mcp_servers,
           skills: body.skills,
@@ -463,7 +430,6 @@ export function buildAgentRoutes(deps: AgentRoutesDeps) {
           metadata: body.metadata,
           aux_model: body.aux_model,
           appendable_prompts: body.appendable_prompts,
-          runtime_binding: body.runtime_binding,
           enable_general_subagent: (body as { enable_general_subagent?: boolean })
             .enable_general_subagent,
         },

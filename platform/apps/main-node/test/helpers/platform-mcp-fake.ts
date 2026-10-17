@@ -50,7 +50,6 @@ export function createFakePlatform() {
   const memories = new Map<string, Json>();
   const deployments = new Map<string, Json & { rev: number }>();
   const modelCards = new Map<string, Json>();
-  const harnessCards = new Map<string, Json>();
   const files = new Map<string, Json & { bytes: Uint8Array }>();
   const skills = new Map<string, Json & { rev: number; versions: Map<string, Record<string, Uint8Array>> }>();
   const credentials: Json[] = [];
@@ -252,7 +251,7 @@ export function createFakePlatform() {
     return c.json(deploymentView(deployment), 200, { etag: etag(deployment.rev) });
   });
 
-  // model and harness cards
+  // model cards
   const cardView = ({ api_key: _k, ...card }: Json) => card;
   app.get("/v1/oma/model_cards", (c) => c.json({ data: [...modelCards.values()].map(cardView) }));
   app.get("/v1/oma/model_cards/:id", (c) => {
@@ -279,19 +278,6 @@ export function createFakePlatform() {
     }),
   );
   app.get("/v1/models", (c) => c.json({ data: [{ id: "qwen3.6-35b", type: "model", display_name: "Qwen", created_at: now() }], next_page: null }));
-  app.get("/v1/oma/harnesses", (c) => c.json({ data: [{ id: "pi", name: "Pi" }] }));
-  app.get("/v1/oma/harness_cards", (c) => c.json({ data: [...harnessCards.values()], next_cursor: null }));
-  app.get("/v1/oma/harness_cards/:id", (c) => {
-    const card = harnessCards.get(c.req.param("id"));
-    return card ? c.json(card, 200, { etag: card.updated_at }) : notFound(c);
-  });
-  app.post("/v1/oma/harness_cards/:id", async (c) => {
-    const card = harnessCards.get(c.req.param("id"));
-    if (!card) return notFound(c);
-    if (ifMatchFails(c, card.updated_at)) return c.json({ error: { message: "precondition failed" } }, 412);
-    Object.assign(card, await c.req.json(), { updated_at: now() });
-    return c.json(card, 200, { etag: card.updated_at });
-  });
 
   // files and skills
   const fileView = ({ bytes: _b, ...file }: Json) => file;
@@ -389,7 +375,6 @@ export function createFakePlatform() {
     { kind: "deployment", base: "/v1/deployments", find: (key) => deployments.get(key), revision: (o) => etag(o.rev), view: ({ rev: _r, ...o }) => o, bump: revBump, remove: (key) => deployments.delete(key) },
     { kind: "memory_store", base: "/v1/memory_stores", find: (key) => stores.get(key), revision: (o) => etag(o.rev), view: ({ rev: _r, ...o }) => o, bump: revBump, remove: (key) => stores.delete(key) },
     { kind: "model_card", base: "/v1/oma/model_cards", find: (key) => modelCards.get(key), revision: (o) => o.updated_at ?? o.created_at, view: ({ api_key: _k, ...o }) => o, bump: (o) => { o.updated_at = now(); }, remove: (key) => modelCards.delete(key) },
-    { kind: "harness_card", base: "/v1/oma/harness_cards", find: (key) => harnessCards.get(key), revision: (o) => o.updated_at, view: (o) => o, bump: (o) => { o.updated_at = now(); }, remove: (key) => harnessCards.delete(key) },
   ];
   for (const target of archivables) {
     const state = (action: "archive" | "unarchive") => async (c: any) => {
@@ -771,12 +756,6 @@ export function createFakePlatform() {
       modelCatalog = true;
       builtinModels.push(...builtin);
     },
-    addHarnessCard(body: Json): Json {
-      const card = { id: body.id ?? id("hc"), harness_id: "local", name: "Локальный", command: "agent", args: [], cwd: null, install: { npm: [], pip: [] }, protocols: ["openai-chat"], allowed_env: [], status: "unverified", created_at: now(), updated_at: now(), archived_at: null, ...body };
-      harnessCards.set(card.id, card);
-      return card;
-    },
-    harnessCard: (cardId: string) => harnessCards.get(cardId)!,
     addFile(name: string, bytes: Uint8Array, mime = "text/plain"): Json & { bytes: Uint8Array } {
       const file = { id: id("file"), type: "file", filename: name, mime_type: mime, size_bytes: bytes.length, created_at: now(), bytes };
       files.set(file.id, file);

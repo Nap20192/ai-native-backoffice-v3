@@ -77,7 +77,6 @@ import {
 } from "@open-managed-agents/sandbox";
 import { HarnessLease, resolveHarness } from "../harness/registry";
 import { composeSystemPrompt } from "../harness/platform-guidance";
-import { resolveRepositoryLocalPath } from "../harness/acp-proxy-delivery";
 import {
   createPiModelRuntime,
   toAiSdkLanguageModel,
@@ -2296,7 +2295,7 @@ export class SessionDO extends DurableObject<Env> {
                 // in-memory AbortController exists once a callback paused run.
                 const harness = resolveHarness(agent.harness || "default");
                 const settled = await harness.interruptPending?.({ agent, session_id: this.state.session_id,
-                  tenant_id: this.state.tenant_id, env: { RUNTIME_ROOM: this.env.RUNTIME_ROOM }, pendingActions });
+                  tenant_id: this.state.tenant_id, pendingActions });
                 settledRequests.push(...(settled ?? []).filter((id) => pendingActions.some((event) => "id" in event && event.id === id)));
               } catch {
                 return new Response(JSON.stringify({ type: "error", error: { type: "api_error", message: "Runner interrupt was not confirmed. The pending action is still available; reconnect and try again." } }),
@@ -4719,9 +4718,7 @@ export class SessionDO extends DurableObject<Env> {
       model: subModel,
       pi: subPiRuntime,
       systemPrompt: subAgent.system || "",
-      // Sub-agent inherits the parent's tenant — same daemon, same per-tenant
-      // ACP child key resolution. AcpProxyHarness reads this to forward
-      // x-harness-tenant when opening a RuntimeRoom WS for the sub-agent.
+      // Sub-agent inherits the parent's tenant.
       tenant_id: this.state.tenant_id,
       // Same resolver the primary HarnessContext uses — the sub-agent shares
       // the parent's tenant + R2 bucket so an `image`/`document` block with
@@ -4735,19 +4732,6 @@ export class SessionDO extends DurableObject<Env> {
         ANTHROPIC_BASE_URL: this.env.ANTHROPIC_BASE_URL,
         ANTHROPIC_MODEL: this.env.ANTHROPIC_MODEL,
         TAVILY_API_KEY: this.env.TAVILY_API_KEY,
-        // Sub-agent LLM calls share the same logging plumbing — span
-        // events emitted via parent broadcast carry body_r2_key under
-        // the SAME tenant + session keying. event_id stays unique per
-        // call because each model_request_start mints a fresh sevt_*.
-        ...(this.env.LLM_LOGS_DISABLED === "1"
-          ? {}
-          : {
-              llmLog: {
-                tenant_id: this.state.tenant_id,
-                session_id: this.state.session_id,
-                r2: this.env.FILES_BUCKET ?? null,
-              },
-            }),
         delegateToAgent: async (nestedAgentId: string, nestedMessage: string) => {
           // Nested delegate inside the env block; see runtime block
           // above for the same lineage rule.
@@ -5234,22 +5218,12 @@ export class SessionDO extends DurableObject<Env> {
     // prefix (turn N + 1 reuses the same prompt as turn N).
     const systemPrompt = composeSystemPrompt(rawSystemPrompt, platformReminders);
 
-    const acpSessionStartCwd = agent.runtime_binding
-      ? resolveRepositoryLocalPath(
-          sessionResourceRows.map((row) => ({
-            type: row.type,
-            resource: row.resource as unknown as Record<string, unknown>,
-          })),
-        )
-      : undefined;
-
     // --- Harness receives a fully-prepared context ---
     const ctx: HarnessContext = {
       agent,
       userMessage,
       session_id: this.state.session_id,
       tenant_id: this.state.tenant_id,
-      ...(acpSessionStartCwd ? { acpSessionStartCwd } : {}),
       tools: allTools,
       model,
       pi: piRuntime,
@@ -5272,26 +5246,6 @@ export class SessionDO extends DurableObject<Env> {
         CONFIG_KV: this.env.CONFIG_KV,
         memoryStoreIds,
         environmentConfig,
-        // Cross-script DO binding so AcpProxyHarness can attach to the
-        // user's RuntimeRoom directly (no HTTP hop through main, no
-        // shared INTEGRATIONS_INTERNAL_SECRET). Optional on the env type
-        // — non-acp harnesses don't read it.
-        RUNTIME_ROOM: this.env.RUNTIME_ROOM,
-        // LLM full-body logging context. default-loop wraps each model
-        // call in middleware that PUTs request + response to R2 keyed
-        // by the per-step span event id. The matching
-        // span.model_request_end event grows a body_r2_key field
-        // pointing to the same key. r2 = null disables capture
-        // (test harnesses, env without FILES_BUCKET).
-        ...(this.env.LLM_LOGS_DISABLED === "1"
-          ? {}
-          : {
-              llmLog: {
-                tenant_id: this.state.tenant_id,
-                session_id: this.state.session_id,
-                r2: this.env.FILES_BUCKET ?? null,
-              },
-            }),
         delegateToAgent: async (agentId: string, message: string) => {
           return this.runSubAgent(agentId, message, history, sandbox, turnThreadId, effectiveAbortSignal);
         },
@@ -6544,7 +6498,7 @@ export class SessionDO extends DurableObject<Env> {
     const sql = this.ctx.storage.sql;
 
     // 1. Unpaired tool_use detection. Three flavors per the wire spec
-    //    in default-loop.ts:emitToolCallEvent:
+    //    in harness/tool-events.ts:emitHarnessToolUseFromCall:
     //      • agent.tool_use         → result keyed by tool_use_id
     //      • agent.custom_tool_use  → result keyed by tool_use_id
     //      • agent.mcp_tool_use     → result keyed by mcp_tool_use_id

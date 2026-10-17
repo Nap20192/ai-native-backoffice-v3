@@ -29,7 +29,6 @@ const TARGET_HREF: Record<string, (id: string) => string | null> = {
   skill: () => "/skills",
   file: () => "/files",
   model_card: () => "/model-cards",
-  harness_card: () => "/harnesses",
 };
 
 function formatTime(value: string | null): string {

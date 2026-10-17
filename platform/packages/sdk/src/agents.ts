@@ -65,29 +65,6 @@ export type OpenMaAgent = Omit<BetaManagedAgentsAgent, "mcp_servers"> & {
   mcp_servers: OpenMaMcpServer[];
 };
 
-export interface OpenMaAgentAcpParams {
-  agent: {
-    id?: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string | null>;
-    cwd?: string;
-  };
-  restart?: {
-    mode: "never" | "on-crash" | "always";
-    max_restarts?: number;
-    window_ms?: number;
-  };
-  idle_timeout_ms?: number;
-  per_turn_timeout_ms?: number;
-}
-
-export interface OpenMaAgentRuntimeBindingParams {
-  runtime_id: string;
-  acp_agent_id: string;
-  local_skill_blocklist?: string[];
-}
-
 /** OpenMA's namespaced additions to an Agent create or update payload. */
 export interface OpenMaContextManagementParams {
   edits: Array<{
@@ -114,29 +91,11 @@ export interface OpenMaAgentExtensionParams {
   /** OpenAI Agents SDK-style compaction and output limits. */
   model_settings?: OpenMaOpenAiModelSettingsParams | null;
   /**
-   * @deprecated Prefer omitting `harness` (Pi agent-core default). Use `"ai-sdk"` only for the legacy AI SDK loop.
+   * @deprecated Omit `harness`. The Pi agent-core loop is the only harness;
+   * "default" and "pi" name it too.
    */
   harness?: string | null;
-  acp?: OpenMaAgentAcpParams | null;
-  runtime_binding?: OpenMaAgentRuntimeBindingParams | null;
   enable_general_subagent?: boolean | null;
-}
-
-export interface OpenMaAgentAcp {
-  agent: {
-    id?: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-    cwd?: string;
-  };
-  restart?: {
-    mode: "never" | "on-crash" | "always";
-    max_restarts?: number;
-    window_ms?: number;
-  };
-  idle_timeout_ms?: number;
-  per_turn_timeout_ms?: number;
 }
 
 /** OpenMA extension returned with an Agent when at least one value is set. */
@@ -145,10 +104,8 @@ export interface OpenMaAgentExtension {
   appendable_prompts?: string[];
   context_management?: OpenMaContextManagementParams;
   model_settings?: OpenMaOpenAiModelSettingsParams;
-  /** @deprecated Legacy harness id; unset uses Pi. `"ai-sdk"` selects the deprecated AI SDK loop. */
+  /** @deprecated Legacy harness id. Every agent runs on the Pi loop. */
   harness?: string;
-  acp?: OpenMaAgentAcp;
-  runtime_binding?: OpenMaAgentRuntimeBindingParams;
   enable_general_subagent?: boolean;
 }
 

@@ -25,16 +25,6 @@ import {
 import { fromOpenMaAgentExtension } from "./openma-agent-extension";
 
 function toOpenMaInput(extension: NonNullable<AgentCreateBody["_oma"]>) {
-  const acp = extension.acp;
-  const acpAgent = acp?.agent;
-  const acpAgentWithoutEnv = acpAgent === undefined
-    ? undefined
-    : {
-        ...(acpAgent.id !== undefined && { id: acpAgent.id }),
-        command: acpAgent.command,
-        ...(acpAgent.args !== undefined && { args: acpAgent.args }),
-        ...(acpAgent.cwd !== undefined && { cwd: acpAgent.cwd }),
-      };
   return {
     ...(extension.aux_model !== undefined && {
       auxiliaryModel:
@@ -58,53 +48,6 @@ function toOpenMaInput(extension: NonNullable<AgentCreateBody["_oma"]>) {
           : structuredClone(extension.model_settings),
     }),
     ...(extension.harness !== undefined && { harness: extension.harness }),
-    ...(acp !== undefined && {
-      acp:
-        acp === null
-          ? null
-          : {
-              agent: {
-                ...acpAgentWithoutEnv!,
-                ...(acp.agent.env !== undefined && {
-                  env: Object.fromEntries(
-                    Object.entries(acp.agent.env).filter(
-                      (entry): entry is [string, string] => entry[1] !== null,
-                    ),
-                  ),
-                }),
-              },
-              ...(acp.restart !== undefined && {
-                restart: {
-                  mode: acp.restart.mode,
-                  ...(acp.restart.max_restarts !== undefined && {
-                    maxRestarts: acp.restart.max_restarts,
-                  }),
-                  ...(acp.restart.window_ms !== undefined && {
-                    windowMs: acp.restart.window_ms,
-                  }),
-                },
-              }),
-              ...(acp.idle_timeout_ms !== undefined && {
-                idleTimeoutMs: acp.idle_timeout_ms,
-              }),
-              ...(acp.per_turn_timeout_ms !== undefined && {
-                perTurnTimeoutMs: acp.per_turn_timeout_ms,
-              }),
-            },
-    }),
-    ...(extension.runtime_binding !== undefined && {
-      runtimeBinding:
-        extension.runtime_binding === null
-          ? null
-          : {
-              runtimeId: extension.runtime_binding.runtime_id,
-              acpAgentId: extension.runtime_binding.acp_agent_id,
-              ...(extension.runtime_binding.local_skill_blocklist !== undefined && {
-                localSkillBlocklist:
-                  extension.runtime_binding.local_skill_blocklist,
-              }),
-            },
-    }),
     ...(extension.enable_general_subagent !== undefined && {
       enableGeneralSubagent: extension.enable_general_subagent,
     }),

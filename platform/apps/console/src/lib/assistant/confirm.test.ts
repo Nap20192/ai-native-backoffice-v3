@@ -32,8 +32,8 @@ describe("blockFromPreview", () => {
   });
 
   it("ошибка схемы показывает текст сервера", () => {
-    const b = blockFromPreview(preview({ schema_error: "поле command не принимается" }), "update_harness_card");
-    expect(b).toEqual({ reason: "schema", text: "поле command не принимается" });
+    const b = blockFromPreview(preview({ schema_error: "поле provider не принимается" }), "update_model_card");
+    expect(b).toEqual({ reason: "schema", text: "поле provider не принимается" });
   });
 
   it("известное значение секрета", () => {

@@ -6,8 +6,8 @@ import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router";
 
 import { I18nProvider } from "../../i18n";
-import { HARNESSES_PATH, MODEL_OPTIONS_PATH } from "../../lib/catalog-api";
-import type { HarnessEntry, ModelOption } from "../../lib/catalog-api";
+import { MODEL_OPTIONS_PATH } from "../../lib/catalog-api";
+import type { ModelOption } from "../../lib/catalog-api";
 import { server } from "../../mocks/server";
 import type { AgentRecord as Agent } from "../../types/agent";
 import { AgentFormDialog } from "./AgentFormDialog";
@@ -46,17 +46,6 @@ beforeAll(() => {
   Element.prototype.releasePointerCapture = () => {};
 });
 
-const CLAUDE_BLOCK = {
-  agent: {
-    id: "claude-acp",
-    command: "sh",
-    args: ["-c", "exec claude-agent-acp"],
-    cwd: "/mnt/session/outputs",
-    env: { OMA_CLAUDE_SETTINGS: '{"permissions":{"allow":["Read","Write","Edit"]}}' },
-  },
-  per_turn_timeout_ms: 600000,
-};
-
 function modelOption(overrides: Partial<ModelOption> = {}): ModelOption {
   return {
     handle: "verify-fake",
@@ -72,7 +61,6 @@ function modelOption(overrides: Partial<ModelOption> = {}): ModelOption {
     max_output_tokens: 64000,
     effort_levels: ["low", "medium", "high", "max"],
     speed_fast: true,
-    harnesses: ["pi", "claude-acp"],
     ...overrides,
   };
 }
@@ -90,7 +78,6 @@ const OPENAI_CARD = modelOption({
   effort_levels: [],
   speed_fast: false,
   context_window: 128000,
-  harnesses: ["pi"],
 });
 const BUILTIN_MODEL = modelOption({
   handle: "claude-haiku-4-5",
@@ -103,64 +90,14 @@ const BUILTIN_MODEL = modelOption({
   context_window: null,
 });
 
-function harnessEntry(overrides: Partial<HarnessEntry> = {}): HarnessEntry {
-  return {
-    id: "claude-acp",
-    source: "builtin",
-    label: "Claude Agent",
-    status: "ready",
-    reason: null,
-    runtime_harness: "acp-sandbox",
-    protocols: ["anthropic-messages"],
-    supports: { effort: false, speed: false, platform_tools: false, mcp: false },
-    acp: CLAUDE_BLOCK,
-    install: { npm: ["@agentclientprotocol/claude-agent-acp@0.91.0"], pip: [] },
-    install_hint: "npm install -g @agentclientprotocol/claude-agent-acp",
-    allowed_env: null,
-    card_id: null,
-    ...overrides,
-  };
-}
-
-const PI_ENTRY = harnessEntry({
-  id: "pi",
-  label: "Pi agent-core",
-  runtime_harness: null,
-  protocols: ["*"],
-  supports: { effort: true, speed: true, platform_tools: true, mcp: true },
-  acp: null,
-  install: { npm: [], pip: [] },
-  install_hint: null,
-});
-const CLAUDE_ENTRY = harnessEntry();
-const CODEX_ENTRY = harnessEntry({
-  id: "codex-acp",
-  label: "Codex",
-  status: "unverified",
-  protocols: ["openai-responses"],
-  acp: { agent: { id: "codex-acp", command: "codex-acp", cwd: "/mnt/session/outputs" } },
-  install: { npm: [], pip: [] },
-});
-const GEMINI_ENTRY = harnessEntry({
-  id: "gemini",
-  label: "Gemini CLI",
-  status: "unavailable",
-  reason: "Песочница этого сервера не запускает ACP-агентов",
-  protocols: ["gemini"],
-  acp: { agent: { id: "gemini", command: "gemini", args: ["--acp"] } },
-  install: { npm: [], pip: [] },
-});
-
-/** Каталог моделей и harness, который сервер отдаёт форме. */
+/** Каталог моделей, который сервер отдаёт форме. */
 function serveCatalog({
   models = [ANTHROPIC_CARD, OPENAI_CARD, BUILTIN_MODEL],
-  harnesses = [PI_ENTRY, CLAUDE_ENTRY, CODEX_ENTRY, GEMINI_ENTRY],
-}: { models?: ModelOption[]; harnesses?: HarnessEntry[] } = {}) {
+}: { models?: ModelOption[] } = {}) {
   server.use(
     http.get(`*${MODEL_OPTIONS_PATH}`, () =>
       HttpResponse.json({ builtin_available: true, data: models }),
     ),
-    http.get(`*${HARNESSES_PATH}`, () => HttpResponse.json({ data: harnesses })),
   );
 }
 
@@ -396,25 +333,20 @@ async function openBlankForm() {
   );
 }
 
-async function pickHarness(name: RegExp) {
-  await userEvent.click(screen.getByRole("combobox", { name: "Harness" }));
-  await userEvent.click(await screen.findByRole("option", { name }));
-}
-
 async function pickEffort(name: string) {
   await userEvent.click(screen.getByRole("combobox", { name: "Усилие" }));
   await userEvent.click(await screen.findByRole("option", { name }));
 }
 
 describe("AgentFormDialog: раздел «Основное»", () => {
-  it("ведёт поля в порядке контракта: Harness, модель с усилием рядом, скорость, описание, промпт", async () => {
+  it("ведёт поля в порядке контракта: модель с усилием рядом, скорость, описание, промпт", async () => {
     await openBlankForm();
 
     const panel = screen.getByRole("tabpanel");
     const labels = Array.from(panel.querySelectorAll("label, span[class~='mb-1.5']")).map(
       (node) => node.textContent?.replace("*", "").trim(),
     );
-    const order = ["Название", "Harness", "Модель", "Усилие", "Скорость", "Описание", "Системный промпт"];
+    const order = ["Название", "Модель", "Усилие", "Скорость", "Описание", "Системный промпт"];
     const positions = order.map((label) => labels.indexOf(label));
     expect(positions.every((index) => index >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
@@ -425,11 +357,11 @@ describe("AgentFormDialog: раздел «Основное»", () => {
     );
   });
 
-  it("по умолчанию берёт встроенный цикл и карточку модели по умолчанию", async () => {
+  it("по умолчанию берёт карточку модели по умолчанию, выбора harness нет", async () => {
     await openBlankForm();
 
-    expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent("Встроенный цикл");
-    expect(screen.getByText("Платформа сама ведёт ход", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Harness" })).toBeNull();
+    expect(screen.queryByText("Harness")).toBeNull();
     expect(screen.getByText("Карточка · Anthropic · 200 тыс. токенов")).toBeInTheDocument();
   });
 
@@ -578,199 +510,49 @@ describe("AgentFormDialog: усилие и скорость", () => {
   });
 });
 
-describe("AgentFormDialog: harness", () => {
-  it("несовместимые варианты выключены, причина читается в строке и в ARIA", async () => {
-    await openBlankForm();
+const ACP_BLOCK = {
+  agent: { id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"] },
+  per_turn_timeout_ms: 600000,
+};
 
-    await userEvent.click(screen.getByRole("combobox", { name: "Harness" }));
+describe("AgentFormDialog: старый harness агента", () => {
+  it("ACP-агент открывается с усилием, инструментами и MCP, при сохранении переходит на pi", async () => {
+    managed.update.mockResolvedValue({ ...existingAgent, version: 3 });
+    renderDialog({
+      agent: {
+        ...existingAgent,
+        model: { id: "verify-fake", effort: "high" },
+        _oma: { harness: "acp-sandbox", acp: ACP_BLOCK, appendable_prompts: ["p1"] },
+      } as unknown as Agent,
+    });
 
-    const gemini = await screen.findByRole("option", { name: /Gemini CLI в песочнице/ });
-    expect(gemini).toHaveAttribute("aria-disabled", "true");
-    expect(gemini).toHaveTextContent("Песочница этого сервера не запускает ACP-агентов");
-    expect(document.getElementById(gemini.getAttribute("aria-describedby") as string)).toHaveTextContent(
-      "Песочница этого сервера не запускает ACP-агентов",
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Модель" })).toHaveTextContent("Claude Sonnet 4.6"),
     );
-    const codex = screen.getByRole("option", { name: /Codex в песочнице/ });
-    expect(codex).toHaveAttribute("aria-disabled", "true");
-    expect(codex).toHaveTextContent("Нет подходящих моделей: нужна модель с протоколом openai-responses");
-  });
-
-  it("выбор Claude Code описывает вариант и называет пакеты окружения", async () => {
-    await openBlankForm();
-
-    await pickHarness(/Claude Code в песочнице/);
-
-    expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent(
-      "Claude Code в песочнице",
-    );
-    expect(screen.getByText(/ключа в VM нет/)).toBeInTheDocument();
-    const requirement = screen.getByText(/В окружении сессии должны стоять пакеты/);
-    expect(requirement).toHaveTextContent("npm @agentclientprotocol/claude-agent-acp@0.91.0");
-    expect(within(requirement.parentElement as HTMLElement).getByRole("link", { name: "Окружения" }))
-      .toHaveAttribute("href", "/environments");
-  });
-
-  it("при ACP скрыты усилие, скорость и вспомогательная модель", async () => {
-    await openBlankForm();
-    expect(screen.getByRole("combobox", { name: "Усилие" })).toBeInTheDocument();
-
-    await pickHarness(/Claude Code в песочнице/);
-
-    expect(screen.queryByRole("combobox", { name: "Усилие" })).toBeNull();
-    expect(screen.queryByRole("group", { name: "Скорость" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "Вспомогательная модель" })).toBeNull();
-    expect(screen.getByText("Усилие и скорость ACP-агенту не передаются")).toBeInTheDocument();
-    expect(screen.getByText("ACP-агент пока не получает системный промпт")).toBeInTheDocument();
-  });
-
-  it("при ACP вкладки «Инструменты» и «MCP-серверы» показывают пояснение, а не поля", async () => {
-    await openBlankForm();
-    await pickHarness(/Claude Code в песочнице/);
-
-    await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
-    let panel = screen.getByRole("tabpanel");
-    expect(panel).toHaveTextContent("Claude Code работает своими инструментами");
-    expect(panel).toHaveTextContent("OMA_CLAUDE_SETTINGS");
-    expect(within(panel).queryByText("Политика по умолчанию")).toBeNull();
-
-    await userEvent.click(screen.getByRole("tab", { name: "MCP-серверы" }));
-    panel = screen.getByRole("tabpanel");
-    expect(panel).toHaveTextContent(
-      "MCP-серверы агента до Claude Code в песочнице не доходят: на этом сервере у ACP-агентов нет шлюза MCP.",
-    );
-    expect(within(panel).queryByRole("button", { name: "Свой сервер" })).toBeNull();
-  });
-
-  it("значения вкладок на месте после возврата на встроенный цикл", async () => {
-    await openBlankForm();
-    await userEvent.click(screen.getByRole("tab", { name: "Навыки" }));
-    await userEvent.click(screen.getByRole("checkbox", { name: "Excel (xlsx)" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Основное" }));
-    await pickHarness(/Claude Code в песочнице/);
-
-    await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("Claude Code работает своими инструментами");
-
-    await userEvent.click(screen.getByRole("tab", { name: "Основное" }));
-    await pickHarness(/Встроенный цикл/);
+    expect(screen.getByRole("combobox", { name: "Усилие" })).toHaveTextContent("Высокое");
+    expect(screen.queryByRole("combobox", { name: "Harness" })).toBeNull();
 
     await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
     expect(screen.getByText("Политика по умолчанию")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: /^Навыки/ }));
-    expect(screen.getByRole("checkbox", { name: "Excel (xlsx)" })).toBeChecked();
+    await userEvent.click(screen.getByRole("tab", { name: "MCP-серверы" }));
+    expect(screen.getByRole("button", { name: "Свой сервер" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
+
+    await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
+    const body = managed.update.mock.calls[0][1] as { _oma: Record<string, unknown> };
+    expect(body._oma).toEqual({ harness: "pi", appendable_prompts: ["p1"] });
   });
 
-  it("смена на harness, который не берёт текущую модель, заменяет её и пишет об этом", async () => {
-    await openBlankForm();
-    await userEvent.click(screen.getByRole("combobox", { name: "Модель" }));
-    await userEvent.click(await screen.findByRole("option", { name: /GPT 5/ }));
-    expect(screen.getByRole("combobox", { name: "Модель" })).toHaveTextContent("GPT 5");
-
-    await pickHarness(/Claude Code в песочнице/);
-
-    expect(screen.getByRole("combobox", { name: "Модель" })).toHaveTextContent("Claude Sonnet 4.6");
-    expect(
-      screen.getByText("Модель заменена: verify-oai не работает с Claude Code в песочнице"),
-    ).toBeInTheDocument();
-  });
-
-  it("в списке моделей при ACP несовместимая модель выключена с причиной", async () => {
-    await openBlankForm();
-    await pickHarness(/Claude Code в песочнице/);
-
-    await userEvent.click(screen.getByRole("combobox", { name: "Модель" }));
-
-    const row = await screen.findByRole("option", { name: /GPT 5/ });
-    expect(row).toHaveAttribute("aria-disabled", "true");
-    expect(row).toHaveTextContent(
-      "Claude Code в песочнице работает только с моделями с протоколом anthropic-messages, у модели verify-oai: openai-chat",
-    );
-  });
-
-  it("создаёт ACP-агента с блоком из каталога и без усилия и скорости", async () => {
-    managed.create.mockResolvedValue({ id: "agent-new" });
-    await openBlankForm();
-    await pickEffort("Высокое");
-    await pickHarness(/Claude Code в песочнице/);
-
-    await userEvent.click(screen.getByRole("button", { name: "Создать агента" }));
-
-    await waitFor(() => expect(managed.create).toHaveBeenCalledOnce());
-    const payload = managed.create.mock.calls[0][0] as Record<string, unknown>;
-    expect(payload.model).toBe("verify-fake");
-    expect(payload._oma).toEqual({ harness: "acp-sandbox", acp: CLAUDE_BLOCK });
-  });
-
-  it("агент с устаревшим ai-sdk показывает «AI SDK (устарел)» и уходит с тем же значением", async () => {
+  it("агент с устаревшим ai-sdk при сохранении тоже переходит на pi", async () => {
     managed.update.mockResolvedValue({ ...existingAgent, version: 3 });
     renderDialog({
       agent: { ...existingAgent, _oma: { harness: "ai-sdk" } } as unknown as Agent,
     });
 
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent("AI SDK (устарел)"),
-    );
-    expect(screen.getByText("Старый harness. Выберите встроенный цикл.")).toBeInTheDocument();
-
     await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
 
     await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
-    expect((managed.update.mock.calls[0][1] as { _oma: { harness: string } })._oma.harness).toBe(
-      "ai-sdk",
-    );
-  });
-
-  it("агент на Claude Code открывается без усилия и скорости, блок агента сохраняется как есть", async () => {
-    const ownBlock = {
-      agent: { id: "claude-acp", command: "sh", args: ["-c", "exec my-wrapper"], env: { MY_FLAG: "1" } },
-      per_turn_timeout_ms: 900000,
-    };
-    managed.update.mockResolvedValue({ ...existingAgent, version: 3 });
-    renderDialog({
-      agent: {
-        ...existingAgent,
-        model: { id: "verify-fake" },
-        _oma: { harness: "acp-sandbox", acp: ownBlock },
-      } as unknown as Agent,
-    });
-
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent(
-        "Claude Code в песочнице",
-      ),
-    );
-    expect(screen.queryByRole("combobox", { name: "Усилие" })).toBeNull();
-
-    await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
-
-    await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
-    const body = managed.update.mock.calls[0][1] as { _oma: { acp: unknown; harness: string } };
-    expect(body._oma.harness).toBe("acp-sandbox");
-    expect(body._oma.acp).toEqual(ownBlock);
-  });
-
-  it("возврат агента с ACP на встроенный цикл шлёт null вместо harness и acp", async () => {
-    managed.update.mockResolvedValue({ ...existingAgent, version: 3 });
-    renderDialog({
-      agent: {
-        ...existingAgent,
-        model: { id: "verify-fake" },
-        _oma: { harness: "acp-sandbox", acp: CLAUDE_BLOCK },
-      } as unknown as Agent,
-    });
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent(
-        "Claude Code в песочнице",
-      ),
-    );
-
-    await pickHarness(/Встроенный цикл/);
-    await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
-
-    await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
-    expect((managed.update.mock.calls[0][1] as { _oma: unknown })._oma).toEqual({
-      harness: null,
-      acp: null,
-    });
+    expect((managed.update.mock.calls[0][1] as { _oma: unknown })._oma).toEqual({ harness: "pi" });
   });
 });

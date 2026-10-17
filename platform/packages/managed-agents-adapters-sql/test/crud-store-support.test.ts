@@ -283,7 +283,7 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
   });
 
   describe("agents", () => {
-    it("finds current agents by skill, skill version, model and harness", async () => {
+    it("finds current agents by skill, skill version and model", async () => {
       await stores.agents.insert({ workspaceId: W, agent: agent("agent_skill", {
         skills: [{ skillId: "skill_a", type: "custom", version: "3" }],
       }) });
@@ -292,9 +292,6 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
       }) });
       await stores.agents.insert({ workspaceId: W, agent: agent("agent_model", {
         model: { id: "card-model" },
-      }) });
-      await stores.agents.insert({ workspaceId: W, agent: agent("agent_acp", {
-        openma: { harness: "acp-sandbox", acp: { agent: { id: "my-harness", command: "run" } } },
       }) });
       await stores.agents.insert({ workspaceId: "other", agent: agent("agent_foreign", {
         model: { id: "card-model" },
@@ -306,18 +303,17 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
       await expect(ids({ ...base, skillId: "skill_a" })).resolves.toEqual(["agent_latest", "agent_skill"]);
       await expect(ids({ ...base, skillId: "skill_a", skillVersion: "3" })).resolves.toEqual(["agent_skill"]);
       await expect(ids({ ...base, model: "card-model" })).resolves.toEqual(["agent_model"]);
-      await expect(ids({ ...base, harness: "my-harness" })).resolves.toEqual(["agent_acp"]);
       await expect(ids({ ...base, model: "claude-opus" })).resolves.toEqual([]);
     });
 
     it("skips archived agents unless asked and searches old versions with allVersions", async () => {
-      const first = agent("agent_old", { openma: { harness: "acp-sandbox", acp: { agent: { id: "h1", command: "run" } } } });
+      const first = agent("agent_old", { model: { id: "old-model" } });
       await stores.agents.insert({ workspaceId: W, agent: first });
       await stores.agents.replaceCurrent({
         workspaceId: W,
         agentId: first.id,
         expectedVersion: 1,
-        next: { ...first, openma: {}, version: 2, updatedAt: "2026-10-01T01:00:00.000Z" },
+        next: { ...first, model: { id: "new-model" }, version: 2, updatedAt: "2026-10-01T01:00:00.000Z" },
       });
       await stores.agents.insert({ workspaceId: W, agent: agent("agent_archived", { model: { id: "m1" } }) });
       await stores.agents.archiveCurrent({ workspaceId: W, agentId: "agent_archived", archivedAt: T0 });
@@ -327,11 +323,23 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
         .resolves.toEqual([]);
       await expect(stores.agents.listReferencing({ ...base, includeArchived: true, model: "m1" }))
         .resolves.toMatchObject([{ id: "agent_archived" }]);
-      await expect(stores.agents.listReferencing({ ...base, includeArchived: true, harness: "h1" }))
+      await expect(stores.agents.listReferencing({ ...base, includeArchived: true, model: "old-model" }))
         .resolves.toEqual([]);
       await expect(stores.agents.listReferencing({
-        ...base, includeArchived: true, allVersions: true, harness: "h1",
+        ...base, includeArchived: true, allVersions: true, model: "old-model",
       })).resolves.toMatchObject([{ id: "agent_old", version: 1 }]);
+    });
+
+    it("loads an agent stored with the removed acp extension", async () => {
+      const legacy = agent("agent_legacy_acp", {
+        openma: {
+          harness: "acp-sandbox",
+          acp: { agent: { id: "claude-acp", command: "run" } },
+        } as unknown as Agent["openma"],
+      });
+      await stores.agents.insert({ workspaceId: W, agent: legacy });
+      await expect(stores.agents.findCurrent({ workspaceId: W, agentId: legacy.id }))
+        .resolves.toMatchObject({ id: "agent_legacy_acp", openma: { harness: "acp-sandbox" } });
     });
 
     it("restores an archived agent without a new version", async () => {

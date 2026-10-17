@@ -55,9 +55,7 @@ beforeEach(() => {
   managed.skills.list.mockReset().mockResolvedValue({ data: [] });
   server.use(
     http.get("*/v1/oma/model_cards", () => HttpResponse.json({ data: [] })),
-    http.get("*/v1/oma/runtimes", () => HttpResponse.json({ runtimes: [] })),
     http.get("*/v1/oma/model_options", () => HttpResponse.json({ builtin_available: true, data: [] })),
-    http.get("*/v1/oma/harnesses", () => HttpResponse.json({ data: [] })),
     http.get("*/v1/oma/dependencies/agent/:id", () => HttpResponse.json(dependencies)),
   );
 });

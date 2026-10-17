@@ -2,149 +2,79 @@
 // (docs/plans/models-harness.md, 4). It rejects a model or harness the server
 // cannot run, before the shared upstream route stores the agent.
 //
+// Only the built-in Pi loop runs agents (D41). A body that sets `_oma.harness`
+// to anything but `default` or `pi`, or sends an `_oma.acp` block, is refused.
+// A stored agent with an old harness still reads and runs on Pi; an update
+// that does not send these fields passes.
+//
 // Mount once: `v1.use("/agents/*", agentConfigGuard(deps))`. In Hono that
 // pattern also matches `/agents`. The guard skips every other method and path,
 // archive included. Hono caches the parsed body, so the route reads it again.
-import type { MiddlewareHandler } from "hono";
-import { checkAcpEnv, type AcpEnvProblem } from "./acp-env-policy.js";
-import {
-  BUILTIN_HARNESSES,
-  compatibility,
-  harnessDisplayLabel,
-  type HarnessEntry,
-} from "./harness-catalog.js";
+import type { Context, MiddlewareHandler } from "hono";
 import type { ModelOption } from "./model-options.js";
 
+export const ONLY_PI_MESSAGE = "Остался только встроенный цикл. Уберите harness и блок acp.";
+
+/** Harness values a new or saved agent may carry; a missing value means Pi too. */
+const PI_HARNESSES: ReadonlySet<string> = new Set(["default", "pi"]);
+
+/** The stored model as the guard compares it. */
+export type GuardModel = string | { id: string; effort?: string; speed?: string };
+
 export interface AgentConfigGuardDeps {
-  catalog(workspaceId: string): Promise<{ models: ModelOption[]; harnesses: HarnessEntry[] }>;
-  loadAgent(workspaceId: string, agentId: string): Promise<{
-    model: string | { id: string; effort?: string; speed?: string };
-    _oma?: { harness?: string | null; acp?: { agent?: { id?: string; command?: string; env?: Record<string, string | null> } } | null };
-  } | null>;
+  /** Model options of the workspace, as GET /v1/oma/model_options lists them. */
+  models(workspaceId: string): Promise<readonly ModelOption[]>;
+  loadAgent(workspaceId: string, agentId: string): Promise<{ model: GuardModel } | null>;
 }
 
-type AcpConfig = {
-  agent?: { id?: unknown; command?: unknown; env?: unknown } | null;
-} | null | undefined;
-
-/** Final agent config after the update is laid over the stored agent. */
-export interface GuardedAgentConfig {
-  model: unknown;
-  harness: string | null | undefined;
-  acp: AcpConfig;
-  /** True on create and when an update sets another harness value. */
-  harnessChanged: boolean;
+/** Domain agent fields the guard reads. */
+export interface StoredAgentForGuard {
+  model: { id: string; effort?: string; speed?: string };
 }
 
-export interface GuardCatalog {
-  models: readonly ModelOption[];
-  harnesses: readonly HarnessEntry[];
+/** A stored agent in the shape of AgentConfigGuardDeps.loadAgent. */
+export function storedAgentForGuard(agent: StoredAgentForGuard): { model: GuardModel } {
+  return {
+    model: {
+      id: agent.model.id,
+      ...(agent.model.effort === undefined ? {} : { effort: agent.model.effort }),
+      ...(agent.model.speed === undefined ? {} : { speed: agent.model.speed }),
+    },
+  };
 }
-
-const LOOP_HARNESSES: ReadonlySet<string> = new Set(["", "default", "pi"]);
 
 /**
- * Checks of table 4.3 in order. Returns the first violation as text for a
- * person, or null when the config passes.
+ * Harness rule of D41: null when `_oma` keeps the agent on Pi, else the
+ * message. A missing or null harness is Pi; an `acp` block is refused
+ * whatever its content, `acp: null` passes.
  */
-export function checkAgentConfig(config: GuardedAgentConfig, catalog: GuardCatalog): string | null {
-  const harness = config.harness ?? "";
-  if (harness === "acp-proxy") {
-    return "acp-proxy на этом сервере не работает. Выберите harness из GET /v1/oma/harnesses";
-  }
-  if (harness === "ai-sdk" && config.harnessChanged) {
-    return "Harness ai-sdk устарел. Выберите встроенный цикл или ACP-агента из каталога";
-  }
-  // An old ai-sdk agent that keeps its harness is checked like the built-in loop.
-  const isAcp = harness === "acp-sandbox";
-  if (!isAcp && !LOOP_HARNESSES.has(harness) && harness !== "ai-sdk") {
-    return `Неизвестный harness «${harness}»`;
-  }
-
-  let entry: HarnessEntry;
-  if (isAcp) {
-    const agent = config.acp?.agent;
-    if (typeof agent?.command !== "string" || agent.command.trim() === "") {
-      return "Для acp-sandbox задайте _oma.acp.agent.command";
-    }
-    const id = typeof agent.id === "string" ? agent.id : "";
-    if (id === "") {
-      return "Для acp-sandbox задайте _oma.acp.agent.id. Выберите вариант из GET /v1/oma/harnesses";
-    }
-    const found = catalog.harnesses.find(
-      (candidate) => candidate.id === id && candidate.runtime_harness === "acp-sandbox",
-    );
-    if (found === undefined) {
-      return `Harness «${id}» не найден. Выберите вариант из GET /v1/oma/harnesses`;
-    }
-    if (found.status === "unavailable") {
-      return `Harness «${harnessDisplayLabel(found)}» недоступен: ${found.reason ?? ""}`.trimEnd();
-    }
-    entry = found;
-  } else {
-    entry = catalog.harnesses.find((candidate) => candidate.id === "pi") ?? BUILTIN_HARNESSES[0]!;
-  }
-  const label = harnessDisplayLabel(entry);
-
-  const model = readModel(config.model);
-  if (model !== null) {
-    const option = catalog.models.find((candidate) => candidate.handle === model.handle);
-    if (option === undefined) {
-      return `Модель «${model.handle}» не найдена. Добавьте карточку модели или задайте на сервере ANTHROPIC_API_KEY`;
-    }
-    if (!compatibility(entry, option).compatible) {
-      const tail = option.protocols.length > 0
-        ? `нужен протокол ${entry.protocols.join(", ")}, у модели ${option.protocols.join(", ")}`
-        : "у модели нет протокола, который понимает прокси";
-      return `Модель «${model.handle}» не подходит для «${label}»: ${tail}`;
-    }
-    if (isAcp && model.effort !== null) {
-      return `${label} не принимает усилие: уберите model.effort`;
-    }
-    if (isAcp && model.speed === "fast") {
-      return `${label} не принимает скорость: уберите model.speed`;
-    }
-    if (model.effort !== null && !(option.effort_levels as readonly string[]).includes(model.effort)) {
-      return option.effort_levels.length > 0
-        ? `Модель «${model.handle}» не поддерживает усилие «${model.effort}». Допустимо: ${option.effort_levels.join(", ")}`
-        : `Модель «${model.handle}» не поддерживает усилие`;
-    }
-    if (model.speed === "fast" && !option.speed_fast) {
-      return `Модель «${model.handle}» не поддерживает быструю скорость`;
-    }
-  }
-
-  if (isAcp) {
-    const env = config.acp?.agent?.env;
-    const problems = checkAcpEnv(
-      isEnvRecord(env) ? env : undefined,
-      entry.allowed_env,
-    );
-    if (problems.length > 0) return envProblemText(problems[0]!, label, entry.allowed_env);
-  }
+export function checkHarnessFields(oma: Record<string, unknown>): string | null {
+  const harness = oma.harness;
+  if (typeof harness === "string" && !PI_HARNESSES.has(harness)) return ONLY_PI_MESSAGE;
+  if (oma.acp !== undefined && oma.acp !== null) return ONLY_PI_MESSAGE;
   return null;
 }
 
-export function envProblemText(
-  problem: AcpEnvProblem,
-  harnessLabel: string,
-  allowed: readonly string[] | null,
-): string {
-  const name = problem.name;
-  switch (problem.kind) {
-    case "bad_name":
-      return `Имя переменной «${name}» недопустимо: латиница, цифры и подчёркивание`;
-    case "server_name":
-      return `Переменную «${name}» задаёт сервер, уберите её из env агента`;
-    case "secret_name":
-      return `Переменная «${name}» похожа на секрет. Ключи в env агента не кладите: модель подключается через прокси сервера`;
-    case "secret_value":
-      return `Значение переменной «${name}» похоже на ключ. Уберите его из env агента`;
-    case "not_allowed":
-      return allowed !== null && allowed.length > 0
-        ? `Harness «${harnessLabel}» не разрешает переменную «${name}». Разрешены: ${allowed.join(", ")}`
-        : `Harness «${harnessLabel}» не разрешает переменную «${name}». Разрешённых переменных нет`;
+/**
+ * Model checks in order. Returns the first violation as text for a person,
+ * or null when the model passes or the route schema will reject it.
+ */
+export function checkAgentModel(model: unknown, options: readonly ModelOption[]): string | null {
+  const read = readModel(model);
+  if (read === null) return null;
+  const option = options.find((candidate) => candidate.handle === read.handle);
+  if (option === undefined) {
+    return `Модель «${read.handle}» не найдена. Добавьте карточку модели или задайте на сервере ANTHROPIC_API_KEY`;
   }
+  if (read.effort !== null && !(option.effort_levels as readonly string[]).includes(read.effort)) {
+    return option.effort_levels.length > 0
+      ? `Модель «${read.handle}» не поддерживает усилие «${read.effort}». Допустимо: ${option.effort_levels.join(", ")}`
+      : `Модель «${read.handle}» не поддерживает усилие`;
+  }
+  if (read.speed === "fast" && !option.speed_fast) {
+    return `Модель «${read.handle}» не поддерживает быструю скорость`;
+  }
+  return null;
 }
 
 export function agentConfigGuard(deps: AgentConfigGuardDeps): MiddlewareHandler {
@@ -163,42 +93,31 @@ export function agentConfigGuard(deps: AgentConfigGuardDeps): MiddlewareHandler 
       return next();
     }
     if (!isRecord(body)) return next();
-    const oma = readOma(body._oma);
-    if (oma === "invalid") return next();
 
-    let config: GuardedAgentConfig;
-    if (target.kind === "create") {
-      config = { model: body.model, harness: oma?.harness, acp: oma?.acp, harnessChanged: true };
-    } else {
-      const touchesHarness = oma !== undefined && (oma.hasHarness || oma.hasAcp);
-      if (!("model" in body) && !touchesHarness) return next();
+    if (isRecord(body._oma)) {
+      const message = checkHarnessFields(body._oma);
+      if (message !== null) return refuse(c, message);
+    }
+
+    if (!("model" in body)) return next();
+    if (target.kind === "update") {
       const current = await deps.loadAgent(workspaceId, target.agentId);
       // The route answers 404 for a missing agent.
       if (current === null) return next();
-      const currentHarness = current._oma?.harness ?? null;
-      const harness = oma?.hasHarness ? oma.harness : currentHarness;
-      config = {
-        model: "model" in body ? body.model : current.model,
-        harness,
-        acp: oma?.hasAcp ? oma.acp : current._oma?.acp,
-        harnessChanged: oma?.hasHarness === true && (harness ?? "") !== (currentHarness ?? ""),
-      };
-      // A form or YAML save sends the stored model and _oma back with every
-      // change. When nothing the guard checks differs from the stored agent,
-      // the save passes: an agent whose card or model was deleted, or an old
-      // agent with a server variable in env, can still be renamed.
-      if (checkedFieldsKey(config.model, config.harness, config.acp)
-        === checkedFieldsKey(current.model, currentHarness, current._oma?.acp)) {
-        return next();
-      }
+      // A form or YAML save sends the stored model back with every change.
+      // When the model the guard checks is the stored one, the save passes:
+      // an agent whose card or model was deleted can still be renamed.
+      if (modelKey(body.model) === modelKey(current.model)) return next();
     }
 
-    const message = checkAgentConfig(config, await deps.catalog(workspaceId));
-    if (message !== null) {
-      return c.json({ type: "error", error: { type: "invalid_request_error", message } }, 400);
-    }
+    const message = checkAgentModel(body.model, await deps.models(workspaceId));
+    if (message !== null) return refuse(c, message);
     return next();
   };
+}
+
+function refuse(c: Context, message: string) {
+  return c.json({ type: "error", error: { type: "invalid_request_error", message } }, 400);
 }
 
 type AgentWriteTarget = { kind: "create" } | { kind: "update"; agentId: string };
@@ -212,30 +131,6 @@ function agentWriteTarget(path: string): AgentWriteTarget | null {
   } catch {
     return null;
   }
-}
-
-interface ReadOma {
-  hasHarness: boolean;
-  harness: string | null;
-  hasAcp: boolean;
-  acp: AcpConfig;
-}
-
-/** `_oma` fields the guard reads, or "invalid" when the route schema will reject them. */
-function readOma(value: unknown): ReadOma | undefined | "invalid" {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) return "invalid";
-  const harness = value.harness;
-  if (harness !== undefined && harness !== null && typeof harness !== "string") return "invalid";
-  const acp = value.acp;
-  if (acp !== undefined && acp !== null && !isRecord(acp)) return "invalid";
-  if (isRecord(acp) && acp.agent !== undefined && !isRecord(acp.agent)) return "invalid";
-  return {
-    hasHarness: "harness" in value,
-    harness: typeof harness === "string" ? harness : null,
-    hasAcp: "acp" in value,
-    acp: isRecord(acp) ? acp as AcpConfig : null,
-  };
 }
 
 interface ReadModel {
@@ -263,31 +158,12 @@ function readEffort(value: unknown): string | null {
   return null;
 }
 
-/**
- * The fields checkAgentConfig reads, as one comparable string: model handle,
- * effort and fast speed, the harness, the ACP agent id, command and string
- * env values. Equal keys mean a save changes nothing the guard checks.
- */
-function checkedFieldsKey(model: unknown, harness: string | null | undefined, acp: unknown): string {
+/** Model handle, effort and fast speed as one comparable string. */
+function modelKey(model: unknown): string {
   const read = readModel(model);
-  const agent = isRecord(acp) && isRecord(acp.agent) ? acp.agent : null;
-  const env = agent !== null && isRecord(agent.env)
-    ? Object.entries(agent.env)
-        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    : [];
-  return JSON.stringify([
-    read === null ? null : [read.handle, read.effort, read.speed === "fast"],
-    harness ?? "",
-    agent === null ? null : [agent.id ?? null, agent.command ?? null, env],
-  ]);
+  return JSON.stringify(read === null ? null : [read.handle, read.effort, read.speed === "fast"]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isEnvRecord(value: unknown): value is Record<string, string | null> {
-  return isRecord(value)
-    && Object.values(value).every((item) => item === null || typeof item === "string");
 }

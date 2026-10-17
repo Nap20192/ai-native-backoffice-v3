@@ -22,6 +22,5 @@ export const ROUTE_CHORDS: Record<string, string> = {
   "/memory":        "m",
   "/model-cards":   "c",
   "/api-keys":      "i",
-  "/runtimes":      "r",
   "/evals":         "h",
 };

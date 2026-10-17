@@ -148,8 +148,6 @@ describe("Environment Work Session credential issuer", () => {
       ["GET", "/v1/oma/mcp-proxy/session_01/linear"],
       ["POST", "/v1/oma/mcp-proxy/session_01/linear"],
       ["DELETE", "/v1/oma/mcp-proxy/session_01/linear"],
-      ["POST", "/v1/oma/inference-proxy/session_01/v1/chat/completions"],
-      ["GET", "/v1/oma/inference-proxy/session_01/v1/models"],
       ["GET", "/v1/skills/skill_allowed/versions/3"],
       ["GET", "/v1/skills/skill_allowed/versions/3/content"],
       ["GET", "/v1/skills/skill_latest/versions"],
@@ -180,6 +178,9 @@ describe("Environment Work Session credential issuer", () => {
       ["GET", "/v1/sessions/session_other"],
       ["POST", "/v1/oma/mcp-proxy/session_other/linear"],
       ["POST", "/v1/oma/mcp-proxy/session_01"],
+      // The hosted inference proxy was removed; its paths stay closed.
+      ["POST", "/v1/oma/inference-proxy/session_01/v1/chat/completions"],
+      ["GET", "/v1/oma/inference-proxy/session_01/v1/models"],
       ["POST", "/v1/oma/inference-proxy/session_other/v1/chat/completions"],
       ["POST", "/v1/oma/inference-proxy/session_01"],
       ["POST", "/v1/sessions/session_01"],

@@ -1,7 +1,7 @@
 // The "Environment" block as a platform reminder (docs/plans/environments.md,
 // 4.2-4.5). main-node puts it first in platformReminders with source
-// "environment". composeSystemPrompt adds it to ctx.systemPrompt: Pi sends
-// that prompt to the model, acp-sandbox hands it to the ACP client.
+// "environment". composeSystemPrompt adds it to ctx.systemPrompt and Pi sends
+// that prompt to the model.
 //
 // The block states only what the platform knows. A VM is described by two
 // sources: the snapshot its sandbox adapter reports (image digest, shell,
@@ -23,8 +23,6 @@ import type { SandboxEnvironmentSnapshot } from "@open-managed-agents/sandbox";
 export const ENVIRONMENT_REMINDER_SOURCE = "environment";
 
 export interface NodeManagedEnvironmentReminderInput {
-  /** `agent.harness` of the turn. */
-  harness?: string;
   /** VM facts the sandbox reports (`environmentSnapshot()`), with the image
    *  manifest of its digest; null when the sandbox reports none. */
   snapshot: SandboxEnvironmentSnapshot | null;
@@ -32,8 +30,6 @@ export interface NodeManagedEnvironmentReminderInput {
   hostProcess?: boolean;
   /** Search policy of the turn; missing reads as not available. */
   webSearch?: EnvironmentWebSearch;
-  /** ACP client id. An acp-sandbox agent gets the hedged install line without it too. */
-  acpClient?: string;
 }
 
 export interface NodeManagedEnvironmentReminder {
@@ -188,22 +184,15 @@ function vmFacts(snapshot: SandboxEnvironmentSnapshot): EnvironmentPromptManifes
 
 /**
  * The reminder main-node puts first in platformReminders. The executor
- * follows the harness and the sandbox: `remote` for acp-proxy (a process on
- * another machine), `vm` for a sandbox with a snapshot and a manifest of its
- * digest, `host` for the local subprocess adapter, `unknown` otherwise.
+ * follows the sandbox: `vm` for a sandbox with a snapshot and a manifest of
+ * its digest, `host` for the local subprocess adapter, `unknown` otherwise.
  */
 export function buildNodeManagedEnvironmentReminder(
   input: NodeManagedEnvironmentReminderInput,
 ): NodeManagedEnvironmentReminder {
-  const acpClient = input.acpClient ?? (input.harness === "acp-sandbox" ? "acp" : undefined);
-  const options = {
-    ...(input.webSearch === undefined ? {} : { webSearch: input.webSearch }),
-    ...(acpClient === undefined ? {} : { acpClient }),
-  };
+  const options = input.webSearch === undefined ? {} : { webSearch: input.webSearch };
   let prompt: EnvironmentPromptInput = { executor: "unknown", ...options };
-  if (input.harness === "acp-proxy") {
-    prompt = { executor: "remote", ...options };
-  } else if (input.snapshot !== null) {
+  if (input.snapshot !== null) {
     const manifest = vmFacts(input.snapshot);
     if (manifest !== null) prompt = { executor: "vm", manifest, snapshot: promptSnapshot(input.snapshot), ...options };
   } else if (input.hostProcess === true) {

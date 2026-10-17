@@ -87,8 +87,6 @@ import {
   buildNodeManagedAppendablePromptReminders,
   NodeManagedSessionInputPreparer,
 } from "../lib/node-managed-session-inputs.js";
-import { applyVaultEnvironment } from "../lib/node-managed-vault-env.js";
-import { acpTurnAgent, acpTurnEnv, createModelsHarnessWiring, prepareAcpTurnInference } from "../lib/models-harness-wiring.js";
 import { harnessUserMessage } from "../lib/node-managed-harness-user-message.js";
 import { runHarnessForTurn } from "../lib/node-managed-harness-turn.js";
 import { NodeManagedMemorySnapshotMaterializer } from "../lib/node-managed-memory-snapshots.js";
@@ -132,15 +130,6 @@ export async function createManagedNodeRuntime(
     buildNodeLanguageModel,
   } = foundation;
   // ─── Official Managed Sessions composition ─────────────────────────────
-
-  // ACP agents in the VM reach their model through the inference proxy
-  // (docs/plans/models-harness.md, 5.8): readiness, harness cards, gateway.
-  const modelsHarness = createModelsHarnessWiring({
-    config,
-    sql,
-    dialect: foundation.dialect,
-    modelCards: modelCardsService,
-  });
 
   // Platform MCP server of the assistant (docs/plans/builder-agent.md, BS3).
   // The known-secret sources read the stores below lazily, on each answer.
@@ -319,40 +308,6 @@ export async function createManagedNodeRuntime(
     return null;
   }
 
-  async function resolveNodeInferenceUpstream(input: {
-    tenantId: string;
-    sessionId: string;
-  }): Promise<{
-    wireModel: string;
-    apiKey: string;
-    baseURL?: string;
-    provider?: string;
-    customHeaders?: Record<string, string>;
-  } | null> {
-    const managedContext = await managedRuntimeReaders.executionContext.find({
-      workspaceId: input.tenantId,
-      sessionId: input.sessionId,
-    });
-    const agentModel = managedContext?.session.agent.model
-      ?? (await sessionsService.get({
-        tenantId: input.tenantId,
-        sessionId: input.sessionId,
-      }).catch(() => null))?.agent_snapshot?.model;
-    if (!agentModel) return null;
-    try {
-      const creds = await resolveNodeModelCreds(input.tenantId, agentModel);
-      return {
-        wireModel: creds.wireModel,
-        apiKey: creds.apiKey,
-        baseURL: creds.baseURL,
-        provider: creds.provider,
-        customHeaders: creds.customHeaders,
-      };
-    } catch {
-      return null;
-    }
-  }
-
   const nodeMcpProxyBinding = createNodeMcpProxyBinding({
     resolveTarget: resolveNodeMcpProxyTarget,
     accessLoss: await createNodeAccessLossRuntime(sql),
@@ -527,22 +482,6 @@ export async function createManagedNodeRuntime(
         sandbox,
         runtimeGeneration,
       });
-      // Vault variables reach the sandbox only for harnesses whose agent CLI
-      // runs there (acp-sandbox); the value is plain in that sandbox. Model
-      // keys stay out: the agent calls its model through the inference proxy.
-      await applyVaultEnvironment({
-        harness: session.agent.openma?.harness,
-        sandbox,
-        credentials: managedCredentialStore,
-        workspaceId,
-        vaultIds: session.vaultIds,
-        skipModelKeys: true,
-        warn: (message, details) => logger.warn({
-          ...details,
-          sessionId: session.id,
-          workspaceId,
-        }, message),
-      });
     },
     synchronizeSandbox: async ({
       workspaceId,
@@ -663,19 +602,8 @@ export async function createManagedNodeRuntime(
       }, "harness dispose after the turn failed")),
     }),
     buildHarnessContext: async (input) => {
-      let agent = toLegacyHarnessAgentConfig(input.session);
+      const agent = toLegacyHarnessAgentConfig(input.session);
       const creds = await resolveNodeModelCreds(input.workspaceId, agent.model);
-      const acpInference = agent.harness === "acp-sandbox"
-        ? await prepareAcpTurnInference({
-          wiring: modelsHarness,
-          secrets,
-          workspaceId: input.workspaceId,
-          sessionId: input.session.id,
-          agent,
-          upstream: creds,
-        })
-        : null;
-      if (acpInference !== null) agent = acpTurnAgent(agent);
       const modelSettings = readHarnessAgentModelSettings(agent.model);
       const pi = createPiModelRuntime({
         model: creds.wireModel,
@@ -712,7 +640,7 @@ export async function createManagedNodeRuntime(
       const feishuTools = await resolveFeishuAgentTools(input.session.id);
       return {
         agent,
-        userMessage: harnessUserMessage(input.acceptedEvents, agent.harness),
+        userMessage: harnessUserMessage(input.acceptedEvents),
         session_id: input.session.id,
         tenant_id: input.workspaceId,
         tools: { ...input.tools, ...feishuTools },
@@ -725,7 +653,6 @@ export async function createManagedNodeRuntime(
         env: {
           ANTHROPIC_API_KEY: creds.apiKey,
           ANTHROPIC_BASE_URL: creds.baseURL,
-          ...(acpInference !== null && acpTurnEnv(acpInference)),
         },
         runtime: input.runtime,
       } satisfies HarnessContext;
@@ -1321,7 +1248,6 @@ export async function createManagedNodeRuntime(
   return {
     platformMcp,
     resolveNodeMcpProxyTarget,
-    resolveNodeInferenceUpstream,
     managedRuntimeRunner,
     managedRuntimeReaders,
     managedSessionExecutionWorker,

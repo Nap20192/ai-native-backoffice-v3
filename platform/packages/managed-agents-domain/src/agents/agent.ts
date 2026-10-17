@@ -45,36 +45,13 @@ export type AgentCompactionWireFormat =
   | "anthropic_context_management"
   | "openai_model_settings";
 
-export interface AgentAcpProcess {
-  id?: string;
-  command: string;
-  args?: string[];
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-}
-
-export interface AgentAcpRestartPolicy {
-  mode: "never" | "on-crash" | "always";
-  maxRestarts?: number;
-  windowMs?: number;
-}
-
-export interface AgentAcpConfig {
-  agent: AgentAcpProcess;
-  restart?: AgentAcpRestartPolicy;
-  idleTimeoutMs?: number;
-  perTurnTimeoutMs?: number;
-}
-
-export interface AgentRuntimeBinding {
-  runtimeId: string;
-  acpAgentId: string;
-  localSkillBlocklist?: string[];
-}
-
 /**
  * OpenMA additions to the Anthropic Managed Agents resource. These values are
  * versioned with the Agent so a Session can pin one atomic configuration.
+ *
+ * Documents stored before 2026-10-17 may still hold `acp` and
+ * `runtimeBinding` here. Nothing reads them any more and the mappers drop
+ * them, so such an agent still loads.
  */
 export interface AgentOpenMaExtensions {
   auxiliaryModel?: AgentModel;
@@ -82,9 +59,9 @@ export interface AgentOpenMaExtensions {
   contextManagement?: AgentContextManagement;
   openaiModelSettings?: AgentOpenAiModelSettings;
   compactionWireFormat?: AgentCompactionWireFormat;
+  /** Only the Pi loop exists: unset, "default" or "pi". A stored removed
+   * name ("ai-sdk", "acp-sandbox", "acp-proxy") runs on Pi. */
   harness?: string;
-  acp?: AgentAcpConfig;
-  runtimeBinding?: AgentRuntimeBinding;
   enableGeneralSubagent?: boolean;
   /**
    * Versioned adapter-owned data that has no public Managed Agents field.

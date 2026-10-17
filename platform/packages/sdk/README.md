@@ -42,8 +42,8 @@ const agent = await client.beta.agents.create({
   _oma: {
     aux_model: { id: "deepseek-aux" },
     appendable_prompts: ["prompt_review"],
-    // Omit harness for the Pi agent-core loop (platform default).
-    // harness: "ai-sdk" still works but is deprecated (emits session.warning).
+    // Omit harness: the Pi agent-core loop is the only harness.
+    // An agent stored with a removed harness name runs on Pi.
   },
 });
 

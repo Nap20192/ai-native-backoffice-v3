@@ -36,7 +36,7 @@ import {
   resolveCompactionSummaryInstructions,
   resolveCompactionTriggerInputTokens,
 } from "./compaction-config";
-import { emitHarnessToolUseFromCall, isMcpTool } from "./default-loop";
+import { emitHarnessToolUseFromCall, isMcpTool } from "./tool-events";
 import { withPiRuntimeRequestOptions } from "./pi-provider";
 import { createPiToolAssembly } from "./assembly/adapters/pi";
 import { capHistoryText, toolsToPi, valueToPiContent } from "./pi-loop-tools";

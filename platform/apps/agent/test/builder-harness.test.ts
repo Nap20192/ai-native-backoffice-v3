@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentConfig } from "@open-managed-agents/shared";
 import { buildTools, DEFAULT_TOOLS, getEnabledBuiltinTools, disposeTools } from "../src/harness/tools";
-import { emitHarnessToolUseFromCall } from "../src/harness/default-loop";
+import { emitHarnessToolUseFromCall } from "../src/harness/tool-events";
 
 const disabled = { type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [] };
 const config = (tools: unknown[]): AgentConfig => ({ tools } as AgentConfig);

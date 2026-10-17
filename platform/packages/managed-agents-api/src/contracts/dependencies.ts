@@ -15,7 +15,6 @@ export const DEPENDENCY_TARGET_KINDS = [
   "memory",
   "session_resource",
   "model",
-  "harness",
   "vault",
 ] as const;
 

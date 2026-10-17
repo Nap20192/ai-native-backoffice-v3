@@ -37,12 +37,12 @@ export interface ResolvedFile {
 export type FileResolver = (file_id: string) => Promise<ResolvedFile | null>;
 
 /**
- * Convert SessionEvent[] → ModelMessage[]. The strict inverse of
- * default-loop.ts onStepFinish writes — together they form the bijection
- * that prompt-cache determinism rests on.
+ * Convert SessionEvent[] → ModelMessage[]. The strict inverse of the events
+ * the harness writes (harness/tool-events.ts maps tool calls and tool output) —
+ * together they form the bijection that prompt-cache determinism rests on.
  *
  * Invariant: write(read(events)) === events at the byte level for every
- * event sequence produced by onStepFinish (modulo lifecycle/span/notification
+ * event sequence the harness produces (modulo lifecycle/span/notification
  * events, which are intentionally not in model context). Any byte drift here
  * busts Anthropic's cache from the drift point onward.
  *
@@ -63,7 +63,7 @@ export type FileResolver = (file_id: string) => Promise<ResolvedFile | null>;
  *
  * Sync API: file_id-source image/document blocks fall back to a placeholder
  * text part because resolution requires I/O. Callers that own the resolver
- * (default-loop) should use `eventsToMessagesAsync(events, resolver)` so
+ * (the Pi harness) should use `eventsToMessagesAsync(events, resolver)` so
  * the model sees the actual file bytes; this sync entry point is kept for
  * tests, in-memory sub-agents, and anywhere a synchronous projection is
  * required.
@@ -94,8 +94,8 @@ export function eventsToMessages(events: SessionEvent[]): ModelMessage[] {
   // a strategy that returns `[{type:"text", text:""}]` would still pass
   // it and silently drop the entire pre-boundary history downstream.
   // This is the downstream half of the empty-summary defense; the
-  // upstream half lives in DefaultHarness.compact() where the boundary
-  // event is written.
+  // upstream half lives in the harness compaction step that writes the
+  // boundary event (pi-loop.ts).
   let boundaryIdx = -1;
   let boundarySummary: ContentBlock[] | undefined;
   for (let i = events.length - 1; i >= 0; i--) {
@@ -571,7 +571,7 @@ function pickPreservedTail(
 
 /**
  * Wire `string | ContentBlock[]` → AI SDK ToolResultOutput.
- * Strict inverse of normalizeToolOutputForWire in default-loop.ts.
+ * Strict inverse of normalizeToolOutputForWire in harness/tool-events.ts.
  */
 function wireContentToToolOutput(
   content: string | ContentBlock[],

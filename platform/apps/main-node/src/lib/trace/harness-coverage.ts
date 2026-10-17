@@ -16,36 +16,21 @@ const PI: HarnessExpectation = {
   level: 2,
   coverage: { model_calls: "measured", tools: "measured", sandbox: "attempts" },
 };
-const AI_SDK: HarnessExpectation = {
-  level: 1,
-  coverage: { model_calls: "by_events", tools: "by_events", sandbox: "attempts" },
-};
-const ACP: HarnessExpectation = {
-  level: 1,
-  coverage: { model_calls: "turn_only", tools: "by_events", sandbox: "attempts" },
-};
 const UNKNOWN: HarnessExpectation = {
   level: 0,
   coverage: { model_calls: "absent", tools: "absent", sandbox: "attempts" },
 };
 
-/** Harness registry names (apps/agent/src/harness/builtins.ts) and ACP agent ids. */
-const EXPECTATIONS: Record<string, HarnessExpectation> = {
-  default: PI,
-  pi: PI,
-  "ai-sdk": AI_SDK,
-  "acp-sandbox": ACP,
-  "acp-proxy": ACP,
-  "claude-acp": ACP,
-  "codex-acp": ACP,
-  "gemini-acp": ACP,
-  "opencode-acp": ACP,
-  "pi-acp": ACP,
-};
+/**
+ * Harness names an agent can carry. Only Pi runs turns (D41): the legacy
+ * names ai-sdk, acp-sandbox and acp-proxy resolve to Pi in the harness
+ * registry, so their new turns report like Pi.
+ */
+const PI_NAMES: ReadonlySet<string> = new Set(["default", "pi", "ai-sdk", "acp-sandbox", "acp-proxy"]);
 
 function expectation(harness: string | null | undefined): HarnessExpectation {
   if (harness === null || harness === undefined || harness === "") return PI;
-  return EXPECTATIONS[harness] ?? (harness.endsWith("-acp") ? ACP : UNKNOWN);
+  return PI_NAMES.has(harness) ? PI : UNKNOWN;
 }
 
 export function expectedHarnessLevel(harness: string | null | undefined): HarnessLevel {
@@ -54,9 +39,4 @@ export function expectedHarnessLevel(harness: string | null | undefined): Harnes
 
 export function expectedHarnessCoverage(harness: string | null | undefined): TraceCoverage {
   return { ...expectation(harness).coverage };
-}
-
-/** ACP harnesses send one span.model_request_* pair per turn: it becomes acp_prompt. */
-export function isAcpHarness(harness: string | null | undefined): boolean {
-  return expectation(harness) === ACP;
 }

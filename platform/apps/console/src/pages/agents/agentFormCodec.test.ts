@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import yaml from "js-yaml";
-import type { HarnessEntry, ModelOption } from "../../lib/catalog-api";
+import type { ModelOption } from "../../lib/catalog-api";
 import type { AgentRecord } from "../../types/agent";
 import {
   INITIAL_FORM,
   agentToForm,
-  applyHarnessChoice,
   applyModelChoice,
   agentToPreservedConfig,
   buildModelValue,
@@ -537,46 +536,6 @@ describe("agent endpoint boundary", () => {
   });
 });
 
-const CLAUDE_BLOCK = {
-  agent: {
-    id: "claude-acp",
-    command: "sh",
-    args: ["-c", "exec claude-agent-acp"],
-    cwd: "/mnt/session/outputs",
-    env: { OMA_CLAUDE_SETTINGS: '{"permissions":{"allow":["Read","Write","Edit"]}}' },
-  },
-  per_turn_timeout_ms: 600000,
-};
-
-function harnessEntry(overrides: Partial<HarnessEntry> = {}): HarnessEntry {
-  return {
-    id: "claude-acp",
-    source: "builtin",
-    label: "Claude Agent",
-    status: "ready",
-    reason: null,
-    runtime_harness: "acp-sandbox",
-    protocols: ["anthropic-messages"],
-    supports: { effort: false, speed: false, platform_tools: false, mcp: false },
-    acp: CLAUDE_BLOCK,
-    install: { npm: ["@agentclientprotocol/claude-agent-acp@0.91.0"], pip: [] },
-    install_hint: null,
-    allowed_env: null,
-    card_id: null,
-    ...overrides,
-  };
-}
-
-const PI_ENTRY = harnessEntry({
-  id: "pi",
-  label: "Pi agent-core",
-  runtime_harness: null,
-  protocols: ["*"],
-  supports: { effort: true, speed: true, platform_tools: true, mcp: true },
-  acp: null,
-  install: { npm: [], pip: [] },
-});
-
 function modelOption(overrides: Partial<ModelOption> = {}): ModelOption {
   return {
     handle: "claude-sonnet-4-6",
@@ -592,7 +551,6 @@ function modelOption(overrides: Partial<ModelOption> = {}): ModelOption {
     max_output_tokens: 64000,
     effort_levels: ["low", "medium", "high", "max"],
     speed_fast: true,
-    harnesses: ["pi", "claude-acp"],
     ...overrides,
   };
 }
@@ -735,175 +693,99 @@ describe("смена модели", () => {
   });
 });
 
-describe("harness в форме и в конфигурации", () => {
-  it("читает harness агента: встроенный цикл по умолчанию, ACP по id и блоку", () => {
-    expect(agentToForm(sampleAgent()).harness).toBe("pi");
-    expect(agentToForm(sampleAgent()).harnessAcp).toBeNull();
+const ACP_BLOCK = {
+  agent: { id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"] },
+  per_turn_timeout_ms: 600000,
+};
 
-    const acp = agentToForm(
-      sampleAgent({ _oma: { harness: "acp-sandbox", acp: CLAUDE_BLOCK } } as Partial<AgentRecord>),
-    );
-    expect(acp.harness).toBe("claude-acp");
-    expect(acp.harnessAcp).toEqual(CLAUDE_BLOCK);
-    expect(INITIAL_FORM.harness).toBe("pi");
-    expect(INITIAL_FORM.harnessAcp).toBeNull();
+/** Агент из старой базы: в `_oma` ещё лежат поля, которых в контракте больше нет. */
+function legacyAgent(openma: Record<string, unknown>, overrides: Record<string, unknown> = {}): AgentRecord {
+  return sampleAgent({ _oma: openma, ...overrides } as unknown as Partial<AgentRecord>);
+}
+
+describe("старый harness агента", () => {
+  it("в состоянии формы нет выбора harness", () => {
+    expect(INITIAL_FORM).not.toHaveProperty("harness");
+    expect(INITIAL_FORM).not.toHaveProperty("harnessAcp");
+    expect(agentToForm(legacyAgent({ harness: "acp-sandbox", acp: ACP_BLOCK }))).not.toHaveProperty("harness");
   });
 
-  it("выбор ACP при создании пишет _oma.harness и _oma.acp, а модель без усилия и скорости", () => {
-    const chosen = applyHarnessChoice(
-      { ...INITIAL_FORM, name: "Coder", model: "claude-sonnet-4-6", modelEffort: "high", modelSpeed: "fast" },
-      harnessEntry(),
-      [modelOption()],
-    ).form;
-
-    const payload = mergeFormIntoConfig(chosen, null, { forUpdate: false });
-
-    expect(payload._oma).toEqual({ harness: "acp-sandbox", acp: CLAUDE_BLOCK });
-    expect(payload.model).toBe("claude-sonnet-4-6");
-  });
-
-  it("при ACP убирает усилие и скорость, но состояние формы их помнит", () => {
-    const chosen = applyHarnessChoice(
-      { ...INITIAL_FORM, name: "Coder", model: "claude-sonnet-4-6", modelEffort: "high", modelSpeed: "fast" },
-      harnessEntry(),
-      [modelOption()],
-    ).form;
-
-    expect(chosen.modelEffort).toBe("high");
-    expect(chosen.modelSpeed).toBe("fast");
-    const back = applyHarnessChoice(chosen, PI_ENTRY, [modelOption()]).form;
-    expect(
-      mergeFormIntoConfig(back, null, { forUpdate: false }).model,
-    ).toEqual({ id: "claude-sonnet-4-6", effort: "high", speed: "fast" });
-  });
-
-  it("возврат на встроенный цикл при изменении агента шлёт null и оставляет остальной _oma", () => {
-    const agent = sampleAgent({
-      model: { id: "claude-sonnet-4-6" },
-      _oma: {
+  it("изменение ACP-агента переводит его на pi, блок acp не уходит, остальной _oma цел", () => {
+    const agent = legacyAgent(
+      {
         harness: "acp-sandbox",
-        acp: CLAUDE_BLOCK,
+        acp: ACP_BLOCK,
         aux_model: { id: "haiku" },
         appendable_prompts: ["p1"],
       },
-    } as Partial<AgentRecord>);
-    const form = applyHarnessChoice(agentToForm(agent), PI_ENTRY, [modelOption()]).form;
-
-    const payload = mergeFormIntoConfig(form, agentToPreservedConfig(agent), { forUpdate: true });
-
-    expect(payload._oma).toEqual({
-      harness: null,
-      acp: null,
-      aux_model: { id: "haiku" },
-      appendable_prompts: ["p1"],
-    });
-  });
-
-  it("тот же id harness сохраняет блок агента со своей обёрткой и переменными", () => {
-    const custom = {
-      agent: {
-        id: "claude-acp",
-        command: "sh",
-        args: ["-c", "exec my-wrapper"],
-        env: { OMA_CLAUDE_SETTINGS: "{}", MY_FLAG: "1" },
-      },
-      per_turn_timeout_ms: 900000,
-    };
-    const agent = sampleAgent({
-      model: { id: "claude-sonnet-4-6" },
-      _oma: { harness: "acp-sandbox", acp: custom },
-    } as Partial<AgentRecord>);
-    const form = applyHarnessChoice(agentToForm(agent), harnessEntry(), [modelOption()]).form;
-    form.name = "Renamed";
-
-    const payload = mergeFormIntoConfig(form, agentToPreservedConfig(agent), { forUpdate: true });
-
-    expect((payload._oma as { acp: unknown }).acp).toEqual(custom);
-    expect((payload._oma as { harness: unknown }).harness).toBe("acp-sandbox");
-  });
-
-  it("агент с устаревшим ai-sdk без смены harness уходит с тем же значением", () => {
-    const agent = sampleAgent({ _oma: { harness: "ai-sdk" } } as Partial<AgentRecord>);
+      { model: { id: "claude-sonnet-4-6" } },
+    );
     const form = agentToForm(agent);
     form.name = "Renamed";
 
     const payload = mergeFormIntoConfig(form, agentToPreservedConfig(agent), { forUpdate: true });
 
-    expect(form.harness).toBe("ai-sdk");
-    expect((payload._oma as { harness: unknown }).harness).toBe("ai-sdk");
+    expect(payload._oma).toEqual({
+      harness: "pi",
+      aux_model: { id: "haiku" },
+      appendable_prompts: ["p1"],
+    });
   });
 
-  it("значения вкладок «Инструменты» и «MCP-серверы» остаются при выборе ACP", () => {
-    const agent = sampleAgent({ model: { id: "claude-sonnet-4-6" } });
-    const form = applyHarnessChoice(agentToForm(agent), harnessEntry(), [modelOption()]).form;
+  it("устаревший ai-sdk и acp-proxy при изменении тоже становятся pi", () => {
+    for (const harness of ["ai-sdk", "acp-proxy"]) {
+      const agent = legacyAgent({ harness });
+      const payload = mergeFormIntoConfig(agentToForm(agent), agentToPreservedConfig(agent), {
+        forUpdate: true,
+      });
+      expect(payload._oma).toEqual({ harness: "pi" });
+    }
+  });
+
+  it("явные pi и default остаются как есть", () => {
+    for (const harness of ["pi", "default"]) {
+      const agent = legacyAgent({ harness });
+      const payload = mergeFormIntoConfig(agentToForm(agent), agentToPreservedConfig(agent), {
+        forUpdate: true,
+      });
+      expect(payload._oma).toEqual({ harness });
+    }
+  });
+
+  it("runtime_binding в _oma форма не отправляет", () => {
+    const agent = legacyAgent({
+      runtime_binding: { runtime_id: "rt_1", acp_agent_id: "codex-acp" },
+      appendable_prompts: ["p1"],
+    });
+
+    const payload = mergeFormIntoConfig(agentToForm(agent), agentToPreservedConfig(agent), {
+      forUpdate: true,
+    });
+
+    expect(payload._oma).toEqual({ appendable_prompts: ["p1"] });
+  });
+
+  it("при создании из YAML со старым harness убирает harness и acp вместе с пустым _oma", () => {
+    const base = parseAgentConfigText(
+      "name: Coder\nmodel: claude-sonnet-4-6\n_oma:\n  harness: acp-sandbox\n  acp:\n    agent:\n      command: sh\n",
+      "yaml",
+    );
+
+    const payload = mergeFormIntoConfig(configToForm(base), base, { forUpdate: false });
+
+    expect(payload).not.toHaveProperty("_oma");
+  });
+
+  it("усилие, скорость, инструменты и MCP старого ACP-агента сохраняются", () => {
+    const agent = legacyAgent({ harness: "acp-sandbox", acp: ACP_BLOCK });
+    const form = agentToForm(agent);
+
     const payload = mergeFormIntoConfig(form, agentToPreservedConfig(agent), { forUpdate: true });
 
+    expect(payload.model).toMatchObject({ id: "claude-sonnet-4-6", effort: { type: "high" }, speed: "fast" });
     expect(
       (payload.tools as unknown[]).some((t) => (t as { type?: string }).type === "custom"),
     ).toBe(true);
     expect((payload.mcp_servers as Array<{ name: string }>)[0]?.name).toBe("github");
-  });
-});
-
-describe("выбор harness в форме", () => {
-  const defaultCard = modelOption({ handle: "claude-card", is_default: true });
-  const openaiCard = modelOption({
-    handle: "verify-oai",
-    protocols: ["openai-chat"],
-    api: "openai-completions",
-  });
-
-  it("заменяет несовместимую модель первой совместимой и называет замену", () => {
-    const form = { ...INITIAL_FORM, model: "verify-oai", modelEffort: "high" as const };
-
-    const result = applyHarnessChoice(form, harnessEntry(), [openaiCard, defaultCard]);
-
-    expect(result.form.model).toBe("claude-card");
-    expect(result.modelReplaced).toEqual({ from: "verify-oai", to: "claude-card" });
-    expect(result.form.harness).toBe("claude-acp");
-    expect(result.form.harnessAcp).toEqual(CLAUDE_BLOCK);
-  });
-
-  it("совместимую модель не трогает", () => {
-    const form = { ...INITIAL_FORM, model: "claude-card" };
-
-    const result = applyHarnessChoice(form, harnessEntry(), [defaultCard, openaiCard]);
-
-    expect(result.form.model).toBe("claude-card");
-    expect(result.modelReplaced).toBeNull();
-  });
-
-  it("берёт модель по умолчанию, когда в форме её ещё нет", () => {
-    const result = applyHarnessChoice({ ...INITIAL_FORM }, harnessEntry(), [openaiCard, defaultCard]);
-
-    expect(result.form.model).toBe("claude-card");
-    expect(result.modelReplaced).toBeNull();
-  });
-
-  it("модель, которой нет в каталоге, не заменяет: её задали в YAML", () => {
-    const result = applyHarnessChoice({ ...INITIAL_FORM, model: "typed-by-hand" }, harnessEntry(), [
-      defaultCard,
-    ]);
-
-    expect(result.form.model).toBe("typed-by-hand");
-    expect(result.modelReplaced).toBeNull();
-  });
-
-  it("пока модели не загружены, остаётся как есть", () => {
-    const result = applyHarnessChoice({ ...INITIAL_FORM, model: "verify-oai" }, harnessEntry(), undefined);
-
-    expect(result.form.model).toBe("verify-oai");
-    expect(result.form.harness).toBe("claude-acp");
-  });
-
-  it("выбор встроенного цикла очищает блок ACP", () => {
-    const acpForm = applyHarnessChoice({ ...INITIAL_FORM, model: "claude-card" }, harnessEntry(), [
-      defaultCard,
-    ]).form;
-
-    const back = applyHarnessChoice(acpForm, PI_ENTRY, [defaultCard]).form;
-
-    expect(back.harness).toBe("pi");
-    expect(back.harnessAcp).toBeNull();
   });
 });

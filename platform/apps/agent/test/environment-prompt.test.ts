@@ -47,13 +47,13 @@ describe("environment prompt facts", () => {
   it("names allowed hosts, registries, mirrors and filtered search", () => {
     const prompt = buildEnvironmentPrompt({ executor: "vm", manifest, webSearch: "filtered",
       snapshot: { networking: { type: "limited", allowPackageManagers: true, allowedHosts: ["example.org"] },
-        mirrors: { pip: "https://mirror.example.org/simple" } }, acpClient: "claude-code" });
+        mirrors: { pip: "https://mirror.example.org/simple" } } });
     expect(prompt).toContain("Network: limited");
     expect(prompt).toContain("example.org");
     expect(prompt).toContain("mirror.example.org");
     expect(prompt).toContain("Public registries for pip are blocked.");
     expect(prompt).toContain("Web search: available, results only from allowed hosts.");
-    expect(prompt).toContain("If your tool permissions allow shell commands,");
+    expect(prompt).toContain("If a library or tool is missing, install it and continue");
   });
   it("limits libraries to 20 and keeps a bounded block", () => {
     const prompt = buildEnvironmentPrompt({ executor: "vm", snapshot, manifest: { ...manifest,
@@ -70,7 +70,7 @@ describe("environment prompt facts", () => {
       packages: { ...manifest.packages, pip: Array.from({ length: 40 }, (_, i) => ({ name: long("lib", 214)(i), version: "1.0" })) },
       fonts: Array.from({ length: 30 }, (_, i) => long("Font", 60)(i)),
     };
-    const prompt = buildEnvironmentPrompt({ executor: "vm", manifest: big, webSearch: "filtered", acpClient: "claude-code",
+    const prompt = buildEnvironmentPrompt({ executor: "vm", manifest: big, webSearch: "filtered",
       snapshot: {
         networking: { type: "limited", allowPackageManagers: true,
           allowedHosts: Array.from({ length: 40 }, (_, i) => `${long("h", 60)(i)}.example.org`) },
@@ -82,12 +82,12 @@ describe("environment prompt facts", () => {
     expect(prompt.length).toBeLessThanOrEqual(1500);
     // The network, search and install facts survive the cut.
     for (const fact of ["You are root", "Network: limited", "Public registries for pip", "Other hosts fail.",
-      "Web search: available, results only from allowed hosts.", "If your tool permissions allow shell commands,"])
+      "Web search: available, results only from allowed hosts.", "If a library or tool is missing, install it and continue"])
       expect(prompt).toContain(fact);
   });
   it.each([10, 40, 41, 64, 300])("stays within 1500 characters with %i character facts", (length) => {
     const value = "f".repeat(length);
-    const prompt = buildEnvironmentPrompt({ executor: "vm", webSearch: "on", acpClient: "codex",
+    const prompt = buildEnvironmentPrompt({ executor: "vm", webSearch: "on",
       manifest: { ...manifest, os: value, architecture: value, user: value, shell: value, workingDirectory: value,
         python: { version: value, venv: `/${value}` }, node: { version: value }, packageManagers: ["apt", "pip", "npm", "uv"],
         tools: Array.from({ length: 30 }, (_, i) => `${value}${i}`) },
@@ -95,7 +95,7 @@ describe("environment prompt facts", () => {
         mirrors: { pip: `https://${value}.org/`, apt: `https://${value}.net/`, npm: `https://${value}.com/` } } });
     expect(prompt.length).toBeLessThanOrEqual(1500);
     expect(prompt).toContain("Other hosts fail.");
-    expect(prompt).toContain("If your tool permissions allow shell commands,");
+    expect(prompt).toContain("If a library or tool is missing, install it and continue");
   });
   it("requires facts for a known VM instead of fabricating defaults", () => {
     expect(() => buildEnvironmentPrompt({ executor: "vm" })).toThrow(/manifest|snapshot/i);

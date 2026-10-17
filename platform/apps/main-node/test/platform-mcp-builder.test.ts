@@ -29,7 +29,7 @@ const WRITE_TOOLS = [
   "create_agent", "create_environment", "create_skill", "upload_file", "create_memory_store", "create_deployment", "create_session",
   "write_memory",
   "update_agent", "restore_agent_version", "update_environment", "create_skill_version", "update_memory_store", "update_deployment",
-  "update_model_card", "update_harness_card", "send_message",
+  "update_model_card", "send_message",
   "update_session", "add_session_resource", "pause_deployment", "unpause_deployment", "run_deployment", "unarchive_object",
   "apply_changes",
 ];
@@ -62,8 +62,8 @@ describe("шаблон ассистента", () => {
   });
 
   it("разрешает без вопроса ровно 11 инструментов чтения и черновика", () => {
-    expect(ALL_TOOLS).toHaveLength(37);
-    expect(new Set(ALL_TOOLS).size).toBe(37);
+    expect(ALL_TOOLS).toHaveLength(36);
+    expect(new Set(ALL_TOOLS).size).toBe(36);
     expect([...BUILDER_ALWAYS_ALLOW_TOOLS].sort()).toEqual([...READ_TOOLS, ...DRAFT_TOOLS].sort());
     const agent = buildBuilderAgentConfig({ model: "m", platformMcpUrl: MCP_URL });
     const config = { tools: agent.tools } as Parameters<typeof getToolPermission>[0];
@@ -153,7 +153,7 @@ describe("тексты ассистента K/", () => {
     expect(prompt).toContain("`card_id`");
     // имена в обратных кавычках вида snake_case, похожие на инструмент, должны быть из списка
     const mentioned = [...prompt.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)].map((m) => m[1]!);
-    const known = new Set([...ALL_TOOLS, "oma_role", "oma_created_via", "oma_assistant_session", "page_context", "always_ask", "always_allow", "agent_toolset_20260401", "user_message", "expected_version", "expected_revision", "mount_path", "file_id", "environment_id", "session_id", "tool_use_id", "model_usage", "session_usage", "initial_events", "allow_mcp_servers", "max_iterations", "needs_revision", "path_prefix", "memory_store_id", "agent_id", "skill_id", "deployment_id", "model_card_id", "harness_card_id", "display_title", "web_fetch", "web_search", "allowed_hosts", "card_id"]);
+    const known = new Set([...ALL_TOOLS, "oma_role", "oma_created_via", "oma_assistant_session", "page_context", "always_ask", "always_allow", "agent_toolset_20260401", "user_message", "expected_version", "expected_revision", "mount_path", "file_id", "environment_id", "session_id", "tool_use_id", "model_usage", "session_usage", "initial_events", "allow_mcp_servers", "max_iterations", "needs_revision", "path_prefix", "memory_store_id", "agent_id", "skill_id", "deployment_id", "model_card_id", "display_title", "web_fetch", "web_search", "allowed_hosts", "card_id"]);
     for (const name of mentioned) expect(known, name).toContain(name);
   });
 

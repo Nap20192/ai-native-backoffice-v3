@@ -31,8 +31,9 @@ import {
 } from "./pi-provider";
 
 /**
- * Present a Pi provider/model pair as the AI SDK model consumed by
- * DefaultHarness. Pi remains the provider runtime and owns auth, payloads,
+ * Present a Pi provider/model pair as an AI SDK language model, for code
+ * that calls the AI SDK directly (HarnessContext.model, tool and outcome
+ * helpers). Pi remains the provider runtime and owns auth, payloads,
  * transport and streaming; this adapter only translates the two public event
  * protocols.
  */

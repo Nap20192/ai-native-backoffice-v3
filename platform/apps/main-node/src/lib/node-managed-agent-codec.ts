@@ -295,39 +295,9 @@ export function toLegacyHarnessAgentConfig(
     ...(agent.openma?.openaiModelSettings !== undefined && {
       model_settings: structuredClone(agent.openma.openaiModelSettings),
     }),
+    // A legacy harness name (ai-sdk, acp-sandbox, acp-proxy) passes as is:
+    // the harness registry runs it on Pi (D41).
     ...(agent.openma?.harness !== undefined && { harness: agent.openma.harness }),
-    ...(agent.openma?.acp !== undefined && {
-      acp: {
-        agent: agent.openma.acp.agent,
-        ...(agent.openma.acp.restart !== undefined && {
-          restart: {
-            mode: agent.openma.acp.restart.mode,
-            ...(agent.openma.acp.restart.maxRestarts !== undefined && {
-              max_restarts: agent.openma.acp.restart.maxRestarts,
-            }),
-            ...(agent.openma.acp.restart.windowMs !== undefined && {
-              window_ms: agent.openma.acp.restart.windowMs,
-            }),
-          },
-        }),
-        ...(agent.openma.acp.idleTimeoutMs !== undefined && {
-          idle_timeout_ms: agent.openma.acp.idleTimeoutMs,
-        }),
-        ...(agent.openma.acp.perTurnTimeoutMs !== undefined && {
-          per_turn_timeout_ms: agent.openma.acp.perTurnTimeoutMs,
-        }),
-      },
-    }),
-    ...(agent.openma?.runtimeBinding !== undefined && {
-      runtime_binding: {
-        runtime_id: agent.openma.runtimeBinding.runtimeId,
-        acp_agent_id: agent.openma.runtimeBinding.acpAgentId,
-        ...(agent.openma.runtimeBinding.localSkillBlocklist !== undefined && {
-          local_skill_blocklist:
-            agent.openma.runtimeBinding.localSkillBlocklist,
-        }),
-      },
-    }),
     ...(agent.openma?.enableGeneralSubagent !== undefined && {
       enable_general_subagent: agent.openma.enableGeneralSubagent,
     }),

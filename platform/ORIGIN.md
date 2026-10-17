@@ -14,29 +14,35 @@
 
 Изменения поверх исходного кода фиксируются в истории git этого репозитория.
 
-## Докопировано 2026-10-15: CLI и мост локальной среды
+## Докопировано 2026-10-15, удалено 2026-10-17: CLI и мост локальной среды
 
-Из того же коммита 1e44c89 как есть (`rsync -a --exclude node_modules --exclude dist`):
+2026-10-15 из того же коммита 1e44c89 как есть докопировали `packages/cli` (`@openma/cli`,
+команда `oma` и демон моста `oma bridge`), `packages/managed-agents-runtime`
+(`@open-managed-agents/runtime`, зависимость CLI) и `packages/runtime-relay`
+(`@open-managed-agents/runtime-relay`, правила tenant для RuntimeRoom). Серверная часть моста
+написана только для Cloudflare и сюда не копировалась, поэтому мост на нашем Node-сервере так и
+не заработал. Наши правки изоляции демона в `packages/cli` остались в истории git.
 
-| Пакет | Имя в workspace | Зачем |
+## Удалено 2026-10-17: ACP-агенты и мост
+
+Владелец оставил один harness, встроенный цикл Pi. Решение D41 в
+`../docs/decisions-2026-10-17.md`. Пакеты ниже служили только ACP-агентам или мосту и удалены
+целиком:
+
+| Пакет | Имя в workspace | Чему служил |
 |---|---|---|
-| `packages/cli` | `@openma/cli` | команда `oma`, в том числе `oma bridge` (демон локальной среды) |
-| `packages/managed-agents-runtime` | `@open-managed-agents/runtime` | workspace-зависимость CLI (реэкспорт `@openma/common/local-runtime`) |
-| `packages/runtime-relay` | `@open-managed-agents/runtime-relay` | правила tenant для RuntimeRoom. **Пока не используется:** CLI от него не зависит, серверной части моста нет. Удалить, если серверная часть не появится |
+| `packages/acp-runtime` | `@open-managed-agents/acp-runtime` | запуск ACP-агентов (Claude Code, Codex, Gemini, OpenCode, Kimi) в VM и на ноутбуке |
+| `packages/harness-inference-adapters` | `@open-managed-agents/harness-inference-adapters` | переменные модели для каждого ACP-агента при запуске |
+| `packages/inference-proxy` | `@open-managed-agents/inference-proxy` | прокси модели для агента в VM, токены `oma_sbx_` |
+| `packages/cli` | `@openma/cli` | команда `oma` и демон `oma bridge` |
+| `packages/managed-agents-runtime` | `@open-managed-agents/runtime` | зависимость CLI |
+| `packages/runtime-relay` | `@open-managed-agents/runtime-relay` | правила tenant для RuntimeRoom, не использовался |
 
-Остальные workspace-зависимости CLI (`acp-runtime`, `api-types`, `inference-proxy`,
-`sandbox`, `observability`, `shared`, `eval-core`) уже были здесь и совпадают с
-upstream (`diff -rq` пустой). `pnpm-workspace.yaml` менять не пришлось: его шаблон
-`packages/*` покрывает новые пакеты.
+Вместе с ними удалены harness `acp-sandbox` и `acp-proxy`, устаревший harness `ai-sdk`
+(`DefaultHarness`), карточки harness, прокси модели для VM, вид учётных данных
+`sandbox_inference` в `packages/auth` и страницы консоли «Harness» и «Локальные среды». Пакеты
+`harness-runtime-acp` и `harness-supervisor` в копию не попадали, а корневой `package.json` на
+них ссылался. Эти ссылки убраны вместе с `vitest.acp-recovery.config.ts`.
 
-Серверная часть моста (`apps/main/src/routes/runtimes.ts`, `apps/main/src/runtime-room.ts`)
-написана только для Cloudflare и сюда не копировалась. Подробности в
-`../docs/runbook-claude-code-harness.md`.
-
-Правки поверх upstream в `packages/cli` (2026-10-15, изоляция демона моста):
-`src/bridge/lib/spawn-guard.ts`, `spawn-plan.ts` (новые), `claude-config-dir.ts`
-(переписан: изолированный конфиг вместо симлинков на `~/.claude`), `session-cwd.ts`,
-`platform.ts` (`OMA_BRIDGE_WORK_ROOT`), `node-session-runtime.ts`, `session-manager.ts`,
-`commands/daemon.ts` (`local_skills: {}`), `src/index.ts` (`oma mcp connect` на
-127.0.0.1, браузер без shell); тесты `test/bridge-isolation.test.ts`,
-`test/session-start-cwd.test.ts`. Подробности в `../docs/runbook-claude-code-harness.md`.
+Код до удаления лежит в коммите `1d1a43b`. `@openma/common` остаётся: консоль рисует ходы
+через его `projectAcpChatTurn`, а он не зависит от ACP-агентов.

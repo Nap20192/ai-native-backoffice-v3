@@ -31,7 +31,6 @@ export interface HarnessPendingInterruptContext {
   agent: AgentConfig;
   session_id: string;
   tenant_id: string;
-  env: Pick<HarnessContext["env"], "RUNTIME_ROOM">;
   pendingActions: SessionEvent[];
 }
 
@@ -49,7 +48,7 @@ export interface HarnessInterface {
 
   /**
    * Called once per session, after sandbox warmup, before the first user
-   * message is processed. Default behavior (DefaultHarness): inject
+   * message is processed. Typical behavior: inject
    * <system-reminder> user.message events for each skill / memory_prompt /
    * appendable_prompt the agent opted into. Override to substitute a custom
    * RAG layer, or to opt out of platform reminders entirely (no-op).
@@ -100,9 +99,8 @@ export interface HarnessInterface {
    * Output MUST be byte-deterministic for any input — Anthropic's prompt
    * cache invalidates on any prefix byte drift.
    *
-   * Sync-or-async: the union return type lets existing sync overrides
-   * (e.g. AcpProxyHarness returning []) keep their shape. The default-loop
-   * caller always `await`s the result so either form works.
+   * Sync-or-async: the union return type lets a sync override keep its
+   * shape. Callers always `await` the result so either form works.
    */
   deriveModelContext?(
     events: SessionEvent[],
@@ -200,27 +198,15 @@ export interface HarnessContext {
   agent: AgentConfig;
   userMessage: UserMessageEvent;
   /**
-   * The OMA session id this turn belongs to. Optional during the transition
-   * for legacy harnesses; AcpProxyHarness needs it to address the
-   * RuntimeRoom DO. SessionDO populates this on every harness.run call.
+   * The OMA session id this turn belongs to. The session host populates
+   * this on every harness.run call.
    */
   session_id?: string;
   /**
-   * The OMA tenant id this session belongs to. Optional during the
-   * transition — AcpProxyHarness uses it to forward `x-harness-tenant` to
-   * RuntimeRoom so the daemon receives the right `tenant_id` on every
-   * session-scoped frame (step 2 of multi-tenant CLI bridge daemon). Other
-   * harnesses ignore it. SessionDO populates this from its `state.tenant_id`.
+   * The OMA tenant id this session belongs to. The session host populates
+   * this from its tenant state.
    */
   tenant_id?: string;
-
-  /**
-   * When the agent uses `runtime_binding` (AcpProxyHarness), the host
-   * filesystem path for an attached `github_repository` resource. Forwarded
-   * on `session.start.cwd` so the ACP child runs in the project tree while
-   * the daemon keeps the OMA bundle in its scratch directory.
-   */
-  acpSessionStartCwd?: string;
 
   /** Platform-prepared tools: built from agent config, ready to pass to generateText. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -230,9 +216,9 @@ export interface HarnessContext {
   model: LanguageModel;
 
   /**
-   * Tenant-scoped Pi provider/model runtime for harnesses that consume Pi
-   * directly. DefaultHarness uses the same runtime through `model` above.
-   * Optional because not every platform enables the standalone PiHarness.
+   * Tenant-scoped Pi provider/model runtime. PiHarness drives the turn with
+   * it; `model` above is the AI SDK projection of the same runtime.
+   * Optional because not every caller builds it (tests, sub-agents).
    */
   pi?: PiModelRuntime;
 
@@ -295,62 +281,14 @@ export interface HarnessContext {
   env: {
     ANTHROPIC_API_KEY: string;
     ANTHROPIC_BASE_URL?: string;
-    /** Official Environment Work secret (base64url JSON). Only its
-     * sessions_token/api_base_url fields are decoded by ACP projection. */
-    ANTHROPIC_WORK_SECRET?: string;
     ANTHROPIC_MODEL?: string;
     TAVILY_API_KEY?: string;
     delegateToAgent?: (agentId: string, message: string) => Promise<string>;
     CONFIG_KV?: KVNamespace;
     memoryStoreIds?: string[];
-    /**
-     * Work-scoped HTTP gateway for ACP agents running inside a sandbox.
-     * The bearer is the short-lived sessions_token already delivered in the
-     * official Work secret; it is not an upstream MCP/Vault credential.
-     */
-    mcpProxy?: {
-      gatewayBaseUrl: string;
-      sessionsToken: string;
-    };
-    /** Same Work capability as mcpProxy; used to project hosted inference env. */
-    hostedInference?: {
-      gatewayBaseUrl: string;
-      sessionsToken: string;
-      model?: {
-        providerId: string;
-        baseUrl: string | null;
-        protocolEndpoints?: readonly {
-          protocol: "anthropic-messages" | "openai-chat" | "openai-responses" | "gemini";
-          proxyPathSegment: string;
-          upstreamBaseUrl: string;
-        }[];
-      };
-    };
-    /**
-     * Variables laid over the env of the ACP process this turn starts: the
-     * inference proxy of a harness card with a token for this turn only.
-     * They stay out of the ACP checkpoint key, so a new token resumes the
-     * ACP session of the previous turn.
-     */
-    acpLaunchEnv?: Record<string, string>;
     environmentConfig?: { networking?: { type: string; allowed_hosts?: string[] } };
     /** Register a background task for completion notification (CC-style task_notification). */
     watchBackgroundTask?: (taskId: string, pid: string, outputFile: string, proc: ProcessHandle | null) => void;
-    /** Cross-script DO binding to RuntimeRoom (declared on main worker but
-     *  bound here via wrangler.jsonc `script_name`). AcpProxyHarness uses
-     *  this to attach to the daemon's room without going through main as
-     *  an HTTP service. */
-    RUNTIME_ROOM?: DurableObjectNamespace;
-    /** LLM full-body logging context. When set, the harness wraps each
-     *  model call in middleware that PUTs request + response to R2 keyed
-     *  by the per-step span event id. SessionDO populates this with the
-     *  session's tenant + id and the FILES_BUCKET binding. Absent in
-     *  test harnesses / non-CF deploys → middleware no-op. */
-    llmLog?: {
-      tenant_id: string;
-      session_id: string;
-      r2: R2Bucket | null;
-    };
   };
   runtime: HarnessRuntime;
 }

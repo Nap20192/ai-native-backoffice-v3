@@ -60,14 +60,12 @@ describe("AssistantThread", () => {
     expect(screen.getAllByRole("article")).toHaveLength(4);
   });
 
-  it("черновики карточек модели и harness", () => {
+  it("черновик карточки модели", () => {
     const items: ThreadItem[] = [
       { kind: "draft", id: "d1", draftKind: "model_card", body: { model_id: "m" } },
-      { kind: "draft", id: "d2", draftKind: "harness_card", body: { name: "H" } },
     ];
     renderInRouter(<AssistantThread items={items} sessionId="s1" running={false} />);
     expect(screen.getByText("Черновик карточки модели")).toBeInTheDocument();
-    expect(screen.getByText("Черновик карточки harness")).toBeInTheDocument();
   });
 
   it("пока ассистент работает, показывает индикатор", () => {

@@ -298,7 +298,10 @@ export function isLevelZeroTurn(summary: TraceTurnSummary): boolean {
   );
 }
 
-/** Какое покрытие вызовов модели ждёт сервер от harness (M/src/lib/trace/harness-coverage.ts). */
+/**
+ * Какое покрытие вызовов модели ждёт сервер от harness (M/src/lib/trace/harness-coverage.ts).
+ * Сейчас работает только Pi. Ветки `ai-sdk` и ACP нужны старым ходам из истории.
+ */
 export function expectedModelCoverage(harness: string | null): TraceCoverage["model_calls"] {
   if (harness === null || harness === "" || harness === "default" || harness === "pi") return "measured";
   if (harness === "ai-sdk") return "by_events";

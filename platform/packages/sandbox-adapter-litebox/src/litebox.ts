@@ -245,8 +245,9 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
   }
 
   /**
-   * Live stdio process inside the VM, for protocol runtimes such as ACP
-   * (an agent CLI started by the `acp-sandbox` harness). The process gets
+   * Live stdio process inside the VM, for protocol runtimes such as ACP.
+   * No harness of this platform starts one since the ACP harnesses were
+   * removed (D41); the port method stays. The process gets
    * the sandbox env (`setEnvVars`) overlaid with `spec.env`, runs without a
    * timeout and lives until it exits, is killed, or the box stops. Both
    * output streams are drained eagerly: BoxLite's `wait()` does not settle

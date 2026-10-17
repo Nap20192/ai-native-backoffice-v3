@@ -21,7 +21,7 @@ const helpArgs = z.object({ topic: z.enum(HELP_TOPICS) }).strict();
 export const helpTool: ToolDef<z.infer<typeof helpArgs>> = {
   name: "help",
   group: "read",
-  description: "Правила и поля объектов по теме: overview, agent, environment, session, skill, deployment, memory, model_card, harness, outcome, danger, limits.",
+  description: "Правила и поля объектов по теме: overview, agent, environment, session, skill, deployment, memory, model_card, outcome, danger, limits.",
   args: helpArgs,
   routes: [],
   precondition: null,
@@ -75,7 +75,6 @@ const ok: BodyCheckResult = { ok: true };
 const refuse = (reason: string): BodyCheckResult => ({ ok: false, reason });
 
 const MODEL_CARD_FORBIDDEN = ["api_key", "custom_headers", "provider", "base_url"];
-const HARNESS_CARD_ALLOWED = new Set(["name", "install", "protocols", "allowed_env"]);
 const SESSION_METADATA = new Set(["oma_created_via", "oma_assistant_session"]);
 
 function checkSessionCreate(body: unknown): BodyCheckResult {
@@ -147,8 +146,6 @@ export const routeAllowlist: RouteAllowlist = {
         return isRecord(body) && isRecord(body._oma) && body._oma.paused === true ? ok : refuse("_oma.paused: true is required");
       case "model_card_safe":
         return isRecord(body) && !MODEL_CARD_FORBIDDEN.some((key) => key in body) ? ok : refuse("key, URL, provider and headers are not allowed");
-      case "harness_card_safe":
-        return isRecord(body) && Object.keys(body).every((key) => HARNESS_CARD_ALLOWED.has(key)) ? ok : refuse("only name, install, protocols, allowed_env");
       case "session_create":
         return checkSessionCreate(body);
       case "session_event":

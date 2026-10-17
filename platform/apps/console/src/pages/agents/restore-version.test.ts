@@ -31,6 +31,27 @@ describe("restoreVersionBody", () => {
     });
   });
 
+  it("версия ACP-агента возвращается на встроенный цикл без блока acp", () => {
+    const body = restoreVersionBody(
+      {
+        name: "Юрист",
+        _oma: {
+          harness: "acp-sandbox",
+          acp: { agent: { command: "sh" } },
+          runtime_binding: { runtime_id: "rt_1" },
+          appendable_prompts: ["p1"],
+        },
+      },
+      5,
+    );
+
+    expect(body).toEqual({
+      version: 5,
+      name: "Юрист",
+      _oma: { harness: "pi", appendable_prompts: ["p1"] },
+    });
+  });
+
   it("leaves out fields the version does not have", () => {
     expect(restoreVersionBody({ name: "A" }, 1)).toEqual({ version: 1, name: "A" });
   });

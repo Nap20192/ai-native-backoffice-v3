@@ -1,69 +1,27 @@
 // Models and harness on a booted main-node (docs/plans/models-harness.md, WIRE):
-// the catalog routes, harness cards, the agent guard and the sandbox token on
-// the inference proxy, all through the real HTTP stack.
+// the model catalog route and the agent guard through the real HTTP stack.
+// Only the built-in Pi loop runs agents (D41): the harness catalog, harness
+// cards and the inference proxy for agents in the VM are gone.
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { createBetterSqlite3SqlClient } from "@open-managed-agents/sql-client";
 
 import { loadNodeConfig } from "../src/config";
 import { createNodeControlPlane, type NodeControlPlane } from "../src/control-plane";
 import { nodeDefaults } from "../src/components";
-import { createNodeSecrets } from "../src/secrets";
-import { issueSandboxInferenceToken } from "../src/lib/sandbox-inference-token";
-import { createModelsHarnessWiring, buildHarnessCardRoutesFor } from "../src/lib/models-harness-wiring";
+import { ONLY_PI_MESSAGE } from "../src/lib/agent-config-guard";
 
 const ROOT_SECRET = Buffer.alloc(32, 7).toString("base64");
 const API_KEY = "test-static-api-key";
 const created: NodeControlPlane[] = [];
 const dirs: string[] = [];
 
-interface UpstreamCall {
-  method: string;
-  path: string;
-  headers: IncomingHttpHeaders;
-  body: string;
-}
-
-let upstream: { url: string; calls: UpstreamCall[]; server: Server };
-
-beforeAll(async () => {
-  const calls: UpstreamCall[] = [];
-  const server = createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      const body = Buffer.concat(chunks).toString("utf8");
-      calls.push({ method: req.method ?? "", path: req.url ?? "", headers: req.headers, body });
-      let model = "unknown";
-      try { model = (JSON.parse(body) as { model?: string }).model ?? model; } catch { /* not JSON */ }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({
-        id: "msg_fake", type: "message", role: "assistant", model,
-        content: [{ type: "text", text: "ok" }], stop_reason: "end_turn",
-        usage: { input_tokens: 1, output_tokens: 1 },
-        data: [],
-      }));
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  upstream = { url: `http://127.0.0.1:${port}`, calls, server };
-});
-
-afterAll(async () => {
-  await new Promise<void>((resolve) => upstream.server.close(() => resolve()));
-});
-
 afterEach(async () => {
   await Promise.all(created.splice(0).map((cp) => cp.stop("test")));
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  upstream.calls.length = 0;
 });
 
 async function boot(overrides: Record<string, string | undefined> = {}): Promise<NodeControlPlane> {
@@ -83,7 +41,6 @@ async function boot(overrides: Record<string, string | undefined> = {}): Promise
     SESSION_OUTPUTS_DIR: join(dir, "outputs"),
     PLATFORM_ROOT_SECRET: ROOT_SECRET,
     ANTHROPIC_API_KEY: "sk-server-unused",
-    SANDBOX_GATEWAY_BASE_URL: "http://host.boxlite.internal:8795",
     ...overrides,
   };
   for (const [key, value] of Object.entries(env)) if (value === undefined) delete env[key];
@@ -109,62 +66,16 @@ async function json<T = Record<string, unknown>>(response: Response | Promise<Re
 async function createCard(cp: NodeControlPlane, body: Record<string, unknown>) {
   const response = await call(cp, "POST", "/v1/oma/model_cards", {
     api_key: "sk-card-secret",
-    base_url: upstream.url,
+    base_url: "http://127.0.0.1:9",
     ...body,
   });
   expect(response.status).toBe(201);
   return response.json() as Promise<{ id: string }>;
 }
 
-function guardError(message: string | RegExp) {
-  return {
-    type: "error",
-    error: { type: "invalid_request_error", message: typeof message === "string" ? message : expect.stringMatching(message) },
-  };
+function guardError(message: string) {
+  return { type: "error", error: { type: "invalid_request_error", message } };
 }
-
-type Entry = { id: string; source: string; status: string; reason: string | null; card_id: string | null };
-
-describe("GET /v1/oma/harnesses", () => {
-  it("returns the built-in loop and Claude Code", async () => {
-    const cp = await boot();
-    const response = await call(cp, "GET", "/v1/oma/harnesses");
-    expect(response.status).toBe(200);
-    const { data } = await json<{ data: Entry[] }>(response);
-    expect(data.slice(0, 2).map((entry) => entry.id)).toEqual(["pi", "claude-acp"]);
-    expect(data.find((entry) => entry.id === "claude-acp")).toMatchObject({ status: "ready", reason: null });
-  });
-
-  it("marks ACP entries unavailable when the VM has no server address", async () => {
-    const cp = await boot({ SANDBOX_GATEWAY_BASE_URL: undefined, PUBLIC_BASE_URL: undefined });
-    const { data } = await json<{ data: Entry[] }>(call(cp, "GET", "/v1/oma/harnesses"));
-    expect(data.find((entry) => entry.id === "pi")).toMatchObject({ status: "ready" });
-    expect(data.find((entry) => entry.id === "claude-acp")).toMatchObject({
-      status: "unavailable",
-      reason: "VM не знает адрес сервера: задайте SANDBOX_GATEWAY_BASE_URL",
-    });
-
-    const agent = await call(cp, "POST", "/v1/agents", {
-      name: "cc", model: "claude-sonnet-4-6",
-      _oma: { harness: "acp-sandbox", acp: { agent: { id: "claude-acp", command: "claude-agent-acp" } } },
-    });
-    expect(agent.status).toBe(400);
-    expect(await agent.json()).toEqual(guardError(
-      "Harness «Claude Code в песочнице» недоступен: VM не знает адрес сервера: задайте SANDBOX_GATEWAY_BASE_URL",
-    ));
-  });
-
-  it("takes the VM address from PUBLIC_BASE_URL and needs the root secret", async () => {
-    const viaPublic = await boot({ SANDBOX_GATEWAY_BASE_URL: undefined, PUBLIC_BASE_URL: "https://oma.example" });
-    const ready = await json<{ data: Entry[] }>(call(viaPublic, "GET", "/v1/oma/harnesses"));
-    expect(ready.data.find((entry) => entry.id === "claude-acp")?.status).toBe("ready");
-
-    const noSecret = await boot({ PLATFORM_ROOT_SECRET: undefined });
-    const blocked = await json<{ data: Entry[] }>(call(noSecret, "GET", "/v1/oma/harnesses"));
-    expect(blocked.data.find((entry) => entry.id === "claude-acp")?.reason)
-      .toBe("Сервер не выпустит токен песочницы: задайте PLATFORM_ROOT_SECRET");
-  });
-});
 
 describe("GET /v1/oma/model_options", () => {
   it("lists the workspace card first, then the server-key models, without any key", async () => {
@@ -183,7 +94,7 @@ describe("GET /v1/oma/model_options", () => {
       is_default: true,
       wire_model: "claude-sonnet-4-6",
       protocols: ["anthropic-messages"],
-      harnesses: expect.arrayContaining(["pi", "claude-acp"]),
+      harnesses: ["pi"],
     });
     expect(body.data.slice(1).every((option) => option.source === "builtin")).toBe(true);
     expect(body.data.some((option) => option.handle === "claude-sonnet-4-6")).toBe(true);
@@ -195,104 +106,53 @@ describe("GET /v1/oma/model_options", () => {
   });
 });
 
-describe("/v1/oma/harness_cards", () => {
-  const card = {
-    name: "Aider через ACP",
-    harness_id: "aider-local",
-    command: "aider-acp",
-    args: [],
-    install: { npm: [], pip: ["aider-chat==0.86.1"] },
-    protocols: ["openai-chat"],
-    allowed_env: ["AIDER_AUTO_COMMITS"],
-  };
-
-  it("creates, lists, changes and deletes a card, and the catalog follows", async () => {
+describe("removed harness routes (D41)", () => {
+  it("answers 404 for the harness catalog, harness cards and the inference proxy", async () => {
     const cp = await boot();
-    const created = await call(cp, "POST", "/v1/oma/harness_cards", card);
-    expect(created.status).toBe(201);
-    const saved = await created.json() as { id: string; status: string; cwd: string };
-    expect(saved).toMatchObject({ harness_id: "aider-local", status: "unverified", cwd: "/mnt/session/outputs" });
-    expect(saved.id).toMatch(/^hcard_[A-Za-z0-9]{16}$/);
-
-    const catalog = await json<{ data: Entry[] }>(call(cp, "GET", "/v1/oma/harnesses"));
-    expect(catalog.data.at(-1)).toMatchObject({ id: "aider-local", source: "card", status: "unverified", card_id: saved.id });
-
-    const again = await call(cp, "POST", "/v1/oma/harness_cards", card);
-    expect(again.status).toBe(409);
-    expect(await again.json()).toEqual({ error: "Harness с ID «aider-local» уже есть", field: "harness_id" });
-
-    const withValues = await call(cp, "POST", "/v1/oma/harness_cards", { ...card, harness_id: "other", env: { X: "sk-value-secret" } });
-    expect(withValues.status).toBe(400);
-    const problem = await withValues.json() as { error: string; field: string };
-    expect(problem.field).toBe("env");
-    expect(JSON.stringify(problem)).not.toContain("sk-value-secret");
-
-    const renamed = await call(cp, "POST", `/v1/oma/harness_cards/${saved.id}`, { name: "Aider" });
-    expect(renamed.status).toBe(200);
-    expect(await renamed.json()).toMatchObject({ name: "Aider", harness_id: "aider-local" });
-    expect((await call(cp, "POST", `/v1/oma/harness_cards/${saved.id}`, { harness_id: "renamed" })).status).toBe(400);
-
-    const page = await json<{ data: Array<{ id: string }>; next_cursor: string | null }>(call(cp, "GET", "/v1/oma/harness_cards?q=AIDER"));
-    expect(page).toEqual({ data: [expect.objectContaining({ id: saved.id })], next_cursor: null });
-
-    expect(await json(call(cp, "POST", `/v1/oma/harness_cards/${saved.id}/archive`))).toMatchObject({ id: saved.id, archived_at: expect.any(String) });
-    const after = await json<{ data: Entry[] }>(call(cp, "GET", "/v1/oma/harnesses"));
-    expect(after.data.some((entry) => entry.id === "aider-local")).toBe(false);
-    expect(await json(call(cp, "GET", `/v1/oma/harness_cards/${saved.id}`))).toMatchObject({ archived_at: expect.any(String) });
-    expect((await call(cp, "POST", "/v1/oma/harness_cards", card)).status).toBe(409);
-    const archivedEdit = await call(cp, "POST", `/v1/oma/harness_cards/${saved.id}`, { name: "Снова" });
-    expect(archivedEdit.status).toBe(409);
-    expect((await call(cp, "GET", "/v1/oma/harness_cards/hcard_missing")).status).toBe(404);
-  });
-
-  it("is closed to anonymous calls", async () => {
-    const cp = await boot();
-    expect((await call(cp, "GET", "/v1/oma/harness_cards", undefined, {})).status).toBe(401);
-  });
-
-  it("answers 501 on MySQL, where the catalog has no cards", async () => {
-    const sql = await createBetterSqlite3SqlClient(":memory:");
-    const config = loadNodeConfig({ NODE_ENV: "test", PLATFORM_ROOT_SECRET: ROOT_SECRET });
-    const wiring = createModelsHarnessWiring({
-      config,
-      sql,
-      dialect: "mysql",
-      modelCards: { list: async () => [] },
-    });
-    expect(wiring.cardStore).toBeNull();
-    const routes = buildHarnessCardRoutesFor(wiring);
-    const response = await routes.request("/", { method: "GET" });
-    expect(response.status).toBe(501);
-    expect(await response.json()).toEqual({ error: "Свои harness на MySQL не поддерживаются", field: null });
-    expect((await wiring.catalog.harnesses("ws")).every((entry) => entry.source === "builtin")).toBe(true);
+    for (const [method, path] of [
+      ["GET", "/v1/oma/harnesses"],
+      ["GET", "/v1/oma/harness_cards"],
+      ["POST", "/v1/oma/harness_cards"],
+      ["POST", "/v1/oma/inference-proxy/sesn_x/anthropic/v1/messages"],
+    ] as const) {
+      const response = await call(cp, method, path, method === "POST" ? {} : undefined);
+      expect(response.status, `${method} ${path}`).toBe(404);
+    }
   });
 });
 
 describe("agent guard on /v1/agents", () => {
-  const claude = (extra: Record<string, unknown> = {}, env?: Record<string, string>) => ({
+  const claude = {
     harness: "acp-sandbox",
-    acp: { agent: { id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"], ...(env ? { env } : {}), ...extra } },
-  });
+    acp: { agent: { id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"] } },
+  };
 
-  it("rejects every case of table 4.3 with its text", async () => {
+  it("refuses a new agent with another harness or an acp block", async () => {
     const cp = await boot();
     await createCard(cp, { model_id: "verify-fake", model: "claude-sonnet-4-6", provider: "anthropic", is_default: true });
-    await createCard(cp, { model_id: "verify-oai", model: "gpt-4.1", provider: "openai" });
-    await createCard(cp, { model_id: "verify-plain", model: "vendor/unknown-model", provider: "openrouter" });
-    const cases: Array<[unknown, string | RegExp]> = [
-      [{ model: "verify-fake", _oma: { harness: "acp-proxy" } }, "acp-proxy на этом сервере не работает. Выберите harness из GET /v1/oma/harnesses"],
-      [{ model: "verify-fake", _oma: { harness: "ai-sdk" } }, "Harness ai-sdk устарел. Выберите встроенный цикл или ACP-агента из каталога"],
-      [{ model: "verify-fake", _oma: { harness: "foo" } }, "Неизвестный harness «foo»"],
-      [{ model: "verify-fake", _oma: { harness: "acp-sandbox", acp: { agent: { id: "claude-acp" } } } }, "Для acp-sandbox задайте _oma.acp.agent.command"],
-      [{ model: "verify-fake", _oma: { harness: "acp-sandbox", acp: { agent: { id: "nope", command: "x" } } } }, "Harness «nope» не найден. Выберите вариант из GET /v1/oma/harnesses"],
+    for (const oma of [
+      claude,
+      { harness: "acp-sandbox" },
+      { harness: "acp-proxy" },
+      { harness: "ai-sdk" },
+      { harness: "foo" },
+      { acp: claude.acp },
+    ]) {
+      const response = await call(cp, "POST", "/v1/agents", { name: "guarded", model: "verify-fake", _oma: oma });
+      expect(response.status, JSON.stringify(oma)).toBe(400);
+      expect(await response.json(), JSON.stringify(oma)).toEqual(guardError(ONLY_PI_MESSAGE));
+    }
+    const list = await json<{ data: unknown[] }>(call(cp, "GET", "/v1/agents"));
+    expect(list.data).toEqual([]);
+  });
+
+  it("rejects model problems with their text", async () => {
+    const cp = await boot();
+    await createCard(cp, { model_id: "verify-plain", model: "vendor/unknown-model", provider: "openrouter", is_default: true });
+    const cases: Array<[unknown, string]> = [
       [{ model: "missing-model" }, "Модель «missing-model» не найдена. Добавьте карточку модели или задайте на сервере ANTHROPIC_API_KEY"],
-      [{ model: "verify-oai", _oma: claude() }, /^Модель «verify-oai» не подходит для «Claude Code в песочнице»: нужен протокол anthropic-messages, у модели openai-chat/],
-      [{ model: { id: "verify-fake", effort: "high" }, _oma: claude() }, "Claude Code в песочнице не принимает усилие: уберите model.effort"],
-      [{ model: { id: "verify-fake", speed: "fast" }, _oma: claude() }, "Claude Code в песочнице не принимает скорость: уберите model.speed"],
       [{ model: { id: "verify-plain", effort: "max" } }, "Модель «verify-plain» не поддерживает усилие"],
       [{ model: { id: "verify-plain", speed: "fast" } }, "Модель «verify-plain» не поддерживает быструю скорость"],
-      [{ model: "verify-fake", _oma: claude({}, { ANTHROPIC_BASE_URL: "http://elsewhere" }) }, "Переменную «ANTHROPIC_BASE_URL» задаёт сервер, уберите её из env агента"],
-      [{ model: "verify-fake", _oma: claude({}, { GITHUB_TOKEN: "x" }) }, "Переменная «GITHUB_TOKEN» похожа на секрет. Ключи в env агента не кладите: модель подключается через прокси сервера"],
     ];
     for (const [body, message] of cases) {
       const response = await call(cp, "POST", "/v1/agents", { name: "guarded", ...(body as object) });
@@ -301,114 +161,101 @@ describe("agent guard on /v1/agents", () => {
     }
   });
 
-  it("passes the W4 recipe and a model handle string, and checks updates by the merged config", async () => {
+  it("creates a Pi agent, renames it and refuses a later switch to ACP", async () => {
     const cp = await boot();
     await createCard(cp, { model_id: "verify-fake", model: "claude-sonnet-4-6", provider: "anthropic", is_default: true });
-    const { data } = await json<{ data: Array<Entry & { acp: unknown }> }>(call(cp, "GET", "/v1/oma/harnesses"));
-    const recipe = data.find((entry) => entry.id === "claude-acp")!.acp;
-
-    const acpAgent = await call(cp, "POST", "/v1/agents", { name: "cc", model: "verify-fake", _oma: { harness: "acp-sandbox", acp: recipe } });
-    expect(acpAgent.status).toBeLessThan(300);
-    const { id } = await acpAgent.json() as { id: string };
+    for (const oma of [undefined, { harness: "pi" }, { harness: "default" }]) {
+      const response = await call(cp, "POST", "/v1/agents", { name: "pi", model: "verify-fake", ...(oma ? { _oma: oma } : {}) });
+      expect(response.status, JSON.stringify(oma)).toBeLessThan(300);
+    }
     const plain = await call(cp, "POST", "/v1/agents", { name: "plain", model: "claude-sonnet-4-6" });
     expect(plain.status).toBeLessThan(300);
+    const { id } = await plain.json() as { id: string };
 
     const version = (await json<{ version: number }>(call(cp, "GET", `/v1/agents/${id}`))).version;
-    const toOai = await call(cp, "POST", `/v1/agents/${id}`, { version, model: { id: "verify-fake", effort: "high" } });
-    expect(toOai.status).toBe(400);
-    expect(await toOai.json()).toEqual(guardError("Claude Code в песочнице не принимает усилие: уберите model.effort"));
-    const renamed = await call(cp, "POST", `/v1/agents/${id}`, { version, name: "cc-renamed" });
+    const renamed = await call(cp, "POST", `/v1/agents/${id}`, { version, name: "plain-renamed" });
     expect(renamed.status).toBeLessThan(300);
-    expect(await renamed.json()).toMatchObject({ name: "cc-renamed" });
+    expect(await renamed.json()).toMatchObject({ name: "plain-renamed" });
+
+    const current = (await json<{ version: number }>(call(cp, "GET", `/v1/agents/${id}`))).version;
+    const toAcp = await call(cp, "POST", `/v1/agents/${id}`, { version: current, _oma: claude });
+    expect(toAcp.status).toBe(400);
+    expect(await toAcp.json()).toEqual(guardError(ONLY_PI_MESSAGE));
     expect((await call(cp, "POST", `/v1/agents/${id}/archive`, {})).status).toBeLessThan(300);
-  });
-
-  it("lets the console form rename an agent whose harness card was deleted", async () => {
-    const cp = await boot();
-    await createCard(cp, { model_id: "verify-oai", model: "gpt-4.1", provider: "openai", is_default: true });
-    const card = await json<{ id: string }>(call(cp, "POST", "/v1/oma/harness_cards", {
-      name: "Aider через ACP", harness_id: "aider-local", command: "aider-acp", protocols: ["openai-chat"],
-    }));
-    const created = await call(cp, "POST", "/v1/agents", {
-      name: "aider", model: "verify-oai",
-      _oma: { harness: "acp-sandbox", acp: { agent: { id: "aider-local", command: "aider-acp", args: [] } } },
-    });
-    expect(created.status).toBeLessThan(300);
-    const { id } = await created.json() as { id: string };
-    // Archive and delete now refuse a card that a live agent uses
-    // (docs/plans/crud.md, 1.3). A card archived before that rule still
-    // exists in old data, so the test archives it in the table directly.
-    expect((await call(cp, "POST", `/v1/oma/harness_cards/${card.id}/archive`)).status).toBe(409);
-    const db = await createBetterSqlite3SqlClient(join(dirs.at(-1)!, "oma.db"));
-    await db.prepare("UPDATE harness_cards SET archived_at = ? WHERE id = ?").bind(Date.now(), card.id).run();
-
-    // The form sends the stored model and the whole _oma block with every save.
-    type Stored = { version: number; model: unknown; _oma: { harness: string; acp: { agent: Record<string, unknown> } } };
-    const stored = await json<Stored>(call(cp, "GET", `/v1/agents/${id}`));
-    const renamed = await call(cp, "POST", `/v1/agents/${id}`, {
-      version: stored.version, name: "aider-renamed", model: stored.model,
-      _oma: { harness: stored._oma.harness, acp: stored._oma.acp },
-    });
-    expect(renamed.status, await renamed.clone().text()).toBe(200);
-    expect(await renamed.json()).toMatchObject({ name: "aider-renamed" });
-
-    const after = await json<Stored>(call(cp, "GET", `/v1/agents/${id}`));
-    const withEnv = await call(cp, "POST", `/v1/agents/${id}`, {
-      version: after.version, model: after.model,
-      _oma: { acp: { ...after._oma.acp, agent: { ...after._oma.acp.agent, env: { AIDER_AUTO_COMMITS: "false" } } } },
-    });
-    expect(withEnv.status).toBe(400);
-    expect(await withEnv.json()).toEqual(guardError("Harness «aider-local» не найден. Выберите вариант из GET /v1/oma/harnesses"));
   });
 });
 
-describe("sandbox inference token", () => {
-  it("opens only the inference proxy of its own session, which sends the card key and wire model", async () => {
-    const cp = await boot();
-    await createCard(cp, { model_id: "verify-fake", model: "claude-sonnet-4-6", provider: "anthropic", is_default: true });
-    const environment = await json<{ id: string }>(call(cp, "POST", "/v1/environments", {
-      name: "token-env", config: { type: "cloud", networking: { type: "unrestricted" } },
-    }));
-    const agent = await json<{ id: string }>(call(cp, "POST", "/v1/agents", { name: "token-agent", model: "verify-fake" }));
-    const session = await json<{ id: string }>(call(cp, "POST", "/v1/sessions", { agent: agent.id, environment_id: environment.id }));
-    const other = await json<{ id: string }>(call(cp, "POST", "/v1/sessions", { agent: agent.id, environment_id: environment.id }));
-    expect(session.id).toBeTruthy();
-    upstream.calls.length = 0;
+describe("agent stored before D41", () => {
+  const legacyAcp = {
+    agent: {
+      id: "claude-acp",
+      command: "sh",
+      args: ["-c", "exec claude-agent-acp"],
+      env: { CLAUDE_FLAG: "legacy-acp-env" },
+    },
+  };
 
-    const cipher = createNodeSecrets(ROOT_SECRET).cipherFor("managed.sandbox-inference");
-    const token = await issueSandboxInferenceToken({ cipher, workspaceId: "default", sessionId: session.id, ttlMs: 60_000 });
-    const bearer = { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01" };
-    const message = { model: "verify-fake", max_tokens: 16, messages: [{ role: "user", content: "hi" }] };
-
-    expect((await call(cp, "GET", "/v1/agents", undefined, bearer)).status).toBe(403);
-    expect((await call(cp, "GET", "/v1/oma/harness_cards", undefined, bearer)).status).toBe(403);
-    expect((await call(cp, "POST", `/v1/oma/inference-proxy/${other.id}/anthropic/v1/messages`, message, bearer)).status).toBe(403);
-    expect(upstream.calls).toEqual([]);
-
-    const proxied = await call(cp, "POST", `/v1/oma/inference-proxy/${session.id}/anthropic/v1/messages`, message, bearer);
-    expect(proxied.status).toBe(200);
-    expect(await proxied.json()).toMatchObject({ model: "claude-sonnet-4-6" });
-    expect(upstream.calls).toHaveLength(1);
-    const [forwarded] = upstream.calls;
-    expect(forwarded!.path).toBe("/v1/messages");
-    expect(forwarded!.headers["x-api-key"]).toBe("sk-card-secret");
-    expect(JSON.stringify(forwarded!.headers)).not.toContain(token);
-    expect(JSON.parse(forwarded!.body)).toMatchObject({ model: "claude-sonnet-4-6", max_tokens: 16 });
-
-    // The token reaches model calls only, not the rest of the provider API.
-    for (const [method, path] of [
-      ["GET", "anthropic/v1/files"],
-      ["DELETE", "anthropic/v1/files/file_other_session"],
-      ["POST", "anthropic/v1/messages/batches"],
-    ] as const) {
-      const response = await call(cp, method, `/v1/oma/inference-proxy/${session.id}/${path}`, method === "POST" ? message : undefined, bearer);
-      expect(response.status, `${method} ${path}`).toBe(403);
+  /** Rewrites the stored document the way an agent saved with an ACP
+   * harness looks in an old database. */
+  function storeAsLegacyAcp(databasePath: string, agentId: string) {
+    const db = new Database(databasePath);
+    try {
+      const row = db.prepare("SELECT document FROM managed_agents WHERE id = ?").get(agentId) as { document: string };
+      const document = JSON.parse(row.document) as { openma?: Record<string, unknown> };
+      document.openma = {
+        ...document.openma,
+        harness: "acp-sandbox",
+        acp: legacyAcp,
+        runtimeBinding: { runtimeId: "runtime_legacy", acpAgentId: "claude-acp" },
+      };
+      const changed = db.prepare("UPDATE managed_agents SET document = ? WHERE id = ?").run(JSON.stringify(document), agentId);
+      expect(changed.changes).toBe(1);
+    } finally {
+      db.close();
     }
-    expect(upstream.calls).toHaveLength(1);
+  }
 
-    const expired = await issueSandboxInferenceToken({ cipher, workspaceId: "default", sessionId: session.id, ttlMs: 1, now: Date.now() - 10_000 });
-    expect((await call(cp, "POST", `/v1/oma/inference-proxy/${session.id}/anthropic/v1/messages`, message, {
-      authorization: `Bearer ${expired}`,
-    })).status).toBe(401);
+  it("reads it through GET /v1/agents/:id without the acp fields and saves it on Pi", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oma-legacy-acp-"));
+    dirs.push(dir);
+    const databasePath = join(dir, "legacy.db");
+    const cp = await boot({ DATABASE_PATH: databasePath });
+    await createCard(cp, { model_id: "verify-fake", model: "claude-sonnet-4-6", provider: "anthropic", is_default: true });
+    const createdAgent = await call(cp, "POST", "/v1/agents", { name: "legacy", model: "verify-fake" });
+    expect(createdAgent.status).toBeLessThan(300);
+    const { id } = await createdAgent.json() as { id: string };
+    storeAsLegacyAcp(databasePath, id);
+
+    const read = await call(cp, "GET", `/v1/agents/${id}`);
+    expect(read.status).toBe(200);
+    const readText = await read.text();
+    expect(readText).not.toContain("claude-agent-acp");
+    expect(readText).not.toContain("legacy-acp-env");
+    const agent = JSON.parse(readText) as { version: number; _oma?: Record<string, unknown> };
+    expect(agent._oma).toEqual({ harness: "acp-sandbox" });
+
+    const list = await call(cp, "GET", "/v1/agents");
+    expect(list.status).toBe(200);
+    const listText = await list.text();
+    expect(listText).toContain(id);
+    expect(listText).not.toContain("claude-agent-acp");
+
+    // The console sends harness "pi" and no acp block when it saves an old agent.
+    const saved = await call(cp, "POST", `/v1/agents/${id}`, {
+      version: agent.version,
+      name: "legacy-renamed",
+      model: "verify-fake",
+      _oma: { harness: "pi" },
+    });
+    expect(saved.status).toBeLessThan(300);
+    const savedAgent = await saved.json() as { name: string; _oma?: Record<string, unknown> };
+    expect(savedAgent).toMatchObject({ name: "legacy-renamed", _oma: { harness: "pi" } });
+    expect(savedAgent._oma).not.toHaveProperty("acp");
+
+    const versions = await call(cp, "GET", `/v1/agents/${id}/versions`);
+    expect(versions.status).toBe(200);
+    const versionsText = await versions.text();
+    expect(versionsText).toContain("legacy-renamed");
+    expect(versionsText).not.toContain("claude-agent-acp");
   });
 });

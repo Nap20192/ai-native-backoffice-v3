@@ -56,7 +56,6 @@ export const en: Messages = {
     memoryStores: "Memory Stores",
     modelCards: "Model Cards",
     apiKeys: "API Keys",
-    localRuntimes: "Local Runtimes",
     integrations: "Integrations",
     members: "Members",
   },
@@ -259,12 +258,5 @@ export const en: Messages = {
     mountPathHint: "Mount path becomes",
     settingsArchiveHint:
       "To archive or delete this store, use the actions in the page header.",
-  },
-
-  runtimes: {
-    connectRuntime: "Connect runtime",
-    searchRuntimes: "Search runtimes…",
-    noMatchingRuntimes: "No matching runtimes",
-    noRuntimesYet: "No runtimes yet",
   },
 };

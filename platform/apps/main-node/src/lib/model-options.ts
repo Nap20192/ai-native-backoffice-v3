@@ -1,6 +1,8 @@
 // Model choices for GET /v1/oma/model_options (docs/plans/models-harness.md, 2).
 // Workspace model cards plus the Pi anthropic catalog when the server has its
 // own ANTHROPIC_API_KEY. No key material and no prices leave this module.
+// Only the built-in Pi loop runs agents (D41): Pi takes any model, so every
+// option lists the one harness "pi".
 import {
   getSupportedThinkingLevels,
   type Api,
@@ -14,11 +16,16 @@ import {
   PI_UNKNOWN_MODEL_MAX_TOKENS,
   resolvePiCatalogModelId,
 } from "@open-managed-agents/managed-agents-application/agents/pi-model-catalog";
-import {
-  resolveProtocolEndpointsFromModelCard,
-  type InferenceWireProtocol,
-} from "@open-managed-agents/inference-proxy";
-import { compatibility, type HarnessEntry } from "./harness-catalog.js";
+
+/** Wire protocol of a model provider. */
+export type ModelWireProtocol =
+  | "anthropic-messages"
+  | "openai-chat"
+  | "openai-responses"
+  | "gemini";
+
+/** The one harness that runs agents. */
+export const PI_HARNESS_ID = "pi";
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -42,11 +49,13 @@ export interface ModelOption {
   provider: string;
   wire_model: string;
   api: string | null;
-  protocols: InferenceWireProtocol[];
+  /** Wire protocols of the provider; the field keeps the shape for the console. */
+  protocols: ModelWireProtocol[];
   context_window: number | null;
   max_output_tokens: number | null;
   effort_levels: EffortLevel[];
   speed_fast: boolean;
+  /** Always `["pi"]`: Pi is the one harness and takes any model. */
   harnesses: string[];
 }
 
@@ -78,18 +87,17 @@ export interface ModelOptionsDeps {
 export async function listModelOptions(
   deps: ModelOptionsDeps,
   workspaceId: string,
-  harnesses: readonly HarnessEntry[],
 ): Promise<ModelOptionsResult> {
   const cards = (await deps.listCards(workspaceId))
     .filter((card) => card.archived_at === null || card.archived_at === undefined)
     .slice()
     .sort(cardOrder);
-  const options = cards.map((card) => cardOption(card, harnesses));
+  const options = cards.map((card) => cardOption(card));
   if (deps.serverKey.available) {
     const cardHandles = new Set(cards.map((card) => card.model_id));
     for (const model of anthropicCatalog()) {
       if (!cardHandles.has(model.id)) {
-        options.push(builtinOption(model, deps.serverKey.baseUrl ?? null, harnesses));
+        options.push(builtinOption(model));
       }
     }
   }
@@ -116,10 +124,10 @@ function anthropicCatalog(): readonly PiModel<Api>[] {
   return piProvider("anthropic")?.getModels() ?? [];
 }
 
-function cardOption(card: ModelOptionCard, harnesses: readonly HarnessEntry[]): ModelOption {
+function cardOption(card: ModelOptionCard): ModelOption {
   const resolved = resolveCardModel(card);
-  const protocols = proxyProtocols(card.provider, card.base_url);
-  return withHarnesses({
+  const protocols = providerProtocols(card.provider);
+  return {
     handle: card.model_id,
     label: resolved.label ?? card.model_id,
     source: "card",
@@ -133,16 +141,12 @@ function cardOption(card: ModelOptionCard, harnesses: readonly HarnessEntry[]): 
     max_output_tokens: resolved.model?.maxTokens ?? null,
     effort_levels: resolved.model ? effortLevels(resolved.model) : [],
     speed_fast: resolved.api !== null && FAST_SPEED_APIS.has(resolved.api),
-    harnesses: [],
-  }, harnesses);
+    harnesses: [PI_HARNESS_ID],
+  };
 }
 
-function builtinOption(
-  model: PiModel<Api>,
-  baseUrl: string | null,
-  harnesses: readonly HarnessEntry[],
-): ModelOption {
-  return withHarnesses({
+function builtinOption(model: PiModel<Api>): ModelOption {
+  return {
     handle: model.id,
     label: model.name,
     source: "builtin",
@@ -151,26 +155,28 @@ function builtinOption(
     provider: "anthropic",
     wire_model: model.id,
     api: model.api,
-    protocols: proxyProtocols("anthropic", baseUrl),
+    protocols: providerProtocols("anthropic"),
     context_window: model.contextWindow ?? null,
     max_output_tokens: model.maxTokens ?? null,
     effort_levels: effortLevels(model),
     speed_fast: FAST_SPEED_APIS.has(model.api),
-    harnesses: [],
-  }, harnesses);
+    harnesses: [PI_HARNESS_ID],
+  };
 }
 
-function withHarnesses(option: ModelOption, harnesses: readonly HarnessEntry[]): ModelOption {
-  option.harnesses = harnesses
-    .filter((entry) => compatibility(entry, option).compatible)
-    .map((entry) => entry.id);
-  return option;
-}
+/** Wire protocols by provider tag, the table the removed inference proxy used. */
+const PROVIDER_PROTOCOLS: ReadonlyArray<readonly [readonly string[], readonly ModelWireProtocol[]]> = [
+  [["deepseek"], ["openai-chat", "anthropic-messages"]],
+  [["anthropic", "ant", "ant-compatible"], ["anthropic-messages"]],
+  [["openai", "oai", "oai-compatible"], ["openai-chat", "openai-responses"]],
+  [["google", "gemini"], ["gemini"]],
+];
 
-/** Protocols the inference proxy serves for this provider, without repeats. */
-function proxyProtocols(providerId: string, baseUrl: string | null): InferenceWireProtocol[] {
-  const endpoints = resolveProtocolEndpointsFromModelCard({ providerId, baseUrl });
-  return [...new Set(endpoints.map((endpoint) => endpoint.protocol))];
+/** Wire protocols of a provider tag; an unknown tag has none. */
+function providerProtocols(providerId: string): ModelWireProtocol[] {
+  const id = providerId.trim().toLowerCase();
+  const row = PROVIDER_PROTOCOLS.find(([ids]) => ids.includes(id));
+  return row === undefined ? [] : [...row[1]];
 }
 
 function effortLevels(model: PiModel<Api>): EffortLevel[] {

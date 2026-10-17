@@ -2,16 +2,16 @@
  * Two-primitive turn runtime for the OMA agent harness.
  *
  * Replaces the tangled mix of withRetry + per-attempt keepAliveWhile +
- * stale-chunk + heartbeat + ctx.waitUntil-backup that grew up inside
- * default-loop.ts and session-do.ts. The contract is:
+ * stale-chunk + heartbeat + ctx.waitUntil-backup that grew up inside the
+ * old AI SDK loop and session-do.ts. The contract is:
  *
  *   1. **runAgentTurn**  — mark the turn in flight on the unified
  *      `sessions` table (status='running', turn_id=...) so cold starts
  *      can detect orphans, and synchronously persist workspace state
  *      before returning success or surfacing a typed `TurnError`. NO
  *      internal retry — the caller (eval-runner / app) decides what to
- *      do. Stall detection lives in the harness next to streamText
- *      (default-loop.ts), not here.
+ *      do. Stall detection lives in the harness next to the model
+ *      stream, not here.
  *
  *   2. **recoverAgentTurn** — after a process death (DO eviction, Node
  *      restart, container OOM kill), read SQL events + streams to
@@ -109,7 +109,7 @@ export interface RunAgentTurnOptions {
  *
  * Wraps the body in cf-agents `keepAliveWhile { runFiber }` so the DO
  * stays alive for the full turn duration. Stall detection lives inside
- * the harness (default-loop.ts) next to the streamText call — the
+ * the harness next to the model stream — the
  * runtime no longer composes a stall AbortController. Workspace
  * persistence runs synchronously at end of turn. Errors are typed and
  * thrown as `TurnAborted`. NO internal retry — caller catches

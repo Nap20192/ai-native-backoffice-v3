@@ -32,37 +32,6 @@ export function fromOpenMaAgentExtension(
       model_settings: extension.openaiModelSettings,
     }),
     ...(extension.harness !== undefined && { harness: extension.harness }),
-    ...(extension.acp !== undefined && {
-      acp: {
-        agent: extension.acp.agent,
-        ...(extension.acp.restart !== undefined && {
-          restart: {
-            mode: extension.acp.restart.mode,
-            ...(extension.acp.restart.maxRestarts !== undefined && {
-              max_restarts: extension.acp.restart.maxRestarts,
-            }),
-            ...(extension.acp.restart.windowMs !== undefined && {
-              window_ms: extension.acp.restart.windowMs,
-            }),
-          },
-        }),
-        ...(extension.acp.idleTimeoutMs !== undefined && {
-          idle_timeout_ms: extension.acp.idleTimeoutMs,
-        }),
-        ...(extension.acp.perTurnTimeoutMs !== undefined && {
-          per_turn_timeout_ms: extension.acp.perTurnTimeoutMs,
-        }),
-      },
-    }),
-    ...(extension.runtimeBinding !== undefined && {
-      runtime_binding: {
-        runtime_id: extension.runtimeBinding.runtimeId,
-        acp_agent_id: extension.runtimeBinding.acpAgentId,
-        ...(extension.runtimeBinding.localSkillBlocklist !== undefined && {
-          local_skill_blocklist: extension.runtimeBinding.localSkillBlocklist,
-        }),
-      },
-    }),
     ...(extension.enableGeneralSubagent !== undefined && {
       enable_general_subagent: extension.enableGeneralSubagent,
     }),

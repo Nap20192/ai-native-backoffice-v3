@@ -64,29 +64,6 @@ export type OpenMaMcpServerBody =
   | NonNullable<OfficialAgentCreateBody["mcp_servers"]>[number]
   | OpenMaStdioMcpServerBody;
 
-export interface OpenMaAgentAcpBody {
-  agent: {
-    id?: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string | null>;
-    cwd?: string;
-  };
-  restart?: {
-    mode: "never" | "on-crash" | "always";
-    max_restarts?: number;
-    window_ms?: number;
-  };
-  idle_timeout_ms?: number;
-  per_turn_timeout_ms?: number;
-}
-
-export interface OpenMaAgentRuntimeBindingBody {
-  runtime_id: string;
-  acp_agent_id: string;
-  local_skill_blocklist?: string[];
-}
-
 export interface OpenMaAgentExtensionBody {
   aux_model?: OpenMaAgentModelBody | null;
   appendable_prompts?: string[] | null;
@@ -106,8 +83,6 @@ export interface OpenMaAgentExtensionBody {
     }>;
   } | null;
   harness?: string | null;
-  acp?: OpenMaAgentAcpBody | null;
-  runtime_binding?: OpenMaAgentRuntimeBindingBody | null;
   enable_general_subagent?: boolean | null;
 }
 
@@ -161,38 +136,6 @@ export const agentModelInputSchema: z.ZodType<AgentCreateBody["model"]> = z.unio
   modelConfigSchema,
 ]);
 
-const agentAcpSchema: z.ZodType<OpenMaAgentAcpBody> = z
-  .object({
-    agent: z
-      .object({
-        id: z.string().min(1).optional(),
-        command: z.string().min(1),
-        args: z.array(z.string()).optional(),
-        env: z.record(z.string(), z.string().nullable()).optional(),
-        cwd: z.string().min(1).optional(),
-      })
-      .strict(),
-    restart: z
-      .object({
-        mode: z.enum(["never", "on-crash", "always"]),
-        max_restarts: z.number().int().min(0).optional(),
-        window_ms: z.number().int().positive().optional(),
-      })
-      .strict()
-      .optional(),
-    idle_timeout_ms: z.number().int().positive().optional(),
-    per_turn_timeout_ms: z.number().int().positive().optional(),
-  })
-  .strict();
-
-const runtimeBindingSchema: z.ZodType<OpenMaAgentRuntimeBindingBody> = z
-  .object({
-    runtime_id: z.string().min(1),
-    acp_agent_id: z.string().min(1),
-    local_skill_blocklist: z.array(z.string().min(1)).optional(),
-  })
-  .strict();
-
 const contextManagementSchema = z
   .object({
     edits: z.array(
@@ -237,8 +180,6 @@ const openMaAgentExtensionSchema: z.ZodType<OpenMaAgentExtensionBody> = z
     context_management: contextManagementSchema.nullable().optional(),
     model_settings: openAiModelSettingsSchema.nullable().optional(),
     harness: z.string().min(1).nullable().optional(),
-    acp: agentAcpSchema.nullable().optional(),
-    runtime_binding: runtimeBindingSchema.nullable().optional(),
     enable_general_subagent: z.boolean().nullable().optional(),
   })
   .strict();

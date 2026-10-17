@@ -94,7 +94,7 @@ describe("the switch in the platform MCP server", () => {
     await settings.set("ws_1", false, "user_owner");
     const list = await handleJsonRpc(fake.deps, fake.actor(), { jsonrpc: "2.0", id: 1, method: "tools/list" });
     const tools = (list.body as any).result.tools as { name: string }[];
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(36);
     for (const tool of tools) {
       const before = fake.writes().length;
       const result = await fake.call(tool.name, {});

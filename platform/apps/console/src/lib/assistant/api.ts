@@ -54,7 +54,6 @@ export const WRITE_TOOLS = [
   "update_memory_store",
   "update_deployment",
   "update_model_card",
-  "update_harness_card",
   "send_message",
   "apply_changes",
   "update_session",

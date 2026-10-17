@@ -1,4 +1,5 @@
 import type { AgentConfig } from "@open-managed-agents/api-types";
+import { isPiHarnessName } from "../registry";
 
 export type SkillMountMode = "progressive" | "budgeted" | "tool" | "inline";
 
@@ -53,10 +54,10 @@ export function resolveSkillAssemblyConfig(agent: AgentConfig): SkillAssemblyCon
   };
 }
 
-/** Pi / default harness uses assembly-layer skill mounting instead of inlined SKILL.md. */
+/** Pi / default harness uses assembly-layer skill mounting instead of inlined SKILL.md.
+ * A legacy harness name runs on Pi (D41), so it mounts skills the same way. */
 export function agentUsesAssemblySkillMount(agent: AgentConfig): boolean {
-  const harness = agent.harness ?? "default";
-  return harness === "default" || harness === "pi";
+  return isPiHarnessName(agent.harness);
 }
 
 /** Whether custom skill mounts need SKILL.md bytes from storage (inline / tool / budgeted). */

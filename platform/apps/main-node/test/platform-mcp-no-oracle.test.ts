@@ -15,7 +15,7 @@ function setup() {
   fake.addSkill("Навык", { "SKILL.md": `---\nname: s\ndescription: d\n---\nтокен ${SECRET}` });
   const store = fake.addStore({ name: "Память" });
   fake.addMemory(store.id, `/notes/${SECRET}/a.md`, "x");
-  fake.addHarnessCard({ id: "hc_1", name: `Карточка ${SECRET}` });
+  fake.addModelCard({ id: "mc_1" });
   return { fake, store };
 }
 
@@ -25,7 +25,7 @@ async function answer(fake: ReturnType<typeof setup>["fake"], name: string, args
 }
 
 describe("platform MCP gives no oracle on secrets", () => {
-  it("search_config, list path_prefix and q answer a secret prefix like a random string", async () => {
+  it("search_config and list path_prefix answer a secret prefix like a random string", async () => {
     const { fake, store } = setup();
     for (const length of [1, 2, 4, 8, SECRET.length]) {
       const prefix = SECRET.slice(0, length);
@@ -37,9 +37,6 @@ describe("platform MCP gives no oracle on secrets", () => {
         await answer(fake, "list", { kind: "memories", filter: { memory_store_id: store.id, path_prefix: memoryPrefix } }, memoryPrefix),
         `path_prefix ${length}`,
       ).toBe(await answer(fake, "list", { kind: "memories", filter: { memory_store_id: store.id, path_prefix: memoryRandom } }, memoryRandom));
-      expect(await answer(fake, "list", { kind: "harness_cards", filter: { q: prefix } }, prefix), `q ${length}`).toBe(
-        await answer(fake, "list", { kind: "harness_cards", filter: { q: random } }, random),
-      );
     }
   });
 
@@ -69,7 +66,8 @@ describe("platform MCP gives no oracle on secrets", () => {
     const result = await fake.call("get", { kind: "agent", id: "x", version: { nested: SECRET } });
     expect(result.isError).toBe(true);
     expect(result.text).not.toContain(SECRET);
-    const write = await fake.call("update_harness_card", { harness_card_id: "hc_1", changes: { command: SECRET } });
+    const write = await fake.call("update_model_card", { model_card_id: "mc_1", changes: { base_url: SECRET } });
+    expect(write.isError).toBe(true);
     expect(write.text).not.toContain(SECRET);
   });
 

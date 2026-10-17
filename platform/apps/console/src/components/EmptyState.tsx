@@ -75,8 +75,7 @@ export type EmptyStateKind =
   | "skill"
   | "memory"
   | "model_card"
-  | "api_key"
-  | "runtime";
+  | "api_key";
 
 const KIND_ICONS: Record<EmptyStateKind, ComponentType<{ className?: string }>> = {
   agent: NAV_ICONS.agents,
@@ -90,7 +89,6 @@ const KIND_ICONS: Record<EmptyStateKind, ComponentType<{ className?: string }>> 
   memory: NAV_ICONS.memory,
   model_card: NAV_ICONS.modelCards,
   api_key: NAV_ICONS.apiKeys,
-  runtime: NAV_ICONS.runtimes,
 };
 
 interface EmptyStateProps {

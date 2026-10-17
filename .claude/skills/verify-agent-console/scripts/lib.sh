@@ -197,7 +197,7 @@ vac_tree_hash() {
   } | sha256sum | cut -c1-16
 }
 VAC_CONSOLE_PATHS="platform/apps/console"
-# apps/agent: харнессы (Pi, acp-sandbox, AcpTranslator), их тоже исполняет сервер.
+# apps/agent: harness Pi и инструменты агента, их тоже исполняет сервер.
 VAC_SERVER_PATHS="platform/apps/main-node platform/apps/agent platform/packages"
 
 vac_count_env_var() { grep -c "^$1=." "$PLATFORM_DIR/.env" 2>/dev/null || true; }

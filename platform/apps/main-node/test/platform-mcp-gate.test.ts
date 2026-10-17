@@ -207,19 +207,6 @@ const LATE: LateCase[] = [
     },
   },
   {
-    name: "harness card",
-    async prepare(fake) {
-      const card = fake.addHarnessCard({ id: "hc_1" });
-      return {
-        tool: "update_harness_card",
-        args: { harness_card_id: card.id, changes: { name: "Ассистент" } },
-        path: `/v1/oma/harness_cards/${card.id}`,
-        thirdParty: () => Object.assign(fake.harnessCard(card.id), { name: "Третье лицо", updated_at: "2026-10-16T12:00:00.000Z" }),
-        untouched: () => expect(fake.harnessCard(card.id).name).toBe("Третье лицо"),
-      };
-    },
-  },
-  {
     name: "memory",
     async prepare(fake) {
       const store = fake.addStore({ name: "Память" });

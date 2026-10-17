@@ -8,6 +8,7 @@
 |---|---|---|
 | [design.md](design.md) | Общий дизайн: объекты, ход сессии, harness, MCP Hub, агенты в консоли, боты, драйверы, Kubernetes, план | Сначала |
 | [decisions.md](decisions.md) | 40 решений по стыковке компонентов (D1...D40), общие контракты (`RunTurn`, лимиты, имена, коды ошибок), вопросы владельцу | Перед работой над любым стыком |
+| [decisions-2026-10-17.md](decisions-2026-10-17.md) | D41: остался только harness Pi, ACP и `ai-sdk` удалены. D42: Temporal отложен, условия возврата к нему и план на Postgres | Перед работой над harness, очередью ходов и репликами. Главнее design.md и спек 02, 03 |
 | [components/](components/) | Спеки 10 компонентов. В начале каждой раздел «0. Согласовано», он главнее остального текста | Когда делаешь компонент |
 | [flows/](flows/) | 10 сквозных сценариев. По ним нашли нестыковки, решения в `decisions.md` | Для проверки и приёмочных тестов |
 
@@ -16,8 +17,8 @@
 | № | Спека | Коротко |
 |---|---|---|
 | 01 | [Runtime API и журнал](components/01-runtime-api.md) | Вход в Runtime, журнал событий в Postgres, SSE, ожидания, Storage |
-| 02 | [SessionWorkflow](components/02-session-workflow.md) | Temporal: когда и что запускать, ожидания, outcomes, сабагенты, сон песочницы |
-| 03 | [Harness-воркеры](components/03-harness-workers.md) | Один ход: ACP с Claude и Codex, `simple`, восстановление после падения |
+| 02 | [SessionWorkflow](components/02-session-workflow.md) | Temporal: когда и что запускать, ожидания, outcomes, сабагенты, сон песочницы. Temporal отложен, D42 |
+| 03 | [Harness-воркеры](components/03-harness-workers.md) | Один ход: ACP с Claude и Codex, `simple`, восстановление после падения. ACP удалён, остался Pi, D41 |
 | 04 | [Песочница](components/04-sandbox.md) | Environment, драйверы `docker` и `kubernetes`, `sandboxd`, сон и пробуждение |
 | 05 | [MCP Hub](components/05-mcp-hub.md) | Реестр тулов, права, подтверждения, токен сессии, встроенные серверы |
 | 06 | [Vault, egress, шлюз моделей](components/06-vault-egress-models.md) | Секреты, подмена на выходе, бюджеты, маршрут по классу данных |

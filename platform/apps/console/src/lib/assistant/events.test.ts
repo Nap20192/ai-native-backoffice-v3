@@ -180,15 +180,23 @@ describe("buildThread: предложения", () => {
 });
 
 describe("buildThread: черновики карточек", () => {
-  it("preview_change с model_card и harness_card даёт карточки черновика", () => {
+  it("preview_change с model_card даёт карточку черновика, тело может быть YAML", () => {
     const items = buildThread([
       use("tu1", "preview_change", { kind: "model_card", body: { name: "Qwen", wire_model: "qwen" } }),
       result("tu1", "ok"),
-      use("tu2", "preview_change", { kind: "harness_card", body: "name: H\nprotocols: [openai-chat]\n" }),
+      use("tu2", "preview_change", { kind: "model_card", body: "provider: openai\nmodel_id: m\n" }),
       result("tu2", "ok"),
     ]);
     expect(items[0]).toMatchObject({ kind: "draft", draftKind: "model_card", body: { name: "Qwen", wire_model: "qwen" } });
-    expect(items[1]).toMatchObject({ kind: "draft", draftKind: "harness_card", body: { name: "H", protocols: ["openai-chat"] } });
+    expect(items[1]).toMatchObject({ kind: "draft", draftKind: "model_card", body: { provider: "openai", model_id: "m" } });
+  });
+
+  it("старый черновик harness_card из истории это строка чтения", () => {
+    const items = buildThread([
+      use("tu1", "preview_change", { kind: "harness_card", body: { name: "H" } }),
+      result("tu1", "ok"),
+    ]);
+    expect(items[0]).toMatchObject({ kind: "read", status: "done" });
   });
 
   it("preview_change для остальных видов это строка чтения", () => {

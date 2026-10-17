@@ -3,11 +3,7 @@ import type {
   HarnessRuntime,
   HistoryStore,
 } from "@open-managed-agents/agent/harness/interface";
-import {
-  eventsToMessages,
-  eventsToMessagesAsync,
-  type FileResolver,
-} from "@open-managed-agents/agent/runtime/history";
+import { eventsToMessages } from "@open-managed-agents/agent/runtime/history";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 import type { ContentBlock, SessionEvent } from "@open-managed-agents/shared";
 import type {
@@ -106,29 +102,6 @@ export function managedNodeEventsToMessages(
   events: SessionEvent[],
 ): ModelMessage[] {
   return projectManagedHistorySegments(events, eventsToMessages);
-}
-
-export async function managedNodeEventsToMessagesAsync(
-  events: SessionEvent[],
-  resolver?: FileResolver,
-): Promise<ModelMessage[]> {
-  const messages: ModelMessage[] = [];
-  let segment: SessionEvent[] = [];
-  for (const event of events) {
-    const systemMessage = asSystemMessage(event);
-    if (systemMessage === null) {
-      segment.push(event);
-      continue;
-    }
-    messages.push(...await eventsToMessagesAsync(segment, resolver));
-    segment = [];
-    messages.push({
-      role: "system",
-      content: systemMessage.content.map((block) => block.text).join("\n"),
-    });
-  }
-  messages.push(...await eventsToMessagesAsync(segment, resolver));
-  return messages;
 }
 
 function toHarnessHistoryEvent(event: SessionEventView): SessionEvent {

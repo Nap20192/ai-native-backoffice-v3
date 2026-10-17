@@ -24,28 +24,18 @@ export type ShapeKind =
   | "model_card"
   | "model"
   | "model_option"
-  | "harness"
-  | "harness_card"
   | "session_resource";
 
 /** `true` keeps the value, an object keeps only its keys, `[spec]` is an array of `spec`. */
 type Spec = true | { readonly [key: string]: Spec } | readonly [Spec];
 
 const MCP_SERVER: Spec = { type: true, name: true, url: true, command: true, args: true, env: true };
-const ACP: Spec = {
-  agent: { id: true, command: true, args: true, env: true, cwd: true },
-  restart: true,
-  idle_timeout_ms: true,
-  per_turn_timeout_ms: true,
-};
 const OMA_AGENT: Spec = {
   harness: true,
-  acp: ACP,
   aux_model: true,
   appendable_prompts: true,
   context_management: true,
   model_settings: true,
-  runtime_binding: true,
   enable_general_subagent: true,
 };
 const RESOURCE: Spec = {
@@ -264,23 +254,7 @@ const SPECS: Readonly<Record<ShapeKind, Spec>> = {
     archived_at: true,
   },
   model: { id: true, type: true, display_name: true, created_at: true },
-  model_option: { handle: true, label: true, source: true, card_id: true, is_default: true, provider: true, wire_model: true, harnesses: true },
-  harness: true,
-  harness_card: {
-    id: true,
-    harness_id: true,
-    name: true,
-    command: true,
-    args: true,
-    cwd: true,
-    install: true,
-    protocols: true,
-    allowed_env: true,
-    status: true,
-    created_at: true,
-    updated_at: true,
-    archived_at: true,
-  },
+  model_option: { handle: true, label: true, source: true, card_id: true, is_default: true, provider: true, wire_model: true },
 };
 
 /** Kinds whose hidden fields come from `secret-fields.ts`. */

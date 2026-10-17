@@ -8,7 +8,8 @@ export default defineConfig({
     include: [
       "apps/agent/tests/pi-loop.test.ts",
       "apps/agent/tests/pi-compaction.test.ts",
-      "apps/agent/tests/default-loop-span-lifecycle.test.ts",
+      // Registry: legacy harness names of stored agents resolve to Pi (D41).
+      "apps/agent/tests/harness-composition.test.ts",
       "apps/main-node/test/pi-sandbox-harness.e2e.test.ts",
     ],
     testTimeout: 30_000,

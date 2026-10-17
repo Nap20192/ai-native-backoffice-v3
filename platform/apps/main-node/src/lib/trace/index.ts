@@ -8,6 +8,6 @@ export { createExecutionsReader, executionStopped, type TraceExecutionRow, type 
 export { createHistoryWindow, createSessionInfoReader, type TraceHistoryWindow, type TraceSessionInfoReader } from "./history-window.js";
 export { createTraceRepair, type TraceRepair } from "./repair.js";
 export { searchTrace } from "./search.js";
-export { expectedHarnessCoverage, expectedHarnessLevel, isAcpHarness } from "./harness-coverage.js";
+export { expectedHarnessCoverage, expectedHarnessLevel } from "./harness-coverage.js";
 export { genaiSpanName, toOtlpTraceExport } from "./genai.js";
 export { buildTraceRoutes, type TraceRoutesOptions } from "./routes.js";

@@ -2,14 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import { I18nProvider } from "../i18n";
-import { HARNESSES_PATH, MODEL_OPTIONS_PATH } from "../lib/catalog-api";
-import type { HarnessEntry, ModelOption } from "../lib/catalog-api";
-import { HARNESS_CARDS_PATH } from "../lib/harness-cards-api";
-import { server } from "../mocks/server";
+import type { ModelOption } from "../lib/catalog-api";
 import { AgentDetail } from "./AgentDetail";
 import { formatDateTime } from "./agents/format";
 
@@ -26,7 +22,7 @@ const agent = {
 
 let agentResult: { data?: typeof agent; error?: Error } = { data: agent };
 
-const CLAUDE_BLOCK = {
+const ACP_BLOCK = {
   agent: { id: "claude-acp", command: "sh", args: ["-c", "exec claude-agent-acp"] },
   per_turn_timeout_ms: 600000,
 };
@@ -45,42 +41,9 @@ const catalogModel: ModelOption = {
   max_output_tokens: 64000,
   effort_levels: ["low", "medium", "high"],
   speed_fast: true,
-  harnesses: ["pi", "claude-acp"],
 };
 
-function harness(overrides: Partial<HarnessEntry>): HarnessEntry {
-  return {
-    id: "claude-acp",
-    source: "builtin",
-    label: "Claude Agent",
-    status: "ready",
-    reason: null,
-    runtime_harness: "acp-sandbox",
-    protocols: ["anthropic-messages"],
-    supports: { effort: false, speed: false, platform_tools: false, mcp: false },
-    acp: CLAUDE_BLOCK,
-    install: { npm: [], pip: [] },
-    install_hint: null,
-    allowed_env: null,
-    card_id: null,
-    ...overrides,
-  };
-}
-
-const catalogHarnesses: HarnessEntry[] = [
-  harness({
-    id: "pi",
-    label: "Pi agent-core",
-    runtime_harness: null,
-    protocols: ["*"],
-    supports: { effort: true, speed: true, platform_tools: true, mcp: true },
-    acp: null,
-  }),
-  harness({}),
-  harness({ id: "codex-acp", label: "Codex", status: "unverified", protocols: ["openai-responses"] }),
-];
-
-/** Как ответит сервер на запросы каталога: данные, ошибка или молчание. */
+/** Как ответит сервер на запрос каталога моделей: данные, ошибка или молчание. */
 let catalogMode: "ok" | "error" | "pending" = "ok";
 
 vi.mock("../lib/useApiQuery", () => ({
@@ -96,13 +59,10 @@ vi.mock("../lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/api")>()),
   useApi: () => ({
     api: vi.fn(async (path: string) => {
-      if (path === "/v1/oma/runtimes") return { runtimes: [] };
-      if (path === "/v1/oma/model_options" || path === "/v1/oma/harnesses") {
+      if (path === "/v1/oma/model_options") {
         if (catalogMode === "pending") return new Promise(() => {});
         if (catalogMode === "error") throw new Error("Каталог недоступен");
-        return path === "/v1/oma/model_options"
-          ? { builtin_available: true, data: [catalogModel] }
-          : { data: catalogHarnesses };
+        return { builtin_available: true, data: [catalogModel] };
       }
       return { data: [] };
     }),
@@ -226,7 +186,7 @@ function withAgent(overrides: Record<string, unknown>) {
   agentResult = { data: { ...agent, ...overrides } as unknown as typeof agent };
 }
 
-describe("AgentDetail: модель и harness", () => {
+describe("AgentDetail: модель", () => {
   it("показывает модель названием, handle, усилием, скоростью и источником", async () => {
     withAgent({ model: { id: "verify-fake", effort: { type: "high" }, speed: "fast" } });
     renderDetail();
@@ -258,106 +218,25 @@ describe("AgentDetail: модель и harness", () => {
     expect(within(rail).getByText("Усилие: низкое")).toBeInTheDocument();
     expect(within(rail).queryByText("Claude Sonnet 4.6")).toBeNull();
     expect(within(rail).queryByText("Карточка")).toBeNull();
-    expect(within(rail).getByText("Встроенный цикл")).toBeInTheDocument();
   });
 
-  it("при ошибке каталога остаются значения из агента и нет чипа «Не найден»", async () => {
+  it("при ошибке каталога остаётся значение из агента", async () => {
     catalogMode = "error";
-    withAgent({ _oma: { harness: "acp-sandbox", acp: CLAUDE_BLOCK } });
     renderDetail();
 
     const rail = await screen.findByTestId("detail-rail");
-    await waitFor(() => expect(within(rail).getByText("claude-acp")).toBeInTheDocument());
-    expect(within(rail).getByText("Claude Code в песочнице")).toBeInTheDocument();
-    expect(within(rail).queryByText("Не найден")).toBeNull();
+    await waitFor(() => expect(within(rail).getByText("test-model")).toBeInTheDocument());
+    expect(within(rail).queryByText("Карточка")).toBeNull();
+  });
+
+  it("строки Harness нет, старый ACP-агент открывается без ошибок", async () => {
+    withAgent({ _oma: { harness: "acp-sandbox", acp: ACP_BLOCK } });
+    renderDetail();
+
+    const rail = await screen.findByTestId("detail-rail");
     expect(within(rail).getByText("test-model")).toBeInTheDocument();
-  });
-
-  it("называет harness встроенного цикла без чипов", async () => {
-    renderDetail();
-
-    const rail = await screen.findByTestId("detail-rail");
-    expect(within(rail).getByText("Harness")).toBeInTheDocument();
-    await waitFor(() => expect(within(rail).getByText("Встроенный цикл")).toBeInTheDocument());
-    expect(within(rail).queryByText("Не проверено")).toBeNull();
-    expect(within(rail).queryByText("Не найден")).toBeNull();
-  });
-
-  it("у ACP-агента показывает подпись из каталога и ID моноширинным шрифтом", async () => {
-    withAgent({ _oma: { harness: "acp-sandbox", acp: CLAUDE_BLOCK } });
-    renderDetail();
-
-    const rail = await screen.findByTestId("detail-rail");
-    expect(await within(rail).findByText("Claude Code в песочнице")).toBeInTheDocument();
-    expect(within(rail).getByText("claude-acp")).toHaveClass("font-mono");
-    expect(within(rail).queryByText("Не проверено")).toBeNull();
-  });
-
-  it("ставит чип «Не проверено» у непроверенной записи", async () => {
-    withAgent({
-      _oma: { harness: "acp-sandbox", acp: { agent: { id: "codex-acp", command: "codex-acp" } } },
-    });
-    renderDetail();
-
-    const rail = await screen.findByTestId("detail-rail");
-    expect(await within(rail).findByText("Codex в песочнице")).toBeInTheDocument();
-    expect(within(rail).getByText("Не проверено")).toBeInTheDocument();
-  });
-
-  it("помечает id, которого нет в каталоге, как «Не найден»", async () => {
-    server.use(http.get(`*${HARNESS_CARDS_PATH}`, () => HttpResponse.json({ data: [] })));
-    withAgent({
-      _oma: { harness: "acp-sandbox", acp: { agent: { id: "mystery-agent", command: "m" } } },
-    });
-    renderDetail();
-
-    const rail = await screen.findByTestId("detail-rail");
-    expect(await within(rail).findByText("Не найден")).toBeInTheDocument();
-    expect(within(rail).getByText("mystery-agent")).toBeInTheDocument();
-  });
-
-  it("помечает harness удалённой карточки как «Удалён»", async () => {
-    server.use(
-      http.get(`*${HARNESS_CARDS_PATH}`, () =>
-        HttpResponse.json({
-          data: [
-            {
-              id: "hcard_1",
-              harness_id: "aider-local",
-              name: "Aider через ACP",
-              command: "aider-acp",
-              args: [],
-              cwd: null,
-              install: { npm: [], pip: [] },
-              protocols: ["openai-chat"],
-              allowed_env: [],
-              status: "unverified",
-              created_at: "2026-10-16T10:00:00.000Z",
-              updated_at: "2026-10-16T10:00:00.000Z",
-              archived_at: "2026-10-16T12:00:00.000Z",
-            },
-          ],
-        }),
-      ),
-    );
-    withAgent({
-      _oma: { harness: "acp-sandbox", acp: { agent: { id: "aider-local", command: "aider-acp" } } },
-    });
-    renderDetail();
-
-    const rail = await screen.findByTestId("detail-rail");
-    expect(await within(rail).findByText("Удалён")).toBeInTheDocument();
-    expect(within(rail).queryByText("Не найден")).toBeNull();
-  });
-
-  it("устаревший ai-sdk называет по-русски без чипа «Не найден»", async () => {
-    withAgent({ _oma: { harness: "ai-sdk" } });
-    renderDetail();
-
-    const rail = await screen.findByTestId("detail-rail");
-    expect(await within(rail).findByText("AI SDK (устарел)")).toBeInTheDocument();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(within(rail).queryByText("Не найден")).toBeNull();
+    expect(within(rail).queryByText("Harness")).toBeNull();
+    expect(within(rail).queryByText("claude-acp")).toBeNull();
   });
 });
 

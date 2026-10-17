@@ -34,8 +34,6 @@ import { ModelCardsList } from "./pages/ModelCardsList";
 import { WorkspaceMembers, JoinWorkspace } from "./pages/WorkspaceMembers";
 import { ApiKeysList } from "./pages/ApiKeysList";
 import { CliLogin } from "./pages/CliLogin";
-import { RuntimesList } from "./pages/RuntimesList";
-import { ConnectRuntime } from "./pages/ConnectRuntime";
 import { EvalRunsList } from "./pages/EvalRunsList";
 import { EvalRunDetail } from "./pages/EvalRunDetail";
 import {
@@ -60,7 +58,6 @@ import {
   IntegrationsFeishuPublishPage,
 } from "./pages/IntegrationsFeishu";
 import { consolePlugins } from "./plugins/registry";
-import { HARNESS_ROUTE } from "./pages/harnesses/harness-nav";
 
 /**
  * Router config. Migrated from declarative `<BrowserRouter><Routes>` to
@@ -243,10 +240,8 @@ const protectedRoutes: RouteObject[] = [
     ],
   },
   { path: "model-cards", element: <ModelCardsList />, handle: { crumb: "Карточки моделей" } },
-  { path: HARNESS_ROUTE.path, lazy: HARNESS_ROUTE.load, handle: { crumb: HARNESS_ROUTE.crumb } },
   { path: "members", element: <WorkspaceMembers />, handle: { crumb: "Участники" } },
   { path: "api-keys", element: <ApiKeysList />, handle: { crumb: "API-ключи" } },
-  { path: "runtimes", element: <RuntimesList />, handle: { crumb: "Локальные среды" } },
   // Интеграции (Linear, GitHub, Slack, Feishu) убраны из меню и со страниц.
   // Код страниц остаётся, маршруты открываются только флагом сборки
   // VITE_ENABLE_INTEGRATIONS=1, иначе адрес /integrations/* уходит на /agents.
@@ -345,7 +340,6 @@ const router = createBrowserRouter([
   { path: "join", element: <JoinWorkspace /> },
   { path: "login", element: <Login /> },
   { path: "cli/login", element: <CliLogin /> },
-  { path: "connect-runtime", element: <ConnectRuntime /> },
   {
     element: <AppShell />,
     children: protectedRoutes,

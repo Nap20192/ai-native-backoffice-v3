@@ -3,10 +3,8 @@ import type { HarnessContext, HarnessInterface } from "@open-managed-agents/agen
 /**
  * One turn on a harness resolved for that turn. main-node has no session-
  * scoped harness owner (upstream's HarnessLease lives in the Durable Object
- * runtime), so a stateful harness is disposed after its turn: acp-sandbox
- * otherwise keeps its ACP agent process alive in the sandbox and every turn
- * starts one more. "shutdown" keeps the native ACP session and its checkpoint
- * in the sandbox, so the next turn resumes it (session/resume or load).
+ * runtime), so a harness with `dispose` is disposed with "shutdown" after its
+ * turn and the next turn starts clean.
  *
  * A dispose failure is reported, not thrown: it must neither fail a completed
  * turn nor replace the turn's own error.

@@ -55,8 +55,6 @@ export function checkAssistantToolSet(session: Session, platformMcpUrl: string):
   if ((config.skills as unknown[]).length > 0) return refused;
   if (config.callable_agents !== undefined || config.multiagent !== undefined) return refused;
   if (config.enable_general_subagent === true) return refused;
-  // An ACP agent or a runtime binding runs its own tools in the sandbox.
-  if (config.acp !== undefined || session.agent.openma?.runtimeBinding !== undefined) return refused;
   const harness = session.agent.openma?.harness;
   if (harness !== undefined && !DEFAULT_HARNESSES.has(harness)) return refused;
   return { ok: true };

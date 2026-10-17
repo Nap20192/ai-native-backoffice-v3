@@ -27,7 +27,7 @@ import {
 
 // Source of truth for which tool names are part of the agent_toolset_20260401
 // built-in suite. Used by buildTools() below to decide which tool entries to
-// include AND by harness/default-loop.ts to classify tool-use events as
+// include AND by harness/tool-events.ts to classify tool-use events as
 // `agent.tool_use` (built-in) vs `agent.custom_tool_use`. Keep this in sync
 // with the actual `tools.<name> = tool({...})` registrations below — the
 // classification list and the registration list MUST be the same set, or
@@ -1189,8 +1189,7 @@ export async function buildTools(
   // server-side spec change can't silently break us the way the prior
   // hand-rolled BindingMCPTransport did (Notion's tools/list never
   // returned, hanging the whole turn until our 15s setup-timeout fired).
-  // Each remote tool surfaces as `mcp__<server>__<tool>` — same prefix
-  // the local-runtime ACP path produces.
+  // Each remote tool surfaces as `mcp__<server>__<tool>`.
   //
   // Auth + vault injection happen **inside main, not here**. Agent worker
   // never sees the credential — the request leaves with no Authorization

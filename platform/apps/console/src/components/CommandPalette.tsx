@@ -70,7 +70,6 @@ function useCommands(): NavCommand[] {
     { label: t.nav.memoryStores, to: "/memory", icon: NAV_ICONS.memory, aliases: "memory память" },
     { label: t.nav.modelCards, to: "/model-cards", icon: NAV_ICONS.modelCards, aliases: "models модели" },
     { label: t.nav.apiKeys, to: "/api-keys", icon: NAV_ICONS.apiKeys, aliases: "tokens токены ключи" },
-    { label: t.nav.localRuntimes, to: "/runtimes", icon: NAV_ICONS.runtimes, aliases: "runtimes среды" },
   ];
 }
 

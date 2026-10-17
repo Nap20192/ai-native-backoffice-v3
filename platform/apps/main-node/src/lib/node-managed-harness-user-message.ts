@@ -2,12 +2,13 @@ import type { UserMessageEvent } from "@open-managed-agents/shared";
 
 type AcceptedEvent = { type: string; content?: unknown; description?: unknown };
 
-/** The turn's prompt for harnesses that read `ctx.userMessage` (acp-sandbox
- * sends its text to the ACP agent). Text blocks of every `user.message` in the
- * accepted batch are carried over in order; a turn that only defines an
- * outcome gets the outcome description. Non-text blocks (images, documents)
- * are not carried: the legacy event's block shapes differ from the managed
- * domain's, and acp-sandbox sends text only. */
+/** The turn's prompt for `ctx.userMessage`. Text blocks of every
+ * `user.message` in the accepted batch are carried over in order; a turn
+ * that only defines an outcome gets the outcome description. Non-text blocks
+ * (images, documents) are not carried: the legacy event's block shapes
+ * differ from the managed domain's. Pi reads the turn from the history, so a
+ * batch without text (tool confirmations or tool results) gives an empty
+ * message and still runs. */
 export function latestAcceptedUserMessage(
   events: readonly AcceptedEvent[],
 ): UserMessageEvent {
@@ -28,24 +29,7 @@ export function latestAcceptedUserMessage(
   return { type: "user.message", content };
 }
 
-/** Harnesses whose agent takes only the turn's prompt text, not the history. */
-const PROMPT_ONLY_HARNESSES: ReadonlySet<string> = new Set(["acp-sandbox"]);
-
-/** `latestAcceptedUserMessage`, refusing a prompt-only harness turn that has
- * no text (a batch of tool confirmations or tool results) with an error that
- * says why, instead of the harness's "empty turn". */
-export function harnessUserMessage(
-  events: readonly AcceptedEvent[],
-  harness: string | undefined,
-): UserMessageEvent {
-  const message = latestAcceptedUserMessage(events);
-  const hasText = message.content.some((block) => block.type === "text" && block.text.trim().length > 0);
-  if (!hasText && harness !== undefined && PROMPT_ONLY_HARNESSES.has(harness)) {
-    const types = [...new Set(events.map((event) => event.type))].join(", ") || "none";
-    throw new Error(
-      `${harness}: this turn has no user message text (accepted events: ${types}); ` +
-      "the ACP agent takes only a text prompt, send a user.message",
-    );
-  }
-  return message;
+/** The `ctx.userMessage` of a turn. */
+export function harnessUserMessage(events: readonly AcceptedEvent[]): UserMessageEvent {
+  return latestAcceptedUserMessage(events);
 }

@@ -12,7 +12,6 @@ import {
   MessagesSquareIcon,
   PuzzleIcon,
   RocketIcon,
-  TerminalIcon,
   UsersIcon,
 } from "lucide-react";
 
@@ -36,5 +35,4 @@ export const NAV_ICONS = {
   modelCards: CpuIcon,
   members: UsersIcon,
   apiKeys: KeyRoundIcon,
-  runtimes: TerminalIcon,
 } satisfies Record<string, NavIcon>;

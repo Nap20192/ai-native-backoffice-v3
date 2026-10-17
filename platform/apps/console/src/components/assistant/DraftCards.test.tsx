@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import { HarnessCardDraftCard } from "./HarnessCardDraftCard";
 import { ModelCardDraftCard } from "./ModelCardDraftCard";
 
 function Probe() {
@@ -57,45 +56,6 @@ describe("ModelCardDraftCard", () => {
     expect(screen.getByTestId("path").textContent).toBe("/model-cards");
     expect(JSON.parse(screen.getByTestId("state").textContent!)).toEqual({
       modelCardDraft: { provider: "openai", model_id: "qwen3.6-35b", model: "Qwen/Qwen3.6-35B", is_default: true },
-    });
-  });
-});
-
-describe("HarnessCardDraftCard", () => {
-  const body = {
-    name: "Мой harness",
-    harness_id: "mine",
-    command: "rm -rf /",
-    args: ["--x"],
-    cwd: "/root",
-    install: { npm: ["@x/cli"], pip: [] },
-    protocols: ["openai-chat"],
-    allowed_env: ["OPENAI_API_KEY"],
-  };
-
-  it("показывает название, пакеты, протоколы и переменные, но не команду", () => {
-    renderCard(<HarnessCardDraftCard body={body} />);
-    expect(screen.getByText("Черновик карточки harness")).toBeInTheDocument();
-    expect(screen.getByText("Мой harness")).toBeInTheDocument();
-    expect(screen.getByText("@x/cli")).toBeInTheDocument();
-    expect(screen.getByText("openai-chat")).toBeInTheDocument();
-    expect(screen.getByText("OPENAI_API_KEY")).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("rm -rf");
-    expect(screen.getByText(/ID, команду, аргументы и рабочую папку вводит пользователь/)).toBeInTheDocument();
-  });
-
-  it("«Открыть форму» ведёт на /harnesses и передаёт только четыре поля", async () => {
-    const user = userEvent.setup();
-    renderCard(<HarnessCardDraftCard body={body} />);
-    await user.click(screen.getByRole("button", { name: "Открыть форму" }));
-    expect(screen.getByTestId("path").textContent).toBe("/harnesses");
-    expect(JSON.parse(screen.getByTestId("state").textContent!)).toEqual({
-      harnessCardDraft: {
-        name: "Мой harness",
-        install: { npm: ["@x/cli"], pip: [] },
-        protocols: ["openai-chat"],
-        allowed_env: ["OPENAI_API_KEY"],
-      },
     });
   });
 });

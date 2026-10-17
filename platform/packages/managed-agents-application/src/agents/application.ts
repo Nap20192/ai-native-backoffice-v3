@@ -262,10 +262,6 @@ function normalizeOpenMaCreate(
       appendablePrompts: input.appendablePrompts,
     }),
     ...(input.harness != null && { harness: input.harness }),
-    ...(input.acp != null && { acp: input.acp }),
-    ...(input.runtimeBinding != null && {
-      runtimeBinding: input.runtimeBinding,
-    }),
     ...(input.enableGeneralSubagent != null && {
       enableGeneralSubagent: input.enableGeneralSubagent,
     }),
@@ -314,8 +310,6 @@ function patchOpenMa(
     }
   }
   assign("harness", patch.harness);
-  assign("acp", patch.acp);
-  assign("runtimeBinding", patch.runtimeBinding);
   assign("enableGeneralSubagent", patch.enableGeneralSubagent);
   assign(
     "compatibility",

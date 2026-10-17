@@ -16,11 +16,6 @@ export const SEARCH_WINDOW = 200;
 
 export const TEXT_FILTER_ROWS: Readonly<Record<string, { filter: string; mode: "prefix" | "substring"; text(item: any): string }>> = {
   memories: { filter: "path_prefix", mode: "prefix", text: (item) => String(item?.path ?? "") },
-  harness_cards: {
-    filter: "q",
-    mode: "substring",
-    text: (item) => [item?.name, item?.harness_id, item?.command].filter((v) => typeof v === "string").join("\n"),
-  },
 };
 
 /** Up to `SEARCH_WINDOW` newest raw objects of a list route. */

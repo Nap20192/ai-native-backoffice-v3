@@ -107,7 +107,6 @@ const STALE_NOUN: Record<string, { nom: string; verb: string }> = {
   session: { nom: "Сессия", verb: "изменилась" },
   message: { nom: "Сессия", verb: "изменилась" },
   model_card: { nom: "Карточка модели", verb: "изменилась" },
-  harness_card: { nom: "Карточка harness", verb: "изменилась" },
 };
 
 /** «Агент изменился после предложения» по виду объекта. */

@@ -19,24 +19,21 @@ import {
 } from "./common";
 import {
   createSkillVersionTool,
-  harnessCardChanges,
   updateAgentTool,
   updateDeploymentTool,
   updateEnvironmentTool,
-  updateHarnessCardTool,
   updateMemoryStoreTool,
   updateModelCardTool,
   writeMemoryTool,
 } from "./update";
 
-const KINDS = ["agent", "environment", "skill", "deployment", "memory", "memory_store", "model_card", "harness_card", "outcome"] as const;
+const KINDS = ["agent", "environment", "skill", "deployment", "memory", "memory_store", "model_card", "outcome"] as const;
 
 const previewArgs = z
   .object({ kind: z.enum(KINDS), id: z.string().min(1).optional(), body: configSchema })
   .strict();
 
 const MODEL_CARD_DRAFT_FIELDS = ["model_id", "model", "provider", "pi_config", "is_default"] as const;
-const HARNESS_CARD_DRAFT_FIELDS = ["name", "install", "protocols", "allowed_env"] as const;
 
 const outcomeSchema = z
   .object({
@@ -89,15 +86,6 @@ async function mapToTool(
       return draftOutput("model_card", pick(body, MODEL_CARD_DRAFT_FIELDS), {
         note: "Карточку создаёт человек в форме консоли. Ключ он вводит сам",
       });
-    case "harness_card": {
-      if (id) return { tool: updateHarnessCardTool, args: { harness_card_id: id, changes: body } };
-      const draft = pick(body, HARNESS_CARD_DRAFT_FIELDS);
-      const parsed = harnessCardChanges.safeParse(draft);
-      if (!parsed.success) return { text: formatSchemaError(parsed.error), isError: true };
-      return draftOutput("harness_card", parsed.data, {
-        note: "Карточку создаёт человек в форме консоли. ID, команду, аргументы и рабочую папку он вводит сам",
-      });
-    }
     case "outcome": {
       const parsed = outcomeSchema.safeParse(body);
       if (!parsed.success) return { text: formatSchemaError(parsed.error), isError: true };
@@ -113,7 +101,7 @@ export const previewChangeTool: ToolDef<z.infer<typeof previewArgs>> = {
   args: previewArgs,
   routes: [
     ROUTES.agent, ROUTES.environment, ROUTES.skill, ROUTES.deployment, ROUTES.memoryStore, ROUTES.memories, ROUTES.memory,
-    ROUTES.modelCard, ROUTES.modelCards, ROUTES.harnessCard, ROUTES.files, ROUTES.file, ROUTES.session, ROUTES.sessionEvents,
+    ROUTES.modelCard, ROUTES.modelCards, ROUTES.files, ROUTES.file, ROUTES.session, ROUTES.sessionEvents,
   ],
   precondition: null,
   async run(ctx, args) {

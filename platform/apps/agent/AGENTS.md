@@ -9,15 +9,16 @@ Harness (цикл одного хода), инструменты агента, �
 
 ## Harness
 
-Контракт `src/harness/interface.ts`, регистрация `src/harness/builtins.ts`.
+Контракт `src/harness/interface.ts`, регистрация `src/harness/builtins.ts`, выбор по имени `src/harness/registry.ts`.
 
 | Имя | Класс | Файл |
 |---|---|---|
 | `default`, `pi` | `PiHarness`, ведёт Qwen | `src/harness/pi-loop.ts` |
-| `ai-sdk` | `DefaultHarness`, устаревший | `src/harness/default-loop.ts` |
-| `acp-sandbox` | внешний агент (Claude Code, Codex) внутри VM | `src/harness/acp-sandbox-loop.ts` |
 
-- PiHarness импортирует `emitHarnessToolUseFromCall` из `default-loop.ts`, этот экспорт живёт, пока не переедет в общий модуль.
+- Другого harness нет. ACP-агенты и устаревший `DefaultHarness` удалены 2026-10-17, решение D41 в `docs/decisions-2026-10-17.md`.
+- `resolveHarness` переводит старые имена `ai-sdk`, `acp-sandbox` и `acp-proxy` на Pi и пишет одно предупреждение на имя. Так сохранённые агенты со старым harness работают дальше. Неизвестное имя бросает ошибку.
+- Поведение только для Pi (монтаж навыков в `agentUsesAssemblySkillMount`) проверяйте через `isPiHarnessName` из `registry.ts`. Тогда старое имя получает то же, что Pi.
+- Общие помощники событий инструментов (`emitHarnessToolUseFromCall`, `isMcpTool`, `normalizeToolOutputForWire`) лежат в `src/harness/tool-events.ts`. Их берёт `pi-loop.ts`. Файл `src/runtime/history.ts` их не импортирует: он делает обратное преобразование, и оно совпадает с ними байт в байт.
 - Каждое событие хода идёт через `ctx.runtime.broadcast`: это одна запись и в журнал, и в консоль.
 - Поток текста, мыслей и ввода инструментов идёт тройкой `broadcast*Start` / `Chunk` / `End`. Каждый открытый поток закрывается, при отмене со статусом `aborted`.
 - Отмена приходит через `ctx.runtime.abortSignal`. Перед долгим шагом проверяйте `signal.aborted`: слушатель `abort`, добавленный после отмены, не срабатывает.
@@ -38,7 +39,7 @@ Harness (цикл одного хода), инструменты агента, �
 
 | Папка | Запуск |
 |---|---|
-| `tests/` | из `platform/`: `test-slot pnpm vitest run --config vitest.pi.config.ts --maxWorkers=2` (или `vitest.acp-recovery.config.ts`) |
+| `tests/` | из `platform/`: `test-slot pnpm vitest run --config vitest.pi.config.ts --maxWorkers=2` |
 | `test/` | из `apps/agent`: `test-slot ../../node_modules/.bin/vitest run --maxWorkers=2` |
 
 - Типы пакета проверяет typecheck сервера: `pnpm --filter @open-managed-agents/main-node typecheck`.

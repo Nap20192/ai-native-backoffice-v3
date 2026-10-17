@@ -11,7 +11,6 @@
 | Сервер | `pnpm --filter @open-managed-agents/main-node test -- test/<файл>.test.ts`, `... typecheck` |
 | Консоль | `pnpm --filter managed-agents-console exec vitest run <путь>`, `... typecheck` |
 | Pi harness | `pnpm vitest run --config vitest.pi.config.ts` |
-| Восстановление ACP | `pnpm vitest run --config vitest.acp-recovery.config.ts` |
 | Очередь и аренда | `pnpm vitest run --config vitest.session-coordination.config.ts` |
 | Пакет со скриптом `test` | `pnpm --filter <пакет> test` |
 
@@ -23,7 +22,7 @@
 
 | | `/v1/*` | `/v1/oma/*` |
 |---|---|---|
-| Что | Совместимо с Claude Managed Agents: agents, sessions, environments, vaults, memory_stores, skills, files, deployments | Расширения: model_cards, harness_cards, trace, platform-mcp, tenants, api-keys, evals |
+| Что | Совместимо с Claude Managed Agents: agents, sessions, environments, vaults, memory_stores, skills, files, deployments | Расширения: model_cards, model_options, trace, platform-mcp, tenants, api-keys, evals |
 | Код | `packages/managed-agents-api` | `packages/http-routes`, `apps/main-node/src/lib/*` |
 | Заголовок | `anthropic-beta: managed-agents-2026-04-01`, без него 400 | не нужен |
 | Ошибки | `{type:"error", error:{type, message}}` | `{error: "..."}` |
@@ -47,7 +46,8 @@
 - Для разработки SQLite (`DATABASE_PATH`). Postgres включает `DATABASE_URL`, но захват исполнений там падает с `42P18` (`docs/runbook-local.md`).
 - Относительные пути считаются от `apps/main-node`.
 - Миграция пишется руками в две папки одинаково: `apps/main-node/migrations/` (Postgres) и `migrations-sqlite/` (SQLite, MySQL), вместе с записью в `meta/_journal.json`. Генератор Drizzle не работает. Номера существующих миграций постоянны, регрессию ловит `test/migration-merge.test.ts`.
-- Таблицы наших модулей (`lib/platform-mcp/schema.ts`, `lib/harness-cards/schema.ts`, `lib/trace/store.ts`) создаются кодом через `CREATE TABLE IF NOT EXISTS` одним SQL для обеих баз.
+- Таблицы наших модулей (`lib/platform-mcp/schema.ts`, `lib/trace/store.ts`) создаются кодом через `CREATE TABLE IF NOT EXISTS` одним SQL для обеих баз.
+- Таблица `harness_cards` осталась в старых базах. Код её больше не использует, миграции удаления нет (D41 в `docs/decisions-2026-10-17.md`).
 
 ## Вход и тенант
 
@@ -59,6 +59,7 @@
 
 - Каждое событие хода пишется условной вставкой по fence аренды: запись воркера, потерявшего аренду, отклоняется.
 - Harness, инструменты и форматы вывода песочницы описаны в `apps/agent/AGENTS.md`.
+- Ход ведёт только Pi. Агента с `harness`, отличным от `default` и `pi`, или с блоком `acp` сервер не создаёт и не сохраняет (`apps/main-node/src/lib/agent-config-guard.ts`). Старые агенты с таким полем читаются и идут на Pi.
 
 ## LiteBox
 

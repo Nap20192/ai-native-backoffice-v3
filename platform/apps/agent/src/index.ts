@@ -10,11 +10,8 @@ import { Hono } from "hono";
 import type { Env } from "@open-managed-agents/shared";
 
 // --- Register harnesses ---
-import { registerHarness } from "./harness/registry";
 import { registerCoreHarnesses } from "./harness/builtins";
-import { AcpProxyHarness } from "./harness/acp-proxy-loop";
 registerCoreHarnesses();
-registerHarness("acp-proxy", () => new AcpProxyHarness());
 
 // --- Export DO classes (required by wrangler) ---
 export { SessionDO } from "./runtime/session-do";

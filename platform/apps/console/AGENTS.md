@@ -11,7 +11,6 @@
 
 - `/v1/*` через `useManagedApi()` (`src/lib/managed-api.ts`). Клиент сам ставит `anthropic-beta` и `If-Match`. Точные URL и тела держит `src/lib/managed-api.contract.test.ts`: новый метод клиента получает строку в этом тесте.
 - `/v1/oma/*` и прочее через `useApi()` (`src/lib/api.ts`). Он ставит cookie, `anthropic-beta` и `x-active-tenant`.
-- `src/lib/harness-cards-api.ts` ходит своим `fetch`. Заголовки в нём повторяют `api.ts`: меняются оба файла вместе.
 - Списки через `src/lib/useApiQuery.ts`. У каждого семейства свой курсор: Managed `page` (`useInfiniteApiQuery`), файлы `before_id` (`useFilesInfiniteApiQuery`), OMA `cursor` (`useOmaInfiniteApiQuery`).
 
 ## Ошибки

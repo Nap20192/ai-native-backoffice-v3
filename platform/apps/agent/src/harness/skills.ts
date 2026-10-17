@@ -81,7 +81,7 @@ function safeLegacySkillName(value: string, fallback: string): string {
 /**
  * Return both the Managed Runtime canonical path and the historical
  * Cloudflare path. The latter is a compatibility mirror; new harnesses must
- * use the canonical /workspace path shared by Node and ACP runtimes.
+ * use the canonical /workspace path shared by the Node and Cloudflare runtimes.
  */
 export function skillFileMountPaths(
   skill: Pick<SkillFilesResult, "skillId" | "skillName" | "requestedVersion">,

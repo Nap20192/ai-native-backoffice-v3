@@ -1,11 +1,13 @@
 # Модели и harness: контракт сервера и консоли
 
+> **2026-10-17.** Остался только harness Pi, решение D41 в [decisions-2026-10-17.md](../decisions-2026-10-17.md). Разделы про каталог harness, ACP-агентов, карточки harness, прокси модели для VM и `ai-sdk` больше не действуют, их код удалён. Рецепты `runbook-claude-code-sandbox.md` и `runbook-claude-code-harness.md` тоже удалены. Части про модели, `model_options` и усилие в силе.
+
 Черновик 1, 2026-10-16. Только чтение кода, код не менялся, тесты не запускались.
 
 Входы:
 
 - разделы 1 и 2 плана [models-harness-analytics.md](models-harness-analytics.md) и его единицы S1, S2, C1;
-- работа W4, которая уже запускает Claude Code в VM LiteBox: `A/harness/acp-*`, `N/src/modules/node-managed.ts`, `N/src/lib/*`, сценарий `S/scripts/journey-claude-code.mjs`, рецепт `S/features/claude-code-sandbox.md`, [runbook-claude-code-sandbox.md](../runbook-claude-code-sandbox.md);
+- работа W4, которая уже запускает Claude Code в VM LiteBox: `A/harness/acp-*`, `N/src/modules/node-managed.ts`, `N/src/lib/*`, сценарий `S/scripts/journey-claude-code.mjs`, рецепт `S/features/claude-code-sandbox.md`, `runbook-claude-code-sandbox.md` (удалён 2026-10-17);
 - создание таблицы кодом из раздела 4 [analytics.md](analytics.md).
 
 Документ заменяет разделы 1 и 2 плана, его единицы S1, S2, C1 и часть SW про модель и harness. Цены, стоимость и бюджет сюда не входят, владелец просил их не учитывать. В `model_options` нет поля цены, форма карточки модели не меняется.

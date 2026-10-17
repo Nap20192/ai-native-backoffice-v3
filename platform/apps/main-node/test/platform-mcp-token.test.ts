@@ -181,6 +181,9 @@ describe("the platform MCP endpoint", () => {
 describe("routes outside the allowlist", () => {
   // Every route of 2.4 and of the second version, with a token issued for
   // exactly that request. Each gets 403 and the route never runs.
+  // The CRUD wave (docs/plans/crud.md, B2 to B5) opened session update,
+  // session resource delete, deployment run, pause and unpause, memory
+  // delete and file delete to the assistant, so they are no longer here.
   const denied: [string, string][] = [
     ["GET", "/v1/oma/model_cards/mc_1/key"],
     ["POST", "/v1/tunnels/tun_1/reveal_token"],
@@ -204,15 +207,10 @@ describe("routes outside the allowlist", () => {
     ["GET", "/v1/environments/env_1/work/poll"],
     ["POST", "/v1/oma/platform-mcp/preview"],
     ["POST", "/v1/oma/platform-mcp/confirm"],
-    ["POST", "/v1/sessions/sesn_1"],
     ["POST", "/v1/sessions/sesn_1/resources"],
     ["POST", "/v1/sessions/sesn_1/resources/res_1"],
-    ["DELETE", "/v1/sessions/sesn_1/resources/res_1"],
     ["POST", "/v1/sessions/sesn_1/archive"],
     ["DELETE", "/v1/sessions/sesn_1"],
-    ["POST", "/v1/deployments/dep_1/run"],
-    ["POST", "/v1/deployments/dep_1/pause"],
-    ["POST", "/v1/deployments/dep_1/unpause"],
     ["POST", "/v1/deployments/dep_1/archive"],
     ["DELETE", "/v1/deployments/dep_1"],
     ["POST", "/v1/agents/agent_1/archive"],
@@ -221,8 +219,6 @@ describe("routes outside the allowlist", () => {
     ["DELETE", "/v1/environments/env_1"],
     ["DELETE", "/v1/skills/skill_1"],
     ["POST", "/v1/memory_stores/ms_1/archive"],
-    ["DELETE", "/v1/memory_stores/ms_1/memories/mem_1"],
-    ["DELETE", "/v1/files/file_1"],
     ["POST", "/v1/oma/evals/runs"],
     ["POST", "/v1/oma/skills/install"],
     ["POST", "/v1/oma/model_cards/mc_1/archive"],

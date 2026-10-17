@@ -630,7 +630,7 @@ describe("platform MCP end to end", () => {
       expect(await deploymentCount()).toBe(before);
     });
 
-    it("a route token on pause, unpause, run, archive or a create without _oma.paused gets 403", async () => {
+    it("a route token on archive without If-Match or a create without _oma.paused gets 403", async () => {
       const deployments = await ok<{ data: Array<{ id: string }> }>("GET", "/v1/deployments?limit=1");
       const id = deployments.data[0]!.id;
       const tokens = runtime.platformMcp.tokens;
@@ -651,9 +651,13 @@ describe("platform MCP end to end", () => {
           body: raw,
         }));
       };
-      for (const action of ["pause", "unpause", "run", "archive"]) {
-        expect((await send(`/v1/deployments/${id}/${action}`, {})).status, action).toBe(403);
+      // Pause, unpause and run are assistant routes since the CRUD wave
+      // (docs/plans/crud.md, B5): the token passes and the route answers.
+      for (const action of ["pause", "unpause", "run"]) {
+        expect((await send(`/v1/deployments/${id}/${action}`, {})).status, action).not.toBe(403);
       }
+      // Archive needs If-Match, so a bare route token is still refused.
+      expect((await send(`/v1/deployments/${id}/archive`, {})).status, "archive").toBe(403);
       const before = await deploymentCount();
       const plain = await send("/v1/deployments", {
         name: "E2E no pause",

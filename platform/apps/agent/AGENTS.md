@@ -31,7 +31,12 @@ Harness (цикл одного хода), инструменты агента, �
 
 - Новое поле `env` протаскивается в оба вызова `buildTools`: `apps/main-node/src/modules/node-foundation.ts` и `node-managed.ts`.
 - Ввод модели попадает в shell только через `shellQuote` или позиционный аргумент.
-- `sandbox.exec` отвечает в двух форматах: Cloudflare `exit=N\n<stdout>` и LiteBox `<stdout>\n[exit N]` или `[error: ...]`. Разбор вывода понимает оба, образец `parseBase64ExecOutput`.
+- `glob` раскрывает фигурные скобки сам (`expandBraces`) и передаёт шаблоны bash позиционными аргументами. Bash ищет по ним файлы и не выполняет их как код.
+- Pi выполняет вызовы одного шага параллельно. Поэтому `edit` и `write` одного файла идут по очереди через `withPathLock`.
+- `edit` вставляет `new_string` срезами строки, без `String.replace`: тот разворачивает `$&` и `$$`.
+- `sandbox.exec` отвечает в двух форматах: Cloudflare `exit=N\n<stdout>` и LiteBox `<stdout>\n[exit N]` или `[error: ...]`. Вывод разбирает `parseExecOutput`, он понимает оба.
+- Длинный вывод bash режется посередине: начало и конец лога остаются, первая строка называет код выхода.
+- Песочница запускает команды через `sh -c`, а sh в образах Debian это dash. Команду, которой нужен `pipefail` или другие возможности bash, оборачивайте в `bash -c`, как grep и glob.
 - `MAX_TOOL_RESULT_CHARS` (`tools.ts`) и `MAX_PI_TOOL_TEXT_CHARS` (`pi-loop-tools.ts`) равны 50 000 и меняются вместе.
 - В контекст модели идёт только текст. Картинка идёт модели при `toolImages`, PDF превращается в подсказку про `pdftotext`, base64 в истории в заметку `capHistoryText`. Повод: 2026-10-16 base64 PNG переполнил контекст Qwen в 262 144 токена.
 

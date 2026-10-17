@@ -192,13 +192,38 @@ function safe<T>(
 /**
  * Truncate tool results that exceed the maximum size.
  * CC persists to disk; we truncate with preview since we don't have
- * local filesystem access from the harness layer.
+ * local filesystem access from the harness layer. The note fits within
+ * MAX_TOOL_RESULT_CHARS, so the Pi bridge (MAX_PI_TOOL_TEXT_CHARS, the same
+ * size) does not cut the result a second time and lose the note.
  */
 function truncateResult(result: string): string {
-  if (result.length > MAX_TOOL_RESULT_CHARS) {
-    return result.slice(0, MAX_TOOL_RESULT_CHARS) + `\n...(truncated, total ${result.length} chars)`;
-  }
-  return result;
+  if (result.length <= MAX_TOOL_RESULT_CHARS) return result;
+  const note = `\n...(truncated, total ${result.length} chars)`;
+  return result.slice(0, MAX_TOOL_RESULT_CHARS - note.length) + note;
+}
+
+/** Share of a cut bash log kept from its start. The rest comes from its end. */
+const BASH_HEAD_SHARE = 0.4;
+
+/**
+ * Bash output for the model. A long log keeps its start and its end, because
+ * the exit code, the build error and the test summary sit at the end. The
+ * first line states the exit code. Short output stays as the sandbox gave it.
+ */
+function truncateExecResult(raw: string): string {
+  if (raw.length <= MAX_TOOL_RESULT_CHARS) return raw;
+  const { code, output } = parseExecOutput(raw);
+  // "exit=N" as in the Cloudflare format, which eval-core scorers read.
+  const status = code === null ? "sandbox error" : `exit=${code}`;
+  const header = `[${status}; output of ${output.length} chars, cut in the middle]\n`;
+  // The gap note can only get shorter than this, so the result fits.
+  const gapReserve = `\n...(${output.length} chars omitted)...\n`.length;
+  const keep = MAX_TOOL_RESULT_CHARS - header.length - gapReserve;
+  if (output.length <= keep) return `[${status}]\n${output}`;
+  const headLength = Math.floor(keep * BASH_HEAD_SHARE);
+  const tailLength = keep - headLength;
+  const omitted = output.length - headLength - tailLength;
+  return `${header}${output.slice(0, headLength)}\n...(${omitted} chars omitted)...\n${output.slice(-tailLength)}`;
 }
 
 /** Shell-quote an argument safely (POSIX single-quote escaping). */
@@ -206,29 +231,150 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+/** Most patterns one glob pattern may expand to through braces. */
+const MAX_GLOB_PATTERNS = 100;
+
 /**
- * Base64 of a file from `base64 -w0 <file>` run through sandbox exec. The
- * Cloudflare sandbox answers "exit=N\n<stdout>"; LiteBox answers plain stdout
- * and appends "\n[exit N]" on failure or answers "[error: ...]". Anything that
- * is not clean base64 is an error: raw command output must never reach the
- * model as file content (2026-10-16, 900 KB of PNG base64 overflowed Qwen).
+ * Bash brace expansion of a glob pattern: "src/*.{ts,tsx}" gives "src/*.ts"
+ * and "src/*.tsx". It runs here because the pattern reaches bash only as data,
+ * and bash does not expand braces in data. A group needs a comma, as in bash;
+ * "{a}" stays as it is. Null when the result has more than MAX_GLOB_PATTERNS.
  */
-export function parseBase64ExecOutput(raw: string): { ok: true; data: string } | { ok: false; error: string } {
-  const cloudflare = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
-  let code = 0;
-  let body = raw;
-  if (cloudflare) {
-    code = parseInt(cloudflare[1], 10);
-    body = cloudflare[2];
-  } else if (/^\[error: /.test(raw.trim())) {
-    return { ok: false, error: raw.trim().slice(0, 200) };
-  } else {
-    const failed = raw.match(/\n?\[exit (-?\d+)\]\s*$/);
-    if (failed) {
-      code = parseInt(failed[1], 10);
-      body = raw.slice(0, failed.index);
+function expandBraces(pattern: string): string[] | null {
+  const done: string[] = [];
+  const queue = [pattern];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const group = findBraceGroup(current);
+    if (!group) {
+      done.push(current);
+    } else {
+      const head = current.slice(0, group.start);
+      const tail = current.slice(group.end + 1);
+      for (const option of group.options) queue.push(head + option + tail);
+    }
+    if (done.length + queue.length > MAX_GLOB_PATTERNS) return null;
+  }
+  return done;
+}
+
+/** The first brace group with a comma at its own level. */
+function findBraceGroup(pattern: string): { start: number; end: number; options: string[] } | null {
+  for (let start = 0; start < pattern.length; start++) {
+    if (pattern[start] === "\\") {
+      start++;
+      continue;
+    }
+    if (pattern[start] !== "{") continue;
+    let depth = 0;
+    let from = start + 1;
+    const options: string[] = [];
+    for (let i = start; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === "\\") {
+        i++;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "," && depth === 1) {
+        options.push(pattern.slice(from, i));
+        from = i + 1;
+      } else if (ch === "}" && --depth === 0) {
+        if (options.length === 0) break;
+        options.push(pattern.slice(from, i));
+        return { start, end: i, options };
+      }
     }
   }
+  return null;
+}
+
+/**
+ * Glob over a fixed script. The patterns are positional arguments: with an
+ * empty IFS bash only globs them and never runs them as code (harness-fixes
+ * item 10, a pattern was a way past always_ask on bash).
+ */
+const GLOB_SCRIPT =
+  `IFS=; for p in "$@"; do for f in $p; do ` +
+  `[ -e "$f" ] || [ -L "$f" ] || continue; ` +
+  `printf '%s\\t%s\\n' "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)" "$f"; ` +
+  `done; done | sort -rn | head -n 250 | cut -f2-`;
+
+/** "/a/./b//../c" and "/a/c" are one file. */
+function normalizeSandboxPath(path: string): string {
+  const absolute = path.startsWith("/");
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part !== "..") {
+      parts.push(part);
+    } else if (parts.length > 0 && parts[parts.length - 1] !== "..") {
+      parts.pop();
+    } else if (!absolute) {
+      parts.push(part);
+    }
+  }
+  return (absolute ? "/" : "") + parts.join("/");
+}
+
+/**
+ * Calls of edit and write on one file run one after another, in the order
+ * they were called. Pi runs the tool calls of one step in parallel, and two
+ * edits of one file each read the old text, so the second write lost the
+ * first change (harness-fixes item 12). Other files are not held.
+ */
+function createPathLocks() {
+  const tails = new Map<string, Promise<void>>();
+  return async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+    // Everything up to the first await runs at call time, so the queue keeps call order.
+    const key = normalizeSandboxPath(path);
+    const previous = tails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => current);
+    tails.set(key, tail);
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (tails.get(key) === tail) tails.delete(key);
+    }
+  };
+}
+
+/** One sandbox exec call, read from either output format. */
+export interface ExecOutput {
+  /** Exit code. Null when the sandbox could not run the command. */
+  code: number | null;
+  /** Output without the exit marker. For a sandbox error, the error text. */
+  output: string;
+}
+
+/**
+ * Read sandbox exec output. The Cloudflare sandbox answers "exit=N\n<stdout>".
+ * LiteBox and the other Node adapters answer plain stdout, append "\n[exit N]"
+ * on a nonzero exit and answer "[error: ...]" when the command could not run.
+ * LocalSubprocess writes the marker as "[exit exit=N]".
+ */
+export function parseExecOutput(raw: string): ExecOutput {
+  const cloudflare = raw.match(/^exit=(-?\d+)(?:\n([\s\S]*))?$/);
+  if (cloudflare) return { code: parseInt(cloudflare[1], 10), output: cloudflare[2] ?? "" };
+  const trimmed = raw.trim();
+  if (/^\[error: [\s\S]*\]$/.test(trimmed)) return { code: null, output: trimmed };
+  const marker = raw.match(/(?:^|\n)\[exit (?:exit=)?(-?\d+)\]\s*$/);
+  if (marker) return { code: parseInt(marker[1], 10), output: raw.slice(0, marker.index) };
+  return { code: 0, output: raw };
+}
+
+/**
+ * Base64 of a file from `base64 -w0 <file>` run through sandbox exec, in
+ * either format of parseExecOutput. Anything that is not clean base64 is an
+ * error: raw command output must never reach the model as file content
+ * (2026-10-16, 900 KB of PNG base64 overflowed Qwen).
+ */
+export function parseBase64ExecOutput(raw: string): { ok: true; data: string } | { ok: false; error: string } {
+  const { code, output: body } = parseExecOutput(raw);
+  if (code === null) return { ok: false, error: body.slice(0, 200) };
   if (code !== 0) return { ok: false, error: `exit ${code}: ${body.trim().slice(0, 200)}` };
   const data = body.replace(/\s+/g, "");
   if (!data) return { ok: false, error: "file is empty or unreadable" };
@@ -501,6 +647,7 @@ export async function buildTools(
   const enabled = getEnabledBuiltinTools(agentConfig.tools);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
+  const withPathLock = createPathLocks();
 
   // Browser tools. Wire the BrowserHarness from the platform bundle —
   // CF passes the @cloudflare/playwright adapter, Node passes
@@ -536,7 +683,7 @@ export async function buildTools(
         // implement command timeout/cancellation at the process boundary,
         // while startProcess + host polling keeps a long-lived capability
         // open and can outlive the turn when transport/status polling stalls.
-        return truncateResult(await sandbox.exec(command, timeoutMs));
+        return truncateExecResult(await sandbox.exec(command, timeoutMs));
       }),
     });
   }
@@ -631,7 +778,8 @@ export async function buildTools(
         file_path: z.string().describe("The absolute file path to write to, e.g. /workspace/index.html"),
         content: z.string().describe("The complete file content to write"),
       }),
-      execute: safe(async ({ file_path, content }) => sandbox.writeFile(file_path, content)),
+      execute: safe(async ({ file_path, content }) =>
+        withPathLock(file_path, () => sandbox.writeFile(file_path, content))),
     });
   }
 
@@ -648,22 +796,30 @@ export async function buildTools(
         replace_all: z.boolean().optional().describe("Replace all occurrences (default false)"),
       }),
       execute: safe(async ({ file_path, old_string, new_string, replace_all }) => {
-        const content = await sandbox.readFile(file_path);
-        if (!content.includes(old_string)) {
-          return "Error: old_string not found in file";
+        if (old_string === "") {
+          return "Error: old_string is empty. Give the exact text to replace. " +
+            "To create or overwrite a file, use write.";
         }
-        // Default behavior: require uniqueness (matches Anthropic Edit semantics)
-        if (!replace_all) {
-          const occurrences = content.split(old_string).length - 1;
-          if (occurrences > 1) {
-            return `Error: old_string appears ${occurrences} times in file. ` +
-              `Provide more surrounding context to make it unique, or pass replace_all=true.`;
+        return withPathLock(file_path, async () => {
+          const content = await sandbox.readFile(file_path);
+          const at = content.indexOf(old_string);
+          if (at === -1) {
+            return "Error: old_string not found in file";
           }
-        }
-        const updated = replace_all
-          ? content.split(old_string).join(new_string)
-          : content.replace(old_string, new_string);
-        return sandbox.writeFile(file_path, updated);
+          // Default behavior: require uniqueness (matches Anthropic Edit semantics)
+          if (!replace_all) {
+            const occurrences = content.split(old_string).length - 1;
+            if (occurrences > 1) {
+              return `Error: old_string appears ${occurrences} times in file. ` +
+                `Provide more surrounding context to make it unique, or pass replace_all=true.`;
+            }
+          }
+          // Slices, not String.replace: replace expands "$&", "$$", "$`" and "$'" in new_string.
+          const updated = replace_all
+            ? content.split(old_string).join(new_string)
+            : content.slice(0, at) + new_string + content.slice(at + old_string.length);
+          return sandbox.writeFile(file_path, updated);
+        });
       }),
     });
   }
@@ -682,15 +838,18 @@ export async function buildTools(
       }),
       execute: safe(async ({ pattern, path }) => {
         const dir = path || "/workspace";
+        const patterns = expandBraces(pattern);
+        if (!patterns) {
+          return `Error: the pattern expands to more than ${MAX_GLOB_PATTERNS} patterns through braces. ` +
+            "Use fewer brace groups, or call glob several times.";
+        }
         // Walk dir + match glob via bash, then sort by mtime desc, take head 250
         const cmd =
           `cd ${shellQuote(dir)} 2>/dev/null && ` +
-          `bash -O globstar -O nullglob -c ${shellQuote(`for f in ${pattern}; do printf '%s\\t%s\\n' "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)" "$f"; done | sort -rn | head -n 250 | cut -f2-`)}`;
-        const raw = await sandbox.exec(cmd);
-        const m = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
-        if (!m) return raw;
-        const code = parseInt(m[1], 10);
-        const out = m[2].trimEnd();
+          `bash -O globstar -O nullglob -c ${shellQuote(GLOB_SCRIPT)} glob ${patterns.map(shellQuote).join(" ")}`;
+        const { code, output } = parseExecOutput(await sandbox.exec(cmd));
+        if (code === null) return truncateResult(`Error: glob could not run in the sandbox: ${output}`);
+        const out = output.trimEnd();
         if (code !== 0) return truncateResult(`Error: glob exited with code ${code}\n${out}`);
         if (!out) return "No files matched the pattern";
         const files = out.split("\n").filter(Boolean);
@@ -762,17 +921,17 @@ export async function buildTools(
           flags.push("-r"); // grep needs explicit recursive
         }
 
-        const limitPipe = headLimit > 0 ? ` | head -n ${headLimit}` : "";
-        const cmd = useRg
-          ? `set -o pipefail; rg ${flags.join(" ")} ${shellQuote(pattern)} ${shellQuote(dir)}${limitPipe}`
-          : `set -o pipefail; grep ${flags.join(" ")} ${shellQuote(pattern)} ${shellQuote(dir)}${limitPipe}`;
+        const search = `${useRg ? "rg" : "grep"} ${flags.join(" ")} ${shellQuote(pattern)} ${shellQuote(dir)}`;
+        // The sandbox runs commands through `sh -c`, and sh in Debian images is
+        // dash, which has no pipefail. Only the head pipe needs it, so that
+        // case runs in bash, as glob does.
+        const cmd = headLimit > 0
+          ? `bash -c ${shellQuote(`set -o pipefail; ${search} | head -n ${headLimit}`)}`
+          : search;
 
-        const raw = await sandbox.exec(cmd);
-        // raw format: "exit=N\n<stdout>"
-        const m = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
-        if (!m) return raw;
-        const code = parseInt(m[1], 10);
-        const out = m[2].trimEnd();
+        const { code, output } = parseExecOutput(await sandbox.exec(cmd));
+        if (code === null) return truncateResult(`Error: grep could not run in the sandbox: ${output}`);
+        const out = output.trimEnd();
 
         // Semantic translation aligned with Agent SDK Grep:
         //   exit 0  → matches found (rg/grep convention)

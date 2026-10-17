@@ -10,13 +10,79 @@ import type {
 } from "@earendil-works/pi-ai";
 import {
   estimateContextTokens,
-  estimateTextTokens,
+  estimateMessageTokens,
 } from "@earendil-works/pi-ai/utils/estimate";
 import type { ContentBlock, SessionEvent } from "@open-managed-agents/shared";
 import type { HarnessRuntime } from "./interface";
 
 /** Matches pi-ai `CONTEXT_SAFETY_TOKENS` in simple-options (output margin). */
 export const PI_CONTEXT_OUTPUT_RESERVE_TOKENS = 4096;
+
+/** pi-ai `CHARS_PER_TOKEN`, kept for ASCII text. */
+const ASCII_CHARS_PER_TOKEN = 3.5;
+/**
+ * Cyrillic and other non-ASCII text packs fewer characters into a token. Qwen
+ * 3.6 spent one token per about 3.1 characters of Russian answers in recorded
+ * sessions (2026-10-16), so pi-ai's flat 3.5 undercounts a Russian context and
+ * compaction starts late. 2.5 keeps a margin.
+ */
+const NON_ASCII_CHARS_PER_TOKEN = 2.5;
+/** pi-ai `ESTIMATED_IMAGE_CHARS`. */
+const ESTIMATED_IMAGE_CHARS = 4_800;
+
+/** Character estimate of a text's tokens that does not undercount Cyrillic. */
+function estimatePiTextTokens(text: string): number {
+  let nonAscii = 0;
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) > 0x7f) nonAscii++;
+  }
+  return Math.ceil(
+    (text.length - nonAscii) / ASCII_CHARS_PER_TOKEN + nonAscii / NON_ASCII_CHARS_PER_TOKEN,
+  );
+}
+
+function estimatePiMessageTokens(message: Message): number {
+  if (message.role === "user" || message.role === "toolResult") {
+    if (typeof message.content === "string") return estimatePiTextTokens(message.content);
+    return message.content.reduce(
+      (sum, block) => sum + (block.type === "text"
+        ? estimatePiTextTokens(block.text)
+        : Math.ceil(ESTIMATED_IMAGE_CHARS / ASCII_CHARS_PER_TOKEN)),
+      0,
+    );
+  }
+  if (message.role === "assistant") {
+    return message.content.reduce((sum, block) => {
+      if (block.type === "text") return sum + estimatePiTextTokens(block.text);
+      if (block.type === "thinking") return sum + estimatePiTextTokens(block.thinking);
+      return sum + estimatePiTextTokens(block.name + JSON.stringify(block.arguments));
+    }, 0);
+  }
+  return estimateMessageTokens(message);
+}
+
+/**
+ * Size of the next request for the compaction decision. Like pi-ai's
+ * `estimateContextTokens`, it starts from the provider usage of the last
+ * assistant message that has one. That usage already counts the system prompt,
+ * the tool definitions and every message up to it, so only later messages are
+ * estimated. Without usage the whole request is estimated by characters.
+ */
+export function estimatePiRequestTokens(
+  messages: Message[],
+  systemPrompt: string,
+  tools: Tool[],
+): number {
+  const { usageTokens, lastUsageIndex } = estimateContextTokens(messages);
+  let tokens = 0;
+  for (let index = (lastUsageIndex ?? -1) + 1; index < messages.length; index++) {
+    tokens += estimatePiMessageTokens(messages[index]!);
+  }
+  if (lastUsageIndex !== null) return usageTokens + tokens;
+  const systemTokens = systemPrompt.length > 0 ? estimatePiTextTokens(systemPrompt) : 0;
+  const toolTokens = tools.length > 0 ? estimatePiTextTokens(JSON.stringify(tools)) : 0;
+  return tokens + systemTokens + toolTokens;
+}
 
 export function piCompactionInputBudget(model: Model<Api>): number {
   return Math.max(
@@ -98,15 +164,8 @@ export class PiSummaryCompactionPolicy implements PiCompactionPolicy {
     _events: SessionEvent[],
     ctx: PiCompactionCheckContext,
   ): boolean {
-    const threshold = ctx.compactionTriggerInputTokens;
-    const { tokens: messageTokens } = estimateContextTokens(ctx.messages);
-    const systemTokens = ctx.systemPrompt.length > 0
-      ? estimateTextTokens(ctx.systemPrompt)
-      : 0;
-    const toolTokens = ctx.tools.length > 0
-      ? estimateTextTokens(JSON.stringify(ctx.tools))
-      : 0;
-    return messageTokens + systemTokens + toolTokens >= threshold;
+    return estimatePiRequestTokens(ctx.messages, ctx.systemPrompt, ctx.tools)
+      >= ctx.compactionTriggerInputTokens;
   }
 
   async compact(
@@ -189,6 +248,16 @@ export class PiSummaryCompactionPolicy implements PiCompactionPolicy {
     }
     if (cacheAware && response.stopReason === "toolUse") {
       throw new Error("Pi cache-aware compaction attempted to call a tool");
+    }
+    // The boundary replaces all older history for good. A summary cut by an
+    // abort or by maxTokens would silently drop part of it, so only a summary
+    // the model finished itself is kept.
+    if (response.stopReason !== "stop") {
+      const detail = response.errorMessage?.trim();
+      throw new Error(
+        `Pi compaction summary ended with stop_reason=${response.stopReason}`
+          + (detail ? ` (${detail})` : ""),
+      );
     }
     if (!text) return null;
 

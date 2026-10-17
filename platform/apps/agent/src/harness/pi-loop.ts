@@ -12,10 +12,6 @@ import {
   isContextOverflow,
   isRecoverableLength,
 } from "@earendil-works/pi-ai";
-import {
-  estimateContextTokens,
-  estimateTextTokens,
-} from "@earendil-works/pi-ai/utils/estimate";
 import type { ModelMessage } from "ai";
 import type { ContentBlock, SessionEvent } from "@open-managed-agents/shared";
 import {
@@ -26,6 +22,7 @@ import {
 import { eventsToMessagesAsync } from "../runtime/history";
 import type { HarnessContext, HarnessInterface } from "./interface";
 import {
+  estimatePiRequestTokens,
   PI_CONTEXT_OUTPUT_RESERVE_TOKENS,
   resolvePiCompactionPolicy,
   type PiCompactionPolicy,
@@ -61,8 +58,11 @@ interface LiveMessageState {
 }
 
 interface PiRunOutcome {
+  /** The run streamed text or a tool call. Thinking alone does not count. */
   producedOutput: boolean;
   providerFailure?: AssistantMessage;
+  /** Stop reason of the last assistant message of the run. */
+  stopReason?: AssistantMessage["stopReason"];
 }
 
 export interface PiHarnessOptions {
@@ -85,19 +85,24 @@ export class PiHarness implements HarnessInterface {
       throw new ModelError("Pi harness requires a tenant-scoped Pi model runtime");
     }
 
+    const signal = ctx.runtime.abortSignal;
     await this.compactIfInsufficientOutputRoom(ctx);
     const proactivelyCompacted = await this.compactBeforeTurn(ctx);
+    if (signal?.aborted) return;
     let outcome = await this.runAgentOnce(ctx);
+    // Tool output produced after the proactive compaction can overflow the
+    // context again, so that compaction does not rule out the retry.
     if (
-      !ctx.runtime.abortSignal?.aborted
-      && !proactivelyCompacted
+      !signal?.aborted
+      && (!proactivelyCompacted || outcome.producedOutput)
       && shouldRetryPiTurnAfterCompaction(outcome, ctx.pi.model)
     ) {
       const recovered = await this.compactBeforeTurn(ctx, true);
-      if (recovered) outcome = await this.runAgentOnce(ctx);
+      if (recovered && !signal?.aborted) outcome = await this.runAgentOnce(ctx);
     }
+    if (signal?.aborted) return;
 
-    if (outcome.providerFailure && !ctx.runtime.abortSignal?.aborted) {
+    if (outcome.providerFailure) {
       const failure = outcome.providerFailure;
       const detail = failure.errorMessage?.trim();
       const message = detail && detail.length > 0
@@ -106,15 +111,18 @@ export class PiHarness implements HarnessInterface {
       const external = classifyExternalError(new Error(message));
       throw external instanceof Error ? external : new ModelError(message);
     }
-    if (!outcome.producedOutput && !ctx.runtime.abortSignal?.aborted) {
-      throw new ModelError("No output generated. Check the Pi stream for errors.");
+    if (!outcome.producedOutput) {
+      // Same contract as the removed ai-sdk loop: a turn without text or a
+      // tool call is a deterministic model failure, not a context problem.
+      throw new ModelError(
+        `silent_stop: model returned finish_reason=${outcome.stopReason ?? "stop"} with empty text and no tool calls`,
+      );
     }
   }
 
   private async runAgentOnce(ctx: HarnessContext): Promise<PiRunOutcome> {
-    const modelMessages = await eventsToMessagesAsync(ctx.runtime.history.getEvents(), ctx.fileFetcher);
     const messages = dropTrailingAssistantPiMessages(
-      modelMessagesToPi(modelMessages, ctx.pi!.model, ctx.pi!.toolImages),
+      await replayHistoryToPi(ctx, ctx.runtime.history.getEvents()),
     );
     if (messages.length === 0) {
       throw new ModelError("Pi harness cannot continue without a user message");
@@ -129,12 +137,19 @@ export class PiHarness implements HarnessInterface {
     };
     let providerFailure: AssistantMessage | undefined;
     let producedOutput = false;
+    let stopReason: AssistantMessage["stopReason"] | undefined;
+
+    const signal = ctx.runtime.abortSignal;
+    if (signal?.aborted) return { producedOutput };
 
     const toolAssembly = createPiToolAssembly(ctx);
+    // Hints open the request. A hint stamped after the replayed history would
+    // make Pi drop the usage of the last replayed assistant message.
+    const firstTimestamp = messages[0]!.timestamp;
     const bootstrapMessages = toolAssembly.bootstrapTurnMessages.map((message) => ({
       role: message.role,
       content: message.content,
-      timestamp: message.timestamp,
+      timestamp: Math.min(message.timestamp, firstTimestamp),
     }));
     const agent = new Agent({
       initialState: {
@@ -160,44 +175,48 @@ export class PiHarness implements HarnessInterface {
       const result = await translatePiEvent(event, ctx, state);
       producedOutput ||= result.producedOutput;
       if (result.providerFailure) providerFailure = result.providerFailure;
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        stopReason = event.message.stopReason;
+      }
     });
 
     const abort = () => agent.abort();
-    ctx.runtime.abortSignal?.addEventListener("abort", abort, { once: true });
+    signal?.addEventListener("abort", abort, { once: true });
 
     try {
-      const run = () => agent.continue();
+      const run = async () => {
+        // agent.abort() does nothing until continue() starts a run, so an
+        // abort that came earlier (e.g. inside keepAliveWhile) stops here.
+        if (signal?.aborted) return;
+        await agent.continue();
+      };
       if (ctx.runtime.keepAliveWhile) await ctx.runtime.keepAliveWhile(run);
       else await run();
     } finally {
       unsubscribe();
-      ctx.runtime.abortSignal?.removeEventListener("abort", abort);
-      await closeLiveStreams(ctx, state, ctx.runtime.abortSignal?.aborted ? "aborted" : "completed");
+      signal?.removeEventListener("abort", abort);
+      await closeLiveStreams(ctx, state, signal?.aborted ? "aborted" : "completed");
     }
 
-    return { producedOutput, ...(providerFailure ? { providerFailure } : {}) };
+    return {
+      producedOutput,
+      ...(providerFailure ? { providerFailure } : {}),
+      ...(stopReason ? { stopReason } : {}),
+    };
   }
 
   private async compactIfInsufficientOutputRoom(ctx: HarnessContext): Promise<void> {
     if (!ctx.pi || ctx.pi.model.contextWindow <= 0) return;
-    const events = ctx.runtime.history.getEvents();
-    const modelMessages = await eventsToMessagesAsync(events, ctx.fileFetcher);
-    const messages = modelMessagesToPi(modelMessages, ctx.pi.model, ctx.pi.toolImages);
-    const piTools = toolsToPi(ctx);
-    const { tokens: messageTokens } = estimateContextTokens(messages);
-    const systemTokens = ctx.systemPrompt.length > 0
-      ? estimateTextTokens(ctx.systemPrompt)
-      : 0;
-    const toolTokens = piTools.length > 0
-      ? estimateTextTokens(JSON.stringify(piTools))
-      : 0;
-    const remaining = ctx.pi.model.contextWindow - messageTokens - systemTokens - toolTokens;
+    const messages = await replayHistoryToPi(ctx, ctx.runtime.history.getEvents());
+    const remaining = ctx.pi.model.contextWindow
+      - estimatePiRequestTokens(messages, ctx.systemPrompt, toolsToPi(ctx));
     if (remaining < PI_CONTEXT_OUTPUT_RESERVE_TOKENS) {
       await this.compactBeforeTurn(ctx, true);
     }
   }
 
   private async compactBeforeTurn(ctx: HarnessContext, force: boolean = false): Promise<boolean> {
+    if (ctx.runtime.abortSignal?.aborted) return false;
     const metadata = (ctx.agent.metadata ?? {}) as Record<string, unknown>;
     const summaryInstructions = resolveCompactionSummaryInstructions(ctx.agent);
     const policy = this.options.compaction === undefined
@@ -206,8 +225,7 @@ export class PiHarness implements HarnessInterface {
     if (!ctx.pi) return false;
 
     const events = ctx.runtime.history.getEvents();
-    const modelMessages = await eventsToMessagesAsync(events, ctx.fileFetcher);
-    const messages = modelMessagesToPi(modelMessages, ctx.pi.model, ctx.pi.toolImages);
+    const messages = await replayHistoryToPi(ctx, events);
     const piTools = toolsToPi(ctx);
     const compactionCtx = {
       messages,
@@ -239,6 +257,9 @@ export class PiHarness implements HarnessInterface {
           tools: compactionCtx.tools,
         }),
       });
+      // A policy that ignores the signal may return a summary cut by the
+      // abort. The boundary replaces older history for good, so skip it.
+      if (ctx.runtime.abortSignal?.aborted) return false;
       const compacted = this.persistCompaction(result, ctx);
       // §6 post-compaction re-assembly runs when `createPiToolAssembly` builds the
       // next turn (skill/tool retention + `oma.context_reassembled` marker).
@@ -402,7 +423,6 @@ async function translatePiEvent(
             ? { providerOptions: { pi: { thinkingSignature: block.thinkingSignature } } }
             : {}),
         });
-        producedOutput ||= block.thinking.length > 0;
       } else if (block.type === "text") {
         const id = state.textIds.get(index) ?? generateEventId();
         if (state.textIds.has(index)) {
@@ -624,6 +644,105 @@ function piContentToWire(content: Array<TextContent | ImageContent>): ContentBlo
   );
 }
 
+/** Stored history → Pi messages, with the provider usage of the last request. */
+async function replayHistoryToPi(ctx: HarnessContext, events: SessionEvent[]): Promise<Message[]> {
+  const modelMessages = await eventsToMessagesAsync(events, ctx.fileFetcher);
+  return withLastAssistantUsage(
+    modelMessagesToPi(modelMessages, ctx.pi!.model, ctx.pi!.toolImages),
+    lastReplayedAssistantUsage(events),
+  );
+}
+
+function withLastAssistantUsage(messages: Message[], usage: Usage | undefined): Message[] {
+  if (!usage) return messages;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (message.role !== "assistant") continue;
+    const copy = messages.slice();
+    copy[index] = { ...message, usage };
+    return copy;
+  }
+  return messages;
+}
+
+/**
+ * Provider usage of the request that wrote the last replayed assistant
+ * message. Replayed messages otherwise carry zero usage, and Pi then estimates
+ * the whole history by characters. The usage counts only when that request saw
+ * the current view of history and finished cleanly:
+ * - it ran after the last compaction boundary, which replaces older history;
+ * - it did not stop on an error or an abort;
+ * - its own output is the latest assistant content, with nothing after it.
+ */
+function lastReplayedAssistantUsage(events: SessionEvent[]): Usage | undefined {
+  let end = -1;
+  for (let index = events.length - 1; index >= 0 && end < 0; index--) {
+    const kind = replayedEventKind(events[index]!);
+    if (kind === "request_end") end = index;
+    else if (kind === "assistant" || kind === "boundary") return undefined;
+  }
+  if (end < 0) return undefined;
+  const span = events[end] as Extract<SessionEvent, { type: "span.model_request_end" }>;
+  if (span.is_error || span.finish_reason === "error" || span.finish_reason === "aborted") {
+    return undefined;
+  }
+  let ownOutput = false;
+  for (let index = end - 1; index >= 0; index--) {
+    const kind = replayedEventKind(events[index]!);
+    if (kind === "ignored") continue;
+    ownOutput = kind === "assistant";
+    break;
+  }
+  if (!ownOutput) return undefined;
+  const reported = span.model_usage;
+  const input = reported?.input_tokens ?? 0;
+  const output = reported?.output_tokens ?? 0;
+  const cacheRead = reported?.cache_read_input_tokens ?? 0;
+  const cacheWrite = reported?.cache_creation_input_tokens ?? 0;
+  const totalTokens = input + output + cacheRead + cacheWrite;
+  if (!(totalTokens > 0)) return undefined;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens,
+    cost: { ...EMPTY_USAGE.cost },
+  };
+}
+
+/** How `eventsToMessages` treats an event, as far as usage lookup needs it. */
+function replayedEventKind(
+  event: SessionEvent,
+): "assistant" | "other_message" | "boundary" | "request_end" | "ignored" {
+  if ((event as { cancelled_at_ms?: number }).cancelled_at_ms != null) return "ignored";
+  switch (event.type) {
+    case "agent.message":
+    case "agent.tool_use":
+    case "agent.mcp_tool_use":
+    case "agent.custom_tool_use":
+      return "assistant";
+    case "agent.thinking":
+      return event.text != null ? "assistant" : "ignored";
+    case "user.message":
+    case "agent.tool_result":
+    case "agent.mcp_tool_result":
+      return "other_message";
+    case "agent.thread_context_compacted":
+      return event.summary?.some(
+        (block) => (block.type === "text" && block.text.trim().length > 0)
+          || block.type === "image"
+          || block.type === "document",
+      )
+        ? "boundary"
+        : "ignored";
+    case "span.model_request_end":
+      return "request_end";
+    default:
+      return "ignored";
+  }
+}
+
 function modelMessagesToPi(
   messages: ModelMessage[],
   model: Model<Api>,
@@ -785,13 +904,17 @@ function isPiCompactionRecoverableAssistantEnd(
   return desiredMaxOutput !== undefined && isRecoverableLength(message, desiredMaxOutput);
 }
 
+/**
+ * Retry only a context failure. Earlier text or tool calls of the turn do not
+ * block it: they are in the stored history, and the retry continues from the
+ * compacted view of it. A clean stop without output is a silent stop.
+ */
 function shouldRetryPiTurnAfterCompaction(
   outcome: PiRunOutcome,
   model: Model<Api>,
 ): boolean {
-  if (outcome.producedOutput) return false;
   const failure = outcome.providerFailure;
-  if (!failure) return true;
+  if (!failure) return false;
   if (failure.stopReason === "error" && isContextOverflow(failure, model.contextWindow)) {
     return true;
   }

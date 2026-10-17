@@ -230,4 +230,68 @@ describe("Pi compaction policy", () => {
     await expect(new PiSummaryCompactionPolicy().compact([], providerError.ctx))
       .rejects.toThrow("provider failed");
   });
+
+  // Граница сжатия навсегда заменяет историю до себя. Сводку, которую оборвали
+  // отмена или лимит токенов, принимать нельзя: часть истории пропадёт.
+  it.each([
+    ["cc-style", "aborted"],
+    ["cc-style", "length"],
+    ["cc-style", "toolUse"],
+    ["summarize", "aborted"],
+    ["summarize", "length"],
+  ] as const)("%s не принимает сводку, завершённую по %s", async (strategy, stopReason) => {
+    const { ctx, broadcast } = context(vi.fn(async () => fauxAssistantMessage("частичная сводка", {
+      stopReason,
+      ...(stopReason === "aborted" ? { errorMessage: "Request was aborted" } : {}),
+    })) as Models["completeSimple"]);
+
+    await expect(new PiSummaryCompactionPolicy(strategy).compact([], ctx))
+      .rejects.toThrow(`stop_reason=${stopReason}`);
+    expect(broadcast).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "span.compaction_summarize_end",
+      finish_reason: stopReason,
+      final_text_length: "частичная сводка".length,
+    }));
+  });
+
+  // Русский текст плотнее латиницы: оценка Pi по 3,5 знака на токен его недосчитывает.
+  it("не недосчитывает русскую историю и не меняет счёт латиницы", () => {
+    const paragraph = "Сотрудник выходит на работу в понедельник. До этого отдел кадров готовит договор, "
+      + "пропуск и рабочее место, а руководитель пишет план на первую неделю. В первый день новичок "
+      + "получает ноутбук, учётные записи и список людей, к которым можно прийти с вопросом. ";
+    const transcript = (text: string): Message[] => [
+      { role: "user", content: text.repeat(20), timestamp: 1 },
+      fauxAssistantMessage([
+        fauxThinking(text.repeat(5)),
+        { type: "text", text: text.repeat(10) },
+        fauxToolCall("write_file", { path: "plan.md", content: text.repeat(10) }, { id: "tool-ru" }),
+      ], { timestamp: 2 }),
+      {
+        role: "toolResult",
+        toolCallId: "tool-ru",
+        toolName: "write_file",
+        content: [{ type: "text", text: text.repeat(20) }],
+        isError: false,
+        timestamp: 3,
+      },
+      { role: "user", content: text.repeat(20), timestamp: 4 },
+    ];
+    const russian = transcript(paragraph);
+    const latin = transcript("x".repeat(paragraph.length));
+    // Абзац повторён в истории 85 раз. Qwen 3.6 в сессиях 2026-10-16 тратил токен
+    // примерно на 3,1 знака русского ответа. Порог стоит на этом счёте с запасом:
+    // токен на каждые 3 знака.
+    const qwenTokens = Math.ceil(paragraph.length * 85 / 3);
+    const policy = new PiSummaryCompactionPolicy();
+    const reachesQwenCount = (messages: Message[]) => policy.shouldCompact([], {
+      messages,
+      model: { ...model, contextWindow: 262_144, maxTokens: 16_384 },
+      systemPrompt: "",
+      tools: [],
+      compactionTriggerInputTokens: qwenTokens,
+    });
+
+    expect(reachesQwenCount(russian)).toBe(true);
+    expect(reachesQwenCount(latin)).toBe(false);
+  });
 });

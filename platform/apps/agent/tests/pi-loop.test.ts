@@ -8,12 +8,13 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import type { SessionEvent } from "@open-managed-agents/shared";
+import { ModelError, type SessionEvent } from "@open-managed-agents/shared";
 import type { HarnessContext, HarnessRuntime } from "../src/harness/interface";
 import type { PiCompactionPolicy } from "../src/harness/pi-compaction";
 import { PiSummaryCompactionPolicy } from "../src/harness/pi-compaction";
 import { PiHarness } from "../src/harness/pi-loop";
 import { createPiModelRuntime } from "../src/harness/pi-provider";
+import { buildTools } from "../src/harness/tools";
 import { TOOL_ASSEMBLY_WARNING_SOURCE } from "../src/harness/assembly/loaded-tools-state";
 import { SKILL_ASSEMBLY_WARNING_SOURCE } from "../src/harness/assembly/loaded-skills-state";
 import { CONTEXT_REASSEMBLED_WARNING_SOURCE } from "../src/harness/assembly/context-reassembled-state";
@@ -798,5 +799,463 @@ describe("PiHarness", () => {
     }));
     expect(events.some((event) => event.type === "agent.tool_result")).toBe(false);
     expect(events.filter((event) => event.type.startsWith("span.tool_execution_"))).toEqual([]);
+  });
+
+  // docs/plans/harness-fixes.md, пункт 12.
+  it("сохраняет обе правки одного файла из одного шага", async () => {
+    const { ctx, events } = makeContext([
+      fauxAssistantMessage([
+        fauxToolCall("edit", { file_path: "/workspace/a.ts", old_string: "a = 1", new_string: "a = 10" }, { id: "edit-1" }),
+        fauxToolCall("edit", { file_path: "/workspace/a.ts", old_string: "b = 2", new_string: "b = 20" }, { id: "edit-2" }),
+      ], { stopReason: "toolUse" }),
+      fauxAssistantMessage("готово"),
+    ]);
+    let text = "a = 1\nb = 2\n";
+    const vmCall = () => new Promise((resolve) => setTimeout(resolve, 1));
+    const sandbox = {
+      async readFile() {
+        await vmCall();
+        return text;
+      },
+      async writeFile(_path: string, content: string) {
+        await vmCall();
+        text = content;
+        return "ok";
+      },
+    };
+    const tools = await buildTools(
+      { id: "agent-test", name: "a", model: "m", system: "", tools: [{ type: "agent_toolset_20260401" }] } as never,
+      sandbox as never,
+    );
+    ctx.tools = { edit: tools.edit };
+
+    await new PiHarness().run(ctx);
+
+    expect(text).toBe("a = 10\nb = 20\n");
+    const results = events.filter((event) => event.type === "agent.tool_result");
+    expect(results.map((event) => (event as { content?: unknown }).content)).toEqual([
+      [{ type: "text", text: "ok" }],
+      [{ type: "text", text: "ok" }],
+    ]);
+  });
+
+  // docs/plans/harness-fixes.md, пункты 1, 2 и 5.
+  describe("переполнение, отмена и пустой ответ", () => {
+    function olderTurns(): SessionEvent[] {
+      return [
+        { type: "user.message", content: [{ type: "text", text: "старый вопрос 1" }] },
+        { type: "agent.message", message_id: "old-1", content: [{ type: "text", text: "старый ответ 1" }] },
+        { type: "user.message", content: [{ type: "text", text: "старый вопрос 2" }] },
+        { type: "agent.message", message_id: "old-2", content: [{ type: "text", text: "старый ответ 2" }] },
+      ];
+    }
+
+    const overflow = () => fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "prompt is too long: 140000 tokens > 128000 maximum",
+    });
+
+    function messageIndex(events: SessionEvent[], text: string): number {
+      return events.findIndex((event) => event.type === "agent.message"
+        && JSON.stringify(event.content).includes(text));
+    }
+
+    function attachAbort(ctx: HarnessContext): AbortController {
+      const controller = new AbortController();
+      Reflect.set(ctx.runtime, "abortSignal", controller.signal);
+      return controller;
+    }
+
+    it("сжимает историю и повторяет ход, если контекст переполнился после вызова инструмента", async () => {
+      const { ctx, events, faux, echo } = makeContext([]);
+      events.unshift(...olderTurns());
+      let summaryRequest = "";
+      let retryRequest = "";
+      faux.setResponses([
+        fauxAssistantMessage(
+          fauxToolCall("echo", { value: "hello" }, { id: "tool-before-overflow" }),
+          { stopReason: "toolUse" },
+        ),
+        overflow(),
+        (context) => {
+          summaryRequest = JSON.stringify(context.messages);
+          return fauxAssistantMessage("сводка после инструмента");
+        },
+        (context) => {
+          retryRequest = JSON.stringify(context.messages);
+          return fauxAssistantMessage("ответ после сжатия");
+        },
+      ]);
+
+      await new PiHarness().run(ctx);
+
+      expect(echo).toHaveBeenCalledOnce();
+      expect(faux.state.callCount).toBe(4);
+      const compacted = events.findIndex((event) => event.type === "agent.thread_context_compacted");
+      const toolResult = events.findIndex((event) => event.type === "agent.tool_result");
+      expect(compacted).toBeGreaterThan(toolResult);
+      expect(compacted).toBeLessThan(messageIndex(events, "ответ после сжатия"));
+      expect(summaryRequest).toContain("echoed");
+      expect(retryRequest).toContain("<conversation-summary>");
+      expect(retryRequest).toContain("сводка после инструмента");
+      expect(retryRequest).toContain("tool-before-overflow");
+    });
+
+    it("повторяет ход после переполнения и тогда, когда ход начался со сжатия", async () => {
+      const { ctx, events, faux } = makeContext([]);
+      events.unshift(...olderTurns());
+      // Окно меньше max_tokens модели: порог сжатия 0, сжатие идёт перед каждым ходом.
+      ctx.pi!.model = { ...ctx.pi!.model, contextWindow: 10_000 };
+      faux.setResponses([
+        fauxAssistantMessage("первая сводка"),
+        fauxAssistantMessage(
+          fauxToolCall("echo", { value: "hello" }, { id: "tool-after-compaction" }),
+          { stopReason: "toolUse" },
+        ),
+        overflow(),
+        fauxAssistantMessage("вторая сводка"),
+        fauxAssistantMessage("ответ после второго сжатия"),
+      ]);
+
+      await new PiHarness().run(ctx);
+
+      expect(faux.state.callCount).toBe(5);
+      expect(events.filter((event) => event.type === "agent.thread_context_compacted")).toHaveLength(2);
+      expect(messageIndex(events, "ответ после второго сжатия")).toBeGreaterThan(-1);
+    });
+
+    it("отмена до хода не запускает ни сжатие, ни модель", async () => {
+      const { ctx, events, faux } = makeContext([fauxAssistantMessage("ответ после отмены")]);
+      const policy: PiCompactionPolicy = {
+        name: "test-policy",
+        shouldCompact: () => true,
+        compact: vi.fn(async () => null),
+      };
+      attachAbort(ctx).abort();
+
+      await new PiHarness({ compaction: policy }).run(ctx);
+
+      expect(faux.state.callCount).toBe(0);
+      expect(policy.compact).not.toHaveBeenCalled();
+      expect(events.some((event) => event.type === "span.model_request_start")).toBe(false);
+    });
+
+    it("отмена во время сжатия останавливает ход", async () => {
+      const { ctx, events, faux } = makeContext([fauxAssistantMessage("ответ после отмены")]);
+      const controller = attachAbort(ctx);
+      const policy: PiCompactionPolicy = {
+        name: "test-policy",
+        shouldCompact: () => true,
+        compact: async () => {
+          controller.abort();
+          return null;
+        },
+      };
+
+      await new PiHarness({ compaction: policy }).run(ctx);
+
+      expect(faux.state.callCount).toBe(0);
+      expect(events.some((event) => event.type === "span.model_request_start")).toBe(false);
+      expect(messageIndex(events, "ответ после отмены")).toBe(-1);
+    });
+
+    it("отмена после подписки на сигнал и до запуска агента останавливает ход", async () => {
+      const { ctx, events, faux } = makeContext([fauxAssistantMessage("ответ после отмены")]);
+      const controller = attachAbort(ctx);
+      Reflect.set(ctx.runtime, "keepAliveWhile", async (run: () => Promise<void>) => {
+        controller.abort();
+        await run();
+      });
+
+      await new PiHarness({ compaction: {
+        name: "disabled",
+        shouldCompact: () => false,
+        compact: async () => null,
+      } }).run(ctx);
+
+      expect(faux.state.callCount).toBe(0);
+      expect(messageIndex(events, "ответ после отмены")).toBe(-1);
+    });
+
+    // Граница сжатия навсегда заменяет историю до себя, поэтому оборванная сводка
+    // не записывается. Ход идёт по полной истории, сжатие повторит следующий ход.
+    it.each(["length", "aborted"] as const)(
+      "не записывает сводку, оборванную по %s, и отвечает по полной истории",
+      async (stopReason) => {
+        const { ctx, events, faux } = makeContext([]);
+        events.unshift(...olderTurns());
+        // Окно меньше max_tokens модели: порог сжатия 0, сжатие идёт перед ходом.
+        ctx.pi!.model = { ...ctx.pi!.model, contextWindow: 10_000 };
+        let turnRequest = "";
+        faux.setResponses([
+          fauxAssistantMessage("оборванная сводка", { stopReason }),
+          (context) => {
+            turnRequest = JSON.stringify(context.messages);
+            return fauxAssistantMessage("ответ по полной истории");
+          },
+        ]);
+        const warnings: string[] = [];
+        const warn = vi.spyOn(console, "warn")
+          .mockImplementation((message: unknown) => void warnings.push(String(message)));
+
+        try {
+          await new PiHarness().run(ctx);
+        } finally {
+          warn.mockRestore();
+        }
+
+        expect(faux.state.callCount).toBe(2);
+        expect(events).toContainEqual(expect.objectContaining({
+          type: "span.compaction_summarize_end",
+          finish_reason: stopReason,
+        }));
+        expect(events.some((event) => event.type === "agent.thread_context_compacted")).toBe(false);
+        expect(warnings).toContainEqual(expect.stringContaining(`stop_reason=${stopReason}`));
+        expect(turnRequest).not.toContain("оборванная сводка");
+        expect(turnRequest).toContain("старый вопрос 1");
+        expect(messageIndex(events, "ответ по полной истории")).toBeGreaterThan(-1);
+      },
+    );
+
+    it("не записывает часть сводки, если ход отменили во время запроса сводки", async () => {
+      const { ctx, events, faux } = makeContext([fauxAssistantMessage("ответ после отмены")]);
+      events.unshift(...olderTurns());
+      ctx.pi!.model = { ...ctx.pi!.model, contextWindow: 10_000 };
+      const controller = attachAbort(ctx);
+      // Так отвечает Pi, когда отмена приходит посреди потока: текст до отмены и aborted.
+      const completeSimple = vi.spyOn(ctx.pi!.models, "completeSimple").mockImplementation(async () => {
+        controller.abort();
+        return fauxAssistantMessage("начало сводки", {
+          stopReason: "aborted",
+          errorMessage: "Request was aborted",
+        });
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      try {
+        await new PiHarness().run(ctx);
+      } finally {
+        warn.mockRestore();
+      }
+
+      expect(completeSimple).toHaveBeenCalledOnce();
+      expect(events.some((event) => event.type === "agent.thread_context_compacted")).toBe(false);
+      expect(faux.state.callCount).toBe(0);
+      expect(messageIndex(events, "ответ после отмены")).toBe(-1);
+    });
+
+    it("не записывает сводку своей политики, если ход отменили во время сжатия", async () => {
+      const { ctx, events, faux } = makeContext([fauxAssistantMessage("ответ после отмены")]);
+      const controller = attachAbort(ctx);
+      // Своя политика может не слушать сигнал и вернуть сводку, оборванную отменой.
+      const policy: PiCompactionPolicy = {
+        name: "test-policy",
+        shouldCompact: () => true,
+        compact: async () => {
+          controller.abort();
+          return {
+            summary: [{ type: "text", text: "частичная сводка" }],
+            pre_tokens: 10,
+            original_message_count: 4,
+            compacted_message_count: 1,
+          };
+        },
+      };
+
+      await new PiHarness({ compaction: policy }).run(ctx);
+
+      expect(events.some((event) => event.type === "agent.thread_context_compacted")).toBe(false);
+      expect(faux.state.callCount).toBe(0);
+    });
+
+    it.each([
+      ["одни мысли", () => fauxAssistantMessage([fauxThinking("думаю, но не отвечаю")])],
+      ["пустой ответ", () => fauxAssistantMessage([])],
+    ])("%s со stop бросает silent_stop без сжатия", async (_name, reply) => {
+      const { ctx, events, faux } = makeContext([]);
+      events.unshift(...olderTurns());
+      faux.setResponses([
+        reply(),
+        fauxAssistantMessage("сводка пустого ответа"),
+        fauxAssistantMessage("ответ после сводки"),
+      ]);
+
+      const run = new PiHarness().run(ctx);
+
+      await expect(run).rejects.toBeInstanceOf(ModelError);
+      await expect(run).rejects.toThrow(/^silent_stop: model returned finish_reason=stop/);
+      expect(faux.state.callCount).toBe(1);
+      expect(events.some((event) => event.type === "agent.thread_context_compacted")).toBe(false);
+    });
+  });
+
+  // Размер контекста берётся из расхода последнего ответа (span.model_request_end),
+  // а не из числа знаков истории. У faux-модели окно 128 000 и max_tokens 16 384,
+  // порог сжатия 128 000 - 16 384 - 4 096 = 107 520 токенов.
+  describe("расход последнего ответа и русский текст", () => {
+    const MCP_TOOL = "mcp__github__create_issue";
+    const noCompaction: PiCompactionPolicy = {
+      name: "disabled",
+      shouldCompact: () => false,
+      compact: async () => null,
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    function olderTurns(): SessionEvent[] {
+      return [
+        { type: "user.message", content: [{ type: "text", text: "старый вопрос 1" }] },
+        { type: "agent.message", message_id: "old-1", content: [{ type: "text", text: "старый ответ 1" }] },
+        { type: "user.message", content: [{ type: "text", text: "старый вопрос 2" }] },
+        { type: "agent.message", message_id: "old-2", content: [{ type: "text", text: "старый ответ 2" }] },
+      ];
+    }
+
+    function requestEnd(inputTokens: number, overrides: Record<string, unknown> = {}): SessionEvent {
+      return {
+        type: "span.model_request_end",
+        model: "faux",
+        model_usage: {
+          input_tokens: inputTokens,
+          output_tokens: 500,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        finish_reason: "stop",
+        is_error: false,
+        ...overrides,
+      } as SessionEvent;
+    }
+
+    function captureRequest(faux: ReturnType<typeof makeContext>["faux"]) {
+      const request = { maxTokens: undefined as number | undefined, firstUserMessage: "" };
+      faux.setResponses([
+        (context, options) => {
+          request.maxTokens = options?.maxTokens;
+          request.firstUserMessage = JSON.stringify(context.messages.find((message) => message.role === "user"));
+          return fauxAssistantMessage("ответ");
+        },
+      ]);
+      return request;
+    }
+
+    it("сжимает историю, когда расход последнего ответа дошёл до порога", async () => {
+      const { ctx, events, faux } = makeContext([]);
+      // Текст истории занимает пару десятков токенов. Её размер виден только из span.
+      events.unshift(...olderTurns(), requestEnd(110_000));
+      faux.setResponses([
+        fauxAssistantMessage("сводка по расходу"),
+        fauxAssistantMessage("ответ после сжатия"),
+      ]);
+
+      await new PiHarness().run(ctx);
+
+      expect(faux.state.callCount).toBe(2);
+      expect(events.filter((event) => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+    });
+
+    it.each(["off", "on"] as const)(
+      "отдаёт Pi расход последнего ответа, tool_search %s",
+      async (toolSearch) => {
+        const { ctx, events, faux } = makeContext([]);
+        if (toolSearch === "on") {
+          ctx.agent = { ...ctx.agent, metadata: { tool_search: "on" } };
+          ctx.tools = {
+            ...ctx.tools,
+            [MCP_TOOL]: {
+              description: "Create a GitHub issue",
+              inputSchema: z.object({ title: z.string() }),
+              execute: async () => ({ created: true }),
+            },
+          };
+        }
+        // Часы идут вперёд на каждом вызове. Подсказка tool_search собирается позже
+        // истории, но не должна выглядеть новее последнего ответа.
+        let clock = 1_800_000_000_000;
+        vi.spyOn(Date, "now").mockImplementation(() => (clock += 1_000));
+        events.unshift(...olderTurns(), requestEnd(120_000));
+        const request = captureRequest(faux);
+
+        await new PiHarness({ compaction: noCompaction }).run(ctx);
+
+        // Подсказка tool_search открывает запрос до сообщений истории.
+        if (toolSearch === "on") expect(request.firstUserMessage).toContain(MCP_TOOL);
+        // Pi оставляет на ответ остаток окна: 128 000 - 120 500 - 4 096.
+        expect(request.maxTokens).toBeLessThanOrEqual(128_000 - 120_500 - 4_096);
+      },
+    );
+
+    it.each([
+      ["до границы сжатия", (): SessionEvent[] => [
+        ...olderTurns(),
+        requestEnd(120_000),
+        {
+          type: "agent.thread_context_compacted",
+          summary: [{ type: "text", text: "сводка старых ходов" }],
+          original_message_count: 4,
+          compacted_message_count: 1,
+          trigger: "auto",
+          pre_tokens: 120_500,
+        } as SessionEvent,
+      ]],
+      ["прерванного запроса", (): SessionEvent[] => [
+        ...olderTurns(),
+        requestEnd(120_000, { finish_reason: "aborted" }),
+      ]],
+      ["запроса с ошибкой", (): SessionEvent[] => [
+        ...olderTurns(),
+        requestEnd(120_000, { finish_reason: "error", is_error: true }),
+      ]],
+      ["запроса без своего ответа", (): SessionEvent[] => [
+        ...olderTurns(),
+        { type: "user.message", content: [{ type: "text", text: "ещё вопрос" }] },
+        requestEnd(120_000, { finish_reason: "length" }),
+      ]],
+      ["запроса, после которого есть ответ без span", (): SessionEvent[] => [
+        ...olderTurns(),
+        requestEnd(120_000),
+        { type: "agent.message", message_id: "late", content: [{ type: "text", text: "ответ без span" }] },
+      ]],
+    ])("не берёт расход %s", async (_name, history) => {
+      const { ctx, events, faux } = makeContext([]);
+      events.unshift(...history());
+      const request = captureRequest(faux);
+
+      await new PiHarness({ compaction: noCompaction }).run(ctx);
+
+      expect(request.maxTokens).toBe(ctx.pi!.model.maxTokens);
+    });
+
+    it("сжимает русскую историю, которую оценка по 3,5 знака на токен недосчитывает", async () => {
+      const { ctx, events, faux } = makeContext([]);
+      const paragraph = "Сотрудник выходит на работу в понедельник. До этого отдел кадров готовит договор, "
+        + "пропуск и рабочее место, а руководитель пишет план на первую неделю. В первый день новичок "
+        + "получает ноутбук, учётные записи и список людей, к которым можно прийти с вопросом. ";
+      const text = paragraph.repeat(90);
+      events.unshift(
+        { type: "user.message", content: [{ type: "text", text }] },
+        { type: "agent.message", message_id: "ru-1", content: [{ type: "text", text }] },
+        { type: "user.message", content: [{ type: "text", text }] },
+        { type: "agent.message", message_id: "ru-2", content: [{ type: "text", text }] },
+      );
+      // Qwen 3.6 тратил токен примерно на 3,1 знака русского ответа (сессии 2026-10-16).
+      // Порог стоит на этом счёте с запасом, токен на 3 знака. Pi по 3,5 знака видит меньше.
+      const qwenTokens = Math.ceil(text.length * 4 / 3);
+      ctx.agent = {
+        ...ctx.agent,
+        context_management: { edits: [{ type: "compact", trigger: { type: "input_tokens", value: qwenTokens } }] },
+      } as HarnessContext["agent"];
+      faux.setResponses([
+        fauxAssistantMessage("сводка русской истории"),
+        fauxAssistantMessage("ответ после сжатия"),
+      ]);
+
+      await new PiHarness().run(ctx);
+
+      expect(faux.state.callCount).toBe(2);
+      expect(events.filter((event) => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+    });
   });
 });

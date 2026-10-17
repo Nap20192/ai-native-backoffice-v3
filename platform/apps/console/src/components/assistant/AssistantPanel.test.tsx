@@ -417,6 +417,32 @@ describe("панель: разговор", () => {
     await waitFor(() => expect(screen.queryByText("привет", { selector: "p" })).toBeNull());
   });
 
+  it("если запомненного разговора больше нет, начинает новый и отправляет туда", async () => {
+    // 2026-10-18: сессию из localStorage удалили, и каждое сообщение
+    // падало с 404 «Не удалось отправить сообщение».
+    const world = setupWorld();
+    server.use(
+      http.post("*/v1/sessions/:id/events", async ({ request, params }) => {
+        if (params.id === "sesn_gone") {
+          return HttpResponse.json({ type: "error", error: { type: "not_found_error", message: "Session not found" } }, { status: 404 });
+        }
+        world.eventBodies.push({ sessionId: String(params.id), body: (await request.json()) as Record<string, any> });
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+    localStorage.setItem("oma_assistant_chat:default", "sesn_gone");
+    const user = userEvent.setup();
+    renderPanel("/skills");
+    await user.click(screen.getByRole("button", { name: "открыть" }));
+    await user.type(await screen.findByRole("textbox", { name: "Сообщение ассистенту" }), "привет{Enter}");
+
+    await waitFor(() => expect(world.eventBodies).toHaveLength(1));
+    expect(world.sessionBodies).toHaveLength(1);
+    expect(world.eventBodies[0].sessionId).toBe("sesn_1");
+    expect(localStorage.getItem("oma_assistant_chat:default")).toBe("sesn_1");
+    expect(screen.queryByText("Не удалось отправить сообщение. Повторите")).toBeNull();
+  });
+
   it("восстанавливает прошлый разговор после перезагрузки страницы", async () => {
     setupWorld();
     const user = userEvent.setup();

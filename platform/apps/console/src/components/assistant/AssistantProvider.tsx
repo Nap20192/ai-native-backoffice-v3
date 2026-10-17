@@ -11,7 +11,7 @@ import {
 import { useLocation } from "react-router";
 
 import "../../styles/assistant.css";
-import { getActiveTenantId } from "../../lib/api";
+import { ApiError, getActiveTenantId } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import {
   createAssistantSession,
@@ -247,15 +247,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   /* ---------- Разговор ---------- */
 
+  // "gone": сессии разговора больше нет (её удалили или она из другого
+  // пространства). Тогда разговор начинается заново, а не падает с 404.
   const deliver = useCallback(
-    async (sid: string, fullText: string) => {
+    async (sid: string, fullText: string): Promise<"sent" | "gone" | "failed"> => {
       setSending(true);
       const localId = addOptimistic(fullText);
       try {
         await sendAssistantMessage(api, sid, fullText);
-      } catch {
+        return "sent";
+      } catch (err) {
         dropOptimistic(localId);
+        if (err instanceof ApiError && err.status === 404) return "gone";
         setSendError("Не удалось отправить сообщение. Повторите");
+        return "failed";
       } finally {
         setSending(false);
       }
@@ -279,8 +284,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       const full = withPageContext(trimmed, contextEnabled ? pageContext : null);
       setSendError(null);
       if (sessionId) {
-        await deliver(sessionId, full);
-        return;
+        if ((await deliver(sessionId, full)) !== "gone") return;
+        writeStore(chatKey(), null);
+        setSessionId(null);
       }
       setSending(true);
       try {

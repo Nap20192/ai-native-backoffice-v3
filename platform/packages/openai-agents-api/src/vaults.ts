@@ -25,7 +25,7 @@ function wire(vault: VaultView) {
   });
 }
 
-function failure(c: Context, status: 400 | 404 | 500 | 501, message: string, param: string | null = null) {
+function failure(c: Context, status: 400 | 404 | 409 | 500 | 501, message: string, param: string | null = null) {
   return c.json({ error: {
     message, type: status >= 500 ? "server_error" : "invalid_request_error",
     code: status === 501 ? "unsupported_feature" : status === 404 ? "resource_not_found" : null, param,
@@ -109,6 +109,8 @@ export function buildOpenAIVaultRoutes(source: VaultPortSource): Hono {
   app.delete("/:vaultId", async c => {
     const result = await port(c).deleteVault({ vaultId: c.req.param("vaultId") });
     if (result.type === "not_found") return failure(c, 404, "Vault not found");
+    // Live sessions or deployments use the vault (docs/plans/crud.md, 1.3).
+    if (result.type === "dependency_conflict") return failure(c, 409, result.message);
     if (result.vaultId !== c.req.param("vaultId")) return failure(c, 500, "The vault application returned a mismatched deletion result");
     return c.json({ id: result.vaultId, object: "vault.deleted", deleted: true });
   });

@@ -39,6 +39,7 @@ function run(packages: SandboxEnvironmentPackages, stubs: string[], exits: Recor
   if (script === null) throw new Error("expected a script");
   const result = spawnSync("/bin/sh", ["-c", script], { env: { PATH: bin }, encoding: "utf8" });
   return {
+    bin,
     status: result.status,
     stdout: result.stdout,
     stderr: result.stderr,
@@ -93,14 +94,35 @@ describe("buildEnvironmentSetupScript", () => {
 
   it("falls back to apk on Alpine images and to uv or pip for Python", () => {
     expect(run({ apt: ["jq"] }, ["apk"]).calls).toEqual(["apk [add] [--no-cache] [jq]"]);
-    expect(run({ pip: ["requests"] }, ["uv", "python3"]).calls).toEqual([
-      "uv [pip] [install] [--system] [--break-system-packages] [requests]",
+    const uv = run({ pip: ["requests"] }, ["uv", "python3"]);
+    expect(uv.calls).toEqual([
+      `uv [pip] [install] [--python] [${join(uv.bin, "python3")}] [--break-system-packages] [requests]`,
     ]);
     expect(run({ pip: ["requests"] }, ["python3"]).calls).toEqual([
       "python3 [-m] [pip] [--version]",
       "python3 [-m] [pip] [install] [--no-cache-dir] [--disable-pip-version-check] [-q] [requests]",
     ]);
     expect(run({ pip: ["requests"] }, []).stderr).toContain("python3 with pip (or uv) not found");
+  });
+
+  it("installs pip packages into the python3 first on PATH, the venv of a catalog image", () => {
+    // Catalog images put /usr/local/bin/python3 (their /opt/venv) first on
+    // PATH. `uv pip install --system` would skip that venv for the system
+    // Python, so both installers get the python3 that PATH resolves.
+    const viaUv = run({ pip: ["python-pptx>=1.0"] }, ["uv", "python3"]);
+    expect(viaUv.status).toBe(0);
+    expect(viaUv.calls[0]).toContain(`[--python] [${join(viaUv.bin, "python3")}]`);
+    expect(viaUv.calls[0]).not.toContain("[--system]");
+    const viaPip = run({ pip: ["python-pptx>=1.0"] }, ["python3"]);
+    expect(viaPip.status).toBe(0);
+    expect(viaPip.calls.at(-1)).toBe(
+      "python3 [-m] [pip] [install] [--no-cache-dir] [--disable-pip-version-check] [-q] [python-pptx>=1.0]",
+    );
+    // uv alone has no Python to install into.
+    const uvOnly = run({ pip: ["requests"] }, ["uv"]);
+    expect(uvOnly.status).toBe(127);
+    expect(uvOnly.calls).toEqual([]);
+    expect(uvOnly.stderr).toContain("python3 with pip (or uv) not found");
   });
 
   it("installs cargo, go and gem packages and stops a go loop at the first failure", () => {

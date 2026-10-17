@@ -15,6 +15,9 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { dependenciesPort } from "./dependency-port";
+import { memoryDocumentStorePort } from "./memories";
+
 
 export const memoryStoreStorePort = createPortToken<MemoryStoreStore>(
   "managed-agents.store.memory-stores",
@@ -30,7 +33,8 @@ export function memoryStoresModule(): AppModule {
       idGeneratorPort,
       memoryStoreStorePort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort, memoryDocumentStorePort],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const ids = port(idGeneratorPort);
       return {
@@ -39,8 +43,10 @@ export function memoryStoresModule(): AppModule {
           new MemoryStoresApplicationService({
             workspaceId: workspace.workspaceId,
             store: port(memoryStoreStorePort),
+            memories: optionalPort(memoryDocumentStorePort),
             clock: port(clockPort),
             ids: { nextMemoryStoreId: () => ids.next("memory_store") },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };

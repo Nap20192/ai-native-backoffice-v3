@@ -61,10 +61,10 @@ describe("platform MCP preview and confirm routes", () => {
     const notFound = await fake.confirm(missing);
     expect([notFound.status, notFound.body.error.type]).toEqual([404, "not_found"]);
 
-    const active = fake.addDeployment({ status: "active" });
-    const unpaused = fake.propose("update_deployment", { deployment_id: active.id, changes: { name: "x" } });
+    const archived = fake.addDeployment({ status: "paused", archived_at: "2026-10-01T00:00:00.000Z" });
+    const unpaused = fake.propose("update_deployment", { deployment_id: archived.id, changes: { name: "x" } });
     const preview = await fake.preview(unpaused);
-    expect(preview.body).toMatchObject({ class: "out_of_v1", reason: "Деплоймент работает. В первой версии ассистент меняет только деплоймент на паузе" });
+    expect(preview.body).toMatchObject({ class: "out_of_v1", reason: "Объект в архиве. В первой версии ассистент его не меняет" });
     const cls = await fake.confirm(unpaused);
     expect([cls.status, cls.body.error.type]).toEqual([409, "class"]);
 

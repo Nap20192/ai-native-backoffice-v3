@@ -210,6 +210,40 @@ describe("Environment-aware Session lifecycle router", () => {
   });
 });
 
+describe("Session stop after its Environment was deleted", () => {
+  // crud.md 1.3: an Environment is deleted only without live Sessions and open
+  // Environment Work, so its archived Sessions must still archive and delete.
+  it("stops through Session execution and still cleans up a deleted Session", async () => {
+    const calls: string[] = [];
+    const router = new EnvironmentAwareSessionLifecycleRouter({
+      environments: { find: async () => null },
+      runtime: {
+        sessionStarted: async () => {},
+        sessionStopped: async () => {
+          calls.push("runtime.stop");
+        },
+      },
+      selfHostedWork: {
+        enqueue: async () => ({ type: "queued", work: {} as never }),
+        stop: async () => {
+          calls.push("self-hosted.stop");
+          return { type: "not_found" };
+        },
+      },
+      cleanupSession: async ({ sessionId }) => {
+        calls.push(`cleanup:${sessionId}`);
+      },
+    });
+
+    for (const reason of ["archived", "deleted"] as const) {
+      await expect(
+        router.sessionStopped({ workspaceId: "workspace_01", sessionId: session.id, session, reason }),
+      ).resolves.toBeUndefined();
+    }
+    expect(calls).toEqual(["runtime.stop", "runtime.stop", `cleanup:${session.id}`]);
+  });
+});
+
 describe("Environment-aware Session event dispatch router", () => {
   it("delegates managed events to the host runtime", async () => {
     const accepted: object[] = [];

@@ -5,14 +5,16 @@
 import type { z } from "zod";
 
 /** Operation class, ordered from the safest to the one v1 refuses (2.2). */
-export type OpClass = "read" | "draft" | "create" | "update" | "out_of_v1";
+export type OpClass = "read" | "draft" | "create" | "update" | "danger" | "out_of_v1";
 
+/** `danger` (archive, delete) sits between an edit and out of v1 (crud.md 3.1). */
 export const OP_CLASS_ORDER: Readonly<Record<OpClass, number>> = {
   read: 0,
   draft: 1,
   create: 2,
   update: 3,
-  out_of_v1: 4,
+  danger: 4,
+  out_of_v1: 5,
 };
 
 export function maxOpClass(classes: readonly OpClass[]): OpClass {
@@ -163,10 +165,13 @@ export type BodyCheckName =
   | "model_card_safe"
   | "harness_card_safe"
   | "session_create"
-  | "session_event";
+  | "session_event"
+  | "session_update"
+  | "if_match_required"
+  | "session_resource";
 
 export interface RouteRule {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   /** Path pattern with `:param` segments and no query string. */
   pattern: string;
   bodyCheck: BodyCheckName | null;

@@ -23,6 +23,7 @@ describe("Managed Agents inbound port boundary", () => {
       "../src/ports/agents.ts",
       "../src/ports/common.ts",
       "../src/ports/credentials.ts",
+      "../src/ports/dependencies.ts",
       "../src/ports/deployment-runs.ts",
       "../src/ports/deployments.ts",
       "../src/ports/dreams.ts",

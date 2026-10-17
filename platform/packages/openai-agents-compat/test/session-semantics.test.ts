@@ -18,6 +18,7 @@ function fixture() {
       listSessions: async () => ({type:"page",page:{sessions:[native],nextCursor:null,previousCursor:null}}),
       deleteSession: async ({sessionId}) => ({type:"deleted",sessionId}),
       archiveSession: async()=>({type:"not_found"}),
+      unarchiveSession: async()=>({type:"not_found"}),
     },
     sessionEvents: {
       sendSessionEvents: async command => { sent.push(command); return {type:"accepted",events:[]}; },

@@ -40,6 +40,7 @@ function fixture() {
       listSessions: async () => ({ type: "page", page: { sessions: [...records.values()], nextCursor: null, previousCursor: null } }),
       deleteSession: async ({ sessionId }) => ({ type: "deleted", sessionId }),
       archiveSession: async () => ({ type: "not_found" }),
+      unarchiveSession: async () => ({ type: "not_found" }),
     },
     history: { loadSessionRuntimeHistory: async ({ sessionId }) => {
       if (sessionId === "legacy") return { type: "found", initialEvents: [], events: [{ id: "legacy-message", type: "user.message", content: [{ type: "text", text: "old" }] }] };

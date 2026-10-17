@@ -20,6 +20,10 @@ interface StoredMemoryVersion {
 }
 
 class InMemoryMemoryPersistence implements MemoryDocumentStore {
+  async deleteAllInStore(): Promise<{ deletedMemories: number; deletedVersions: number }> {
+    throw new Error("deleteAllInStore is not part of this test");
+  }
+
   readonly memories = new Map<string, StoredMemory>();
   readonly versions = new Map<string, StoredMemoryVersion>();
   forceConflict = false;

@@ -18,9 +18,13 @@ import type {
   ListEnvironmentsResult,
   RetrieveEnvironmentQuery,
   RetrieveEnvironmentResult,
+  UnarchiveEnvironmentCommand,
+  UnarchiveEnvironmentResult,
   UpdateEnvironmentCommand,
   UpdateEnvironmentResult,
 } from "../ports/environments";
+import type { DependenciesApplicationPort } from "../ports/dependencies";
+import { dependencyConflictOf } from "../dependencies/application";
 import type { EnvironmentStore } from "@open-managed-agents/environment-store";
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -137,6 +141,20 @@ export interface EnvironmentsApplicationServiceDependencies {
   ids: { nextEnvironmentId(): string };
   /** Optional: without it every config of the right shape is accepted. */
   configPolicy?: EnvironmentConfigPolicyPort;
+  /** Archive and delete check dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
+}
+
+function staleEnvironmentRevision(
+  environmentId: string,
+  expectedRevision: number | undefined,
+  revision: number,
+): { type: "precondition_failed"; message: string } | null {
+  if (expectedRevision === undefined || expectedRevision === revision) return null;
+  return {
+    type: "precondition_failed",
+    message: `Environment ${environmentId} is at revision ${revision}, not ${expectedRevision}`,
+  };
 }
 
 export class EnvironmentsApplicationService
@@ -298,6 +316,23 @@ export class EnvironmentsApplicationService
   async deleteEnvironment(
     command: DeleteEnvironmentCommand,
   ): Promise<DeleteEnvironmentResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      environmentId: command.environmentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleEnvironmentRevision(
+      command.environmentId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "environment",
+      id: command.environmentId,
+      operation: "delete",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.delete({
       workspaceId: this.dependencies.workspaceId,
       environmentId: command.environmentId,
@@ -310,6 +345,23 @@ export class EnvironmentsApplicationService
   async archiveEnvironment(
     command: ArchiveEnvironmentCommand,
   ): Promise<ArchiveEnvironmentResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      environmentId: command.environmentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleEnvironmentRevision(
+      command.environmentId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "environment",
+      id: command.environmentId,
+      operation: "archive",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.archive({
       workspaceId: this.dependencies.workspaceId,
       environmentId: command.environmentId,
@@ -317,6 +369,55 @@ export class EnvironmentsApplicationService
     });
     return result.type === "not_found"
       ? { type: "not_found" }
-      : { type: "archived", environment: result.record.environment };
+      : {
+          type: "archived",
+          environment: result.record.environment,
+          revision: result.record.revision,
+        };
+  }
+
+  async unarchiveEnvironment(
+    command: UnarchiveEnvironmentCommand,
+  ): Promise<UnarchiveEnvironmentResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      environmentId: command.environmentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleEnvironmentRevision(
+      command.environmentId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    if (current.environment.archivedAt === null) {
+      return {
+        type: "unarchived",
+        environment: current.environment,
+        revision: current.revision,
+      };
+    }
+    const replaced = await this.dependencies.store.replace({
+      workspaceId: this.dependencies.workspaceId,
+      environmentId: command.environmentId,
+      expectedRevision: current.revision,
+      next: {
+        ...current.environment,
+        archivedAt: null,
+        updatedAt: this.dependencies.clock.now().toISOString(),
+      },
+    });
+    if (replaced.type === "not_found") return { type: "not_found" };
+    if (replaced.type === "revision_conflict") {
+      return {
+        type: "precondition_failed",
+        message: `Environment ${command.environmentId} changed concurrently at revision ${replaced.actualRevision}`,
+      };
+    }
+    return {
+      type: "unarchived",
+      environment: replaced.record.environment,
+      revision: replaced.record.revision,
+    };
   }
 }

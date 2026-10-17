@@ -56,6 +56,7 @@ export interface Messages {
     dashboard: string;
     agents: string;
     sessions: string;
+    deployments: string;
     files: string;
     evalRuns: string;
     infrastructure: string;

@@ -67,8 +67,14 @@ export interface ListSessionRecords {
   createdBefore?: string;
   createdAtOrBefore?: string;
   deploymentId?: string;
+  /** Sessions in this environment (docs/plans/crud.md, 1.3). */
+  environmentId?: string;
+  /** Sessions with a `file` resource of this file. */
+  fileId?: string;
   memoryStoreId?: string;
   statuses?: SessionStatus[];
+  /** Sessions that list this vault in `vaultIds`. */
+  vaultId?: string;
   position?: SessionListPosition;
 }
 

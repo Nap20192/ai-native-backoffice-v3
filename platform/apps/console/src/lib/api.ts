@@ -12,6 +12,7 @@ const CONSOLE_API_BETAS = [
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { iterateJsonSseStream } from "./sse";
+import { dependenciesFromErrorBody, type DependencyReport } from "./dependencies";
 
 /**
  * Server error envelope after the Anthropic-compatible migration:
@@ -68,12 +69,19 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId?: string;
+  /** Список зависимостей из 409 `dependency_conflict_error` (docs/plans/crud.md, 1.2). */
+  readonly dependencies?: DependencyReport;
   /** Текст ошибки так, как его прислал сервер (обычно по-английски). В
    *  интерфейс не выводится, нужен для консоли браузера и отладки. */
   readonly serverMessage: string;
 
   constructor(
-    info: ApiErrorInfo & { status: number; requestId?: string; serverMessage?: string },
+    info: ApiErrorInfo & {
+      status: number;
+      requestId?: string;
+      serverMessage?: string;
+      dependencies?: DependencyReport;
+    },
   ) {
     super(info.message);
     this.name = "ApiError";
@@ -81,6 +89,7 @@ export class ApiError extends Error {
     this.code = info.code;
     this.requestId = info.requestId;
     this.serverMessage = info.serverMessage ?? info.message;
+    this.dependencies = info.dependencies;
   }
 }
 
@@ -125,6 +134,8 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   authentication_error: "Требуется вход. Войдите снова.",
   permission_error: "Недостаточно прав в рабочем пространстве.",
   not_found_error: "Запись не найдена.",
+  dependency_conflict_error: "Действие невозможно: объект используется другими записями.",
+  precondition_failed_error: "Объект изменили, обновите страницу.",
   rate_limit_error: "Слишком много запросов. Повторите позже.",
   overloaded_error: "Сервер перегружен. Повторите попытку позже.",
 };
@@ -140,6 +151,7 @@ const ERROR_STATUS_MESSAGES: Record<number, string> = {
   408: "Время ожидания истекло. Повторите попытку.",
   409: "Конфликт: запись уже существует или была изменена.",
   410: "Срок действия истёк или запись больше недоступна.",
+  412: "Объект изменили, обновите страницу.",
   413: "Слишком большой запрос.",
   415: "Неподдерживаемый формат данных.",
   422: "Данные не прошли проверку. Проверьте введённые значения.",
@@ -280,6 +292,7 @@ export function useApi() {
           serverMessage: info.message,
           status: res.status,
           requestId: typeof requestId === "string" ? requestId : undefined,
+          dependencies: dependenciesFromErrorBody(body) ?? undefined,
         });
       }
       // Successful response — clear the self-heal sentinel so a future stale

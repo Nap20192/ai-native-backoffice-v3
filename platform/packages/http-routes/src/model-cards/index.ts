@@ -3,7 +3,7 @@
 // Sourced from apps/main/src/routes/model-cards.ts. Same wire shape so the
 // Console Model Cards page works against CF and main-node without branching.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   ModelCardDuplicateModelIdError,
   ModelCardNotFoundError,
@@ -157,8 +157,75 @@ function parsePageQuery(c: {
   };
 }
 
+/** One row of a dependency report (docs/plans/crud.md, 1.2). */
+export interface ModelCardDependencyEntry {
+  kind: string;
+  id: string;
+  name: string | null;
+  status: string | null;
+  note: string | null;
+}
+
+export interface ModelCardDependencyReport {
+  blocking: ModelCardDependencyEntry[];
+  affected: ModelCardDependencyEntry[];
+  truncated: boolean;
+}
+
+/**
+ * Agents that use the card's `model_id` (table 1.3 of docs/plans/crud.md).
+ * Without it archive and delete check nothing.
+ */
+export type ModelCardDependencyCheck = (input: {
+  tenantId: string;
+  modelId: string;
+  operation: "archive" | "delete";
+}) => Promise<ModelCardDependencyReport>;
+
 export interface ModelCardRoutesDeps {
   modelCards: ModelCardService;
+  dependencies?: ModelCardDependencyCheck;
+}
+
+/**
+ * The dependency report of archiving or deleting one card. The last active
+ * card adds a row: without cards the server key ANTHROPIC_API_KEY works again.
+ */
+export async function modelCardDependencies(
+  deps: ModelCardRoutesDeps,
+  input: { tenantId: string; card: ModelCardRow; operation: "archive" | "delete" },
+): Promise<ModelCardDependencyReport> {
+  const report = deps.dependencies === undefined
+    ? { blocking: [], affected: [], truncated: false }
+    : await deps.dependencies({
+        tenantId: input.tenantId,
+        modelId: input.card.model_id,
+        operation: input.operation,
+      });
+  if (input.card.archived_at !== null) return report;
+  const active = (await deps.modelCards.list({ tenantId: input.tenantId }))
+    .filter((card) => card.archived_at === null);
+  if (active.length !== 1 || active[0]?.id !== input.card.id) return report;
+  return {
+    ...report,
+    affected: [
+      ...report.affected,
+      {
+        kind: "model_card",
+        id: input.card.id,
+        name: input.card.model_id,
+        status: "active",
+        note: "Снова включится ключ ANTHROPIC_API_KEY",
+      },
+    ],
+  };
+}
+
+function dependencyConflictBody(message: string, dependencies: ModelCardDependencyReport) {
+  return {
+    type: "error",
+    error: { type: "dependency_conflict_error", message, dependencies },
+  };
 }
 
 export function buildModelCardRoutes(deps: ModelCardRoutesDeps) {
@@ -263,7 +330,11 @@ export function buildModelCardRoutes(deps: ModelCardRoutesDeps) {
         ? { createdBefore: createdBeforeRes.value }
         : {}),
     });
-    const filteredItems = page.items.filter((card) => card.archived_at === null);
+    // Archived cards show only with include_archived=true (docs/plans/crud.md, 4.2).
+    const includeArchived = c.req.query("include_archived") === "true";
+    const filteredItems = includeArchived
+      ? page.items
+      : page.items.filter((card) => card.archived_at === null);
     const data = filteredItems.map(toApiShape);
     if (!page.nextCursor) return c.json({ data });
     return c.json({
@@ -344,19 +415,63 @@ export function buildModelCardRoutes(deps: ModelCardRoutesDeps) {
     }
   });
 
-  // DELETE /:id
-  app.delete("/:id", async (c) => {
-    const id = c.req.param("id");
+  // POST /:id/archive, /:id/unarchive and DELETE /:id read If-Match and
+  // check dependencies (docs/plans/crud.md, 2.8).
+  const changeState = async (
+    c: Context<Vars>,
+    action: "archive" | "unarchive" | "delete",
+  ): Promise<Response> => {
+    const id = c.req.param("id")!;
+    const tenantId = c.var.tenant_id;
+    const precondition = readIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json({ error: "If-Match must be the ETag of this model card" }, 400);
+    }
+    const expected = precondition.type === "time"
+      ? { expectedUpdatedAt: precondition.value }
+      : {};
     try {
-      await modelCards.delete({ tenantId: c.var.tenant_id, cardId: id });
-      return c.json({ type: "model_card_deleted", id });
+      const card = await modelCards.get({ tenantId, cardId: id });
+      if (card === null) throw new ModelCardNotFoundError();
+      if (precondition.type === "time"
+        && Date.parse(precondition.value) !== Date.parse(card.updated_at ?? card.created_at)) {
+        throw new ModelCardPreconditionFailedError();
+      }
+      if (action !== "unarchive") {
+        const report = await modelCardDependencies(deps, { tenantId, card, operation: action });
+        if (report.blocking.length > 0) {
+          return c.json(
+            dependencyConflictBody(
+              `Cannot ${action} model card ${id}: remove the blocking dependencies first`,
+              report,
+            ),
+            409,
+          );
+        }
+      }
+      if (action === "delete") {
+        await modelCards.delete({ tenantId, cardId: id, ...expected });
+        return c.json({ type: "model_card_deleted", id });
+      }
+      const changed = action === "archive"
+        ? await modelCards.archive({ tenantId, cardId: id, ...expected })
+        : await modelCards.unarchive({ tenantId, cardId: id, ...expected });
+      c.header("ETag", revisionTag(changed));
+      return c.json(toApiShape(changed));
     } catch (err) {
       if (err instanceof ModelCardNotFoundError) {
         return c.json({ error: "Model card not found" }, 404);
       }
+      if (err instanceof ModelCardPreconditionFailedError) {
+        return c.json({ error: err.message }, 412);
+      }
       throw err;
     }
-  });
+  };
+
+  app.post("/:id/archive", (c) => changeState(c, "archive"));
+  app.post("/:id/unarchive", (c) => changeState(c, "unarchive"));
+  app.delete("/:id", (c) => changeState(c, "delete"));
 
   // GET /:id/key — cleartext key (agent / internal consumers)
   app.get("/:id/key", async (c) => {

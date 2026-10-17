@@ -45,6 +45,7 @@ export const zhCN: Messages = {
     dashboard: "仪表盘",
     agents: "智能体",
     sessions: "会话",
+    deployments: "部署",
     files: "文件",
     evalRuns: "评估任务",
     infrastructure: "基础设施",

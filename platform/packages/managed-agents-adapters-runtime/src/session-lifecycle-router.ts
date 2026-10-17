@@ -77,12 +77,10 @@ export class EnvironmentAwareSessionLifecycleRouter
       workspaceId: input.workspaceId,
       environmentId: input.session.environmentId,
     });
-    if (environment === null) {
-      throw new Error(
-        `Environment ${input.session.environmentId} was not found while stopping Session ${input.sessionId}`,
-      );
-    }
-    if (environmentExecutionAuthority(environment) === "session_execution") {
+    // A deleted Environment had no live Sessions and no open Environment Work
+    // (docs/plans/crud.md, 1.3), so nothing runs on a self-hosted worker. Its
+    // archived Sessions still archive and delete through Session execution.
+    if (environment === null || environmentExecutionAuthority(environment) === "session_execution") {
       await this.dependencies.runtime.sessionStopped(input);
     } else {
       const result = await this.dependencies.selfHostedWork.stop({
@@ -93,9 +91,10 @@ export class EnvironmentAwareSessionLifecycleRouter
       if (result.type === "conflict") throw new Error(result.message);
     }
 
-    // The session row is already gone by the time this hook runs. Cleanup is
-    // therefore best-effort and must not turn a successful DELETE into a 500;
-    // operators can reconcile any provider-side orphan from its manifest.
+    // The application stops the session before it deletes the rows
+    // (docs/plans/crud.md, 2.2). Cleanup is best-effort and must not turn a
+    // DELETE into a 500; operators can reconcile any provider-side orphan
+    // from its manifest.
     if (input.reason === "deleted" && this.dependencies.cleanupSession) {
       try {
         await this.dependencies.cleanupSession({

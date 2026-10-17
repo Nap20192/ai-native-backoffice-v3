@@ -52,6 +52,8 @@ export interface SessionHeaderProps {
   onInterrupt(): void;
   onDefineOutcome(): void;
   onArchive(): void;
+  onUnarchive(): void;
+  onDelete(): void;
   onCopyEvents(): void;
   onDownloadEvents(): void;
   onDownloadTrace(): void;
@@ -285,6 +287,8 @@ export function SessionHeader({
   onInterrupt,
   onDefineOutcome,
   onArchive,
+  onUnarchive,
+  onDelete,
   onCopyEvents,
   onDownloadEvents,
   onDownloadTrace,
@@ -325,8 +329,15 @@ export function SessionHeader({
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={onDefineOutcome}>Задать результат…</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" disabled={archived} onSelect={onArchive}>
-                  Архивировать
+                {archived ? (
+                  <DropdownMenuItem onSelect={onUnarchive}>Вернуть из архива</DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem variant="destructive" onSelect={onArchive}>
+                    Архивировать
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  Удалить
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

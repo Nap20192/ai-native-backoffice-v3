@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { server } from "../../../mocks/server";
 
 const api = vi.hoisted(() => ({
-  sessions: { resources: { list: vi.fn(), add: vi.fn() } },
+  sessions: { resources: { list: vi.fn(), add: vi.fn(), delete: vi.fn() } },
   files: { upload: vi.fn() },
 }));
 vi.mock("../../../lib/useManagedApi", () => ({ useManagedApi: () => api }));
@@ -60,6 +60,7 @@ const report = {
 beforeEach(() => {
   api.sessions.resources.list.mockReset().mockResolvedValue({ data: [], next_page: null });
   api.sessions.resources.add.mockReset().mockResolvedValue({});
+  api.sessions.resources.delete.mockReset().mockResolvedValue({});
   api.files.upload.mockReset().mockResolvedValue({ id: "file_new", filename: "a.txt" });
   toast.success.mockReset();
   toast.error.mockReset();
@@ -383,5 +384,51 @@ describe("ResourcesTab: файлы агента", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+  });
+});
+
+describe("ResourcesTab: удаление ресурса", () => {
+  it("спрашивает подтверждение, удаляет ресурс и обновляет список", async () => {
+    api.sessions.resources.list
+      .mockResolvedValueOnce({ data: [fileResource, repoResource], next_page: null })
+      .mockResolvedValue({ data: [repoResource], next_page: null });
+    outputs([]);
+
+    render(<ResourcesTab sessionId="s1" />);
+    await screen.findByText("/mnt/session/uploads/file_1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Удалить ресурс /mnt/session/uploads/file_1" }));
+    const dialog = await screen.findByRole("dialog", { name: "Убрать ресурс из сессии?" });
+    expect(api.sessions.resources.delete).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Удалить" }));
+
+    await waitFor(() =>
+      expect(api.sessions.resources.delete).toHaveBeenCalledWith("sesrsc_1", { session_id: "s1" }),
+    );
+    await waitFor(() => expect(screen.queryByText("/mnt/session/uploads/file_1")).toBeNull());
+    expect(toast.success).toHaveBeenCalledWith("Ресурс удалён");
+  });
+
+  it("отмена ничего не удаляет", async () => {
+    api.sessions.resources.list.mockResolvedValue({ data: [fileResource], next_page: null });
+    outputs([]);
+
+    render(<ResourcesTab sessionId="s1" />);
+    await screen.findByText("/mnt/session/uploads/file_1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Удалить ресурс /mnt/session/uploads/file_1" }));
+    const dialog = await screen.findByRole("dialog", { name: "Убрать ресурс из сессии?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+
+    expect(api.sessions.resources.delete).not.toHaveBeenCalled();
+  });
+
+  it("у файлов агента кнопки удаления ресурса нет", async () => {
+    outputs([report]);
+
+    render(<ResourcesTab sessionId="s1" />);
+    await screen.findByText("/mnt/session/outputs/SMR_report.md");
+
+    expect(screen.queryByRole("button", { name: /Удалить ресурс/ })).toBeNull();
   });
 });

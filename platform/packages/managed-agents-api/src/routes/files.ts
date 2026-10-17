@@ -10,7 +10,7 @@ import {
   fileMetadataResponseSchema,
   filePageResponseSchema,
 } from "../contracts/files";
-import { apiError, invalidRequest, notFound } from "../errors";
+import { apiError, dependencyConflict, invalidRequest, notFound } from "../errors";
 import {
   toDeleteFileCommand,
   toDownloadFileQuery,
@@ -131,6 +131,9 @@ export function buildFileRoutes(
     );
     if (result.type === "not_found") {
       return c.json(notFound(`File ${c.req.param("fileId")} was not found`), 404);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
     const response = deletedFileResponseSchema.safeParse({
       id: result.fileId,

@@ -10,6 +10,8 @@ import type { AgentModelInput } from "../ports/agents";
 import type {
   ArchiveSessionCommand,
   ArchiveSessionResult,
+  UnarchiveSessionCommand,
+  UnarchiveSessionResult,
   CreateSessionCommand,
   CreateSessionResult,
   DeleteSessionCommand,
@@ -505,27 +507,99 @@ export class SessionsApplicationService
     return { type: "updated", session: replaced.record.session };
   }
 
+  /** The 412 answer when `If-Match` names another revision. */
+  private staleRevision(
+    sessionId: string,
+    expectedRevision: number | undefined,
+    revision: number,
+  ): { type: "precondition_failed"; message: string } | null {
+    if (expectedRevision === undefined || expectedRevision === revision) return null;
+    return {
+      type: "precondition_failed",
+      message: `Session ${sessionId} is at revision ${revision}, not ${expectedRevision}`,
+    };
+  }
+
+  /**
+   * Archive stops a turn in progress before the write, so no turn keeps
+   * writing to an archived session (docs/plans/crud.md, 2.2).
+   */
   async archiveSession(
     command: ArchiveSessionCommand,
   ): Promise<ArchiveSessionResult> {
+    const current = await this.dependencies.store.findCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      sessionId: command.sessionId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = this.staleRevision(
+      command.sessionId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    await this.dependencies.lifecycle.sessionStopped({
+      workspaceId: this.dependencies.workspaceId,
+      sessionId: command.sessionId,
+      session: current.session,
+      reason: "archived",
+    });
     const result = await this.dependencies.store.archiveCurrent({
       workspaceId: this.dependencies.workspaceId,
       sessionId: command.sessionId,
       archivedAt: this.dependencies.clock.now().toISOString(),
     });
-    if (result.type === "archived") {
-      await this.dependencies.lifecycle.sessionStopped({
-        workspaceId: this.dependencies.workspaceId,
-        sessionId: command.sessionId,
-        session: result.record.session,
-        reason: "archived",
-      });
-    }
     return result.type === "not_found"
       ? { type: "not_found" }
-      : { type: "archived", session: result.record.session };
+      : {
+          type: "archived",
+          session: result.record.session,
+          revision: result.record.revision,
+        };
   }
 
+  async unarchiveSession(
+    command: UnarchiveSessionCommand,
+  ): Promise<UnarchiveSessionResult> {
+    const current = await this.dependencies.store.findCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      sessionId: command.sessionId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = this.staleRevision(
+      command.sessionId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    if (current.session.archivedAt === null) {
+      return { type: "unarchived", session: current.session, revision: current.revision };
+    }
+    const replaced = await this.dependencies.store.replaceCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      sessionId: command.sessionId,
+      expectedRevision: current.revision,
+      next: {
+        ...current.session,
+        archivedAt: null,
+        updatedAt: this.dependencies.clock.now().toISOString(),
+      },
+    });
+    if (replaced.type === "not_found") return { type: "not_found" };
+    if (replaced.type === "revision_conflict") {
+      return {
+        type: "precondition_failed",
+        message: `Session ${command.sessionId} changed concurrently at revision ${replaced.actualRevision}`,
+      };
+    }
+    return {
+      type: "unarchived",
+      session: replaced.record.session,
+      revision: replaced.record.revision,
+    };
+  }
+
+  /** Delete stops a turn in progress before the rows go. */
   async deleteSession(
     command: DeleteSessionCommand,
   ): Promise<DeleteSessionResult> {
@@ -534,18 +608,22 @@ export class SessionsApplicationService
       sessionId: command.sessionId,
     });
     if (current === null) return { type: "not_found" };
+    const stale = this.staleRevision(
+      command.sessionId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    await this.dependencies.lifecycle.sessionStopped({
+      workspaceId: this.dependencies.workspaceId,
+      sessionId: command.sessionId,
+      session: current.session,
+      reason: "deleted",
+    });
     const result = await this.dependencies.store.deleteCurrent({
       workspaceId: this.dependencies.workspaceId,
       sessionId: command.sessionId,
     });
-    if (result.type === "deleted") {
-      await this.dependencies.lifecycle.sessionStopped({
-        workspaceId: this.dependencies.workspaceId,
-        sessionId: command.sessionId,
-        session: current.session,
-        reason: "deleted",
-      });
-    }
     return result.type === "not_found"
       ? { type: "not_found" }
       : { type: "deleted", sessionId: command.sessionId };

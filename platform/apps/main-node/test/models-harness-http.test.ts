@@ -235,7 +235,7 @@ describe("/v1/oma/harness_cards", () => {
     const page = await json<{ data: Array<{ id: string }>; next_cursor: string | null }>(call(cp, "GET", "/v1/oma/harness_cards?q=AIDER"));
     expect(page).toEqual({ data: [expect.objectContaining({ id: saved.id })], next_cursor: null });
 
-    expect(await json(call(cp, "DELETE", `/v1/oma/harness_cards/${saved.id}`))).toEqual({ type: "harness_card_deleted", id: saved.id });
+    expect(await json(call(cp, "POST", `/v1/oma/harness_cards/${saved.id}/archive`))).toMatchObject({ id: saved.id, archived_at: expect.any(String) });
     const after = await json<{ data: Entry[] }>(call(cp, "GET", "/v1/oma/harnesses"));
     expect(after.data.some((entry) => entry.id === "aider-local")).toBe(false);
     expect(await json(call(cp, "GET", `/v1/oma/harness_cards/${saved.id}`))).toMatchObject({ archived_at: expect.any(String) });
@@ -335,7 +335,12 @@ describe("agent guard on /v1/agents", () => {
     });
     expect(created.status).toBeLessThan(300);
     const { id } = await created.json() as { id: string };
-    expect((await call(cp, "DELETE", `/v1/oma/harness_cards/${card.id}`)).status).toBe(200);
+    // Archive and delete now refuse a card that a live agent uses
+    // (docs/plans/crud.md, 1.3). A card archived before that rule still
+    // exists in old data, so the test archives it in the table directly.
+    expect((await call(cp, "POST", `/v1/oma/harness_cards/${card.id}/archive`)).status).toBe(409);
+    const db = await createBetterSqlite3SqlClient(join(dirs.at(-1)!, "oma.db"));
+    await db.prepare("UPDATE harness_cards SET archived_at = ? WHERE id = ?").bind(Date.now(), card.id).run();
 
     // The form sends the stored model and the whole _oma block with every save.
     type Stored = { version: number; model: unknown; _oma: { harness: string; acp: { agent: Record<string, unknown> } } };

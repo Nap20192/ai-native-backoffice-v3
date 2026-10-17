@@ -20,9 +20,11 @@ export type {
   SandboxWorkspaceBackupPort,
   SandboxManagedWorkspaceLifecyclePort,
   SandboxSessionOutputMountPort,
+  SandboxEnvironmentSnapshotPort,
 } from "./ports";
 export {
   supportsDuplexProcess,
+  supportsEnvironmentSnapshot,
   supportsManagedWorkspaceLifecycle,
   supportsSandboxRuntime,
   supportsSessionOutputMount,
@@ -59,8 +61,15 @@ export {
   buildEnvironmentSetupScript,
   environmentPackageLists,
   PACKAGE_MANAGER_HOSTS,
+  SandboxEnvironmentError,
+  type SandboxEgress,
+  type SandboxEnvironmentErrorCode,
+  type SandboxEnvironmentImage,
   type SandboxEnvironmentNetworking,
   type SandboxEnvironmentPackages,
+  type SandboxEnvironmentSnapshot,
   type SandboxEnvironmentSpec,
   type SandboxPackageManager,
+  type SandboxShell,
+  type SandboxVmResources,
 } from "./environment-setup";

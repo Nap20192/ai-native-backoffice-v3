@@ -20,6 +20,7 @@ import {
   type IdGeneratorPort,
 } from "@open-managed-agents/app/capabilities";
 import { agentStorePort } from "@open-managed-agents/app/modules/agents";
+import { dependenciesModule } from "@open-managed-agents/app/modules/dependencies";
 import { deploymentStorePort } from "@open-managed-agents/app/modules/deployments";
 import { deploymentRunStorePort } from "@open-managed-agents/app/modules/deployment-runs";
 import { dreamStorePort } from "@open-managed-agents/app/modules/dreams";
@@ -206,6 +207,8 @@ export function createNodePlatform(
           providePort(sessionThreadStorePort, stores.sessionThreads),
           providePort(sessionThreadEventStorePort, stores.sessionEvents),
           providePort(vaultStorePort, stores.vaults),
+          // Archive and delete check dependencies (docs/plans/crud.md, A2).
+          dependenciesModule(),
           ...(options.modules?.(scope) ?? []),
           ...managedAgentsFeatureModules(options.features),
         ],

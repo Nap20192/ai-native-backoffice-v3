@@ -11,9 +11,19 @@ import type {
   PlatformMcpLibs,
   RouteRule,
 } from "../ports";
+import type { DependencyEntry } from "../classify";
 import { cleanObject, type ShapeKind } from "../response-shape";
 
 export type ToolGroup = "read" | "draft" | "write" | "batch";
+
+/** A dependency report of archive or delete (crud.md 1.2). */
+export interface DependencyReport {
+  blocking: DependencyEntry[];
+  affected: DependencyEntry[];
+  truncated: boolean;
+}
+
+export const EMPTY_DEPENDENCIES: DependencyReport = { blocking: [], affected: [], truncated: false };
 
 /** How a write carries the revision the user confirmed (2.5, step 8). */
 export type Precondition =
@@ -74,6 +84,10 @@ export interface OpPlan {
   argsStale?: boolean;
   /** Extra lines for the console card, outside the digest. */
   details?: Record<string, unknown>;
+  /** Archive and delete: the report read for this plan (crud.md 3.4). It goes into the digest. */
+  dependencies?: DependencyReport | null;
+  /** Delete: the card says «Это нельзя отменить». */
+  irreversible?: boolean;
 }
 
 export type WriteOutcome =
@@ -90,6 +104,8 @@ export type WriteOutcome =
 
 export interface WriteOp<A> {
   targetKind: string;
+  /** The kind from the arguments, for tools that take any of several kinds. */
+  kindOf?(args: A): string;
   /** The existing object the operation changes, for the batch check; null for a create. */
   targetKey(args: A): string | null;
   plan(ctx: OpContext, args: A): Promise<OpPlan>;
@@ -105,6 +121,12 @@ export interface ToolDef<A = any> {
   precondition: Precondition | null;
   run?(ctx: CallContext, args: A): Promise<ToolOutput>;
   op?: WriteOp<A>;
+}
+
+/** Kind of the operation target: from the arguments when the tool takes several kinds. */
+export function targetKindOf(tool: ToolDef, args: unknown): string | null {
+  if (!tool.op) return null;
+  return tool.op.kindOf ? tool.op.kindOf(args) : tool.op.targetKind;
 }
 
 export const REF_PREFIX = "$ref:";
@@ -182,6 +204,27 @@ export function mergeAfter(before: unknown, patch: unknown): unknown {
   return out;
 }
 
+function entryOf(value: unknown): DependencyEntry | null {
+  if (!isRecord(value) || typeof value.kind !== "string" || typeof value.id !== "string") return null;
+  const text = (field: unknown) => (typeof field === "string" ? field : null);
+  return { kind: value.kind, id: value.id, name: text(value.name), status: text(value.status), note: text(value.note) };
+}
+
+/** The report from a route answer; anything malformed counts as no rows. */
+export function dependencyReportOf(value: unknown): DependencyReport {
+  const list = (rows: unknown) => (Array.isArray(rows) ? rows.map(entryOf).filter((row): row is DependencyEntry => row !== null) : []);
+  return isRecord(value)
+    ? { blocking: list(value.blocking), affected: list(value.affected), truncated: value.truncated === true }
+    : EMPTY_DEPENDENCIES;
+}
+
+/** Kind, id and status of every row: what the digest holds (crud.md 3.4). */
+export function dependencyDigest(report: DependencyReport | null | undefined): unknown {
+  if (!report) return null;
+  const rows = (entries: readonly DependencyEntry[]) => entries.map((entry) => ({ kind: entry.kind, id: entry.id, status: entry.status }));
+  return { blocking: rows(report.blocking), affected: rows(report.affected), truncated: report.truncated };
+}
+
 /** Revision from `ETag`, otherwise the fallback field value. */
 export function revisionOf(response: InnerResponse, fallback?: unknown): string | null {
   const etag = response.headers.get("etag");
@@ -223,7 +266,7 @@ export class RouteError extends Error {
   }
 }
 
-/** Outcome of a nested write. 409 and 412 mean the object changed. */
+/** Outcome of a nested write. 409 and 412 mean the object changed; a 409 with dependencies means one appeared. */
 export function writeOutcome(
   ctx: CallContext,
   response: InnerResponse,

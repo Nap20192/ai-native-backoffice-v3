@@ -1,3 +1,5 @@
+import type { DependenciesApplicationPort } from "../ports/dependencies";
+import { dependencyConflictOf } from "../dependencies/application";
 import type { Skill, SkillVersion } from "@open-managed-agents/domain/skills";
 import type { SkillStore } from "@open-managed-agents/skill-store";
 import type {
@@ -82,6 +84,8 @@ export interface SkillVersionsApplicationServiceDependencies {
     nextSkillVersionId(): string;
     nextSkillVersion(): string;
   };
+  /** Delete checks dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
 }
 
 export class SkillVersionsApplicationService
@@ -220,6 +224,25 @@ export class SkillVersionsApplicationService
       version: command.version,
     });
     if (target === null) return { type: "not_found" };
+    // Only workspace skills change. A platform skill (source anthropic)
+    // answers not_found before the dependency check, as it did before.
+    if (current.skill.source !== "custom") return { type: "not_found" };
+    if (
+      command.expectedRevision !== undefined
+      && command.expectedRevision !== current.revision
+    ) {
+      return {
+        type: "precondition_failed",
+        message: `Skill ${command.skillId} is at revision ${current.revision}, not ${command.expectedRevision}`,
+      };
+    }
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "skill_version",
+      id: command.skillId,
+      operation: "delete",
+      version: command.version,
+    });
+    if (conflict !== null) return conflict;
     let latestVersion = current.skill.latestVersion;
     if (latestVersion === command.version) {
       const predecessor =
@@ -249,7 +272,11 @@ export class SkillVersionsApplicationService
         message: `Skill changed concurrently at revision ${result.actualRevision}`,
       };
     }
-    return { type: "deleted", version: command.version };
+    return {
+      type: "deleted",
+      version: command.version,
+      skillRevision: result.skill.revision,
+    };
   }
 
   async downloadSkillVersion(

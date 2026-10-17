@@ -16,6 +16,8 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { dependenciesPort } from "./dependency-port";
+
 
 export const fileStorePort = createPortToken<FileStore>(
   "managed-agents.store.files",
@@ -36,7 +38,8 @@ export function filesModule(): AppModule {
       fileStorePort,
       fileContentStorePort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const ids = port(idGeneratorPort);
       return {
@@ -48,6 +51,7 @@ export function filesModule(): AppModule {
             content: port(fileContentStorePort),
             clock: port(clockPort),
             ids: { nextFileId: () => ids.next("file") },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };

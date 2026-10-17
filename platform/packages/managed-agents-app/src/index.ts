@@ -16,6 +16,8 @@ export interface AppPortBinding<Port = unknown> {
 
 export interface AppModuleContext {
   port<Port>(token: PortToken<Port>): Port;
+  /** A Port from `optional`: undefined when no module provides it. */
+  optionalPort<Port>(token: PortToken<Port>): Port | undefined;
 }
 
 export interface AppModuleInstance {
@@ -28,6 +30,8 @@ export interface AppModule {
   name: string;
   provides: readonly PortToken<unknown>[];
   requires?: readonly PortToken<unknown>[];
+  /** Ports the module uses when the app has them; set up after their provider. */
+  optional?: readonly PortToken<unknown>[];
   setup(context: AppModuleContext): AppModuleInstance;
 }
 
@@ -164,6 +168,7 @@ function moduleOrder(modules: readonly AppModule[]): AppModule[] {
       providers.set(token, module);
     }
     for (const token of module.requires ?? []) assertToken(token);
+    for (const token of module.optional ?? []) assertToken(token);
   }
 
   for (const module of modules) {
@@ -189,7 +194,7 @@ function moduleOrder(modules: readonly AppModule[]): AppModule[] {
       );
     }
     visiting.add(module);
-    for (const token of module.requires ?? []) {
+    for (const token of [...(module.requires ?? []), ...(module.optional ?? [])]) {
       const provider = providers.get(token);
       if (provider) visit(provider);
     }
@@ -252,6 +257,7 @@ export function createApp(options: CreateAppOptions): App {
 
   for (const module of orderedModules) {
     const allowed = new Set(module.requires ?? []);
+    const allowedOptional = new Set(module.optional ?? []);
     const instance = module.setup({
       port<Port>(token: PortToken<Port>): Port {
         assertToken(token);
@@ -262,6 +268,16 @@ export function createApp(options: CreateAppOptions): App {
           );
         }
         return ports.get(token) as Port;
+      },
+      optionalPort<Port>(token: PortToken<Port>): Port | undefined {
+        assertToken(token);
+        if (!allowedOptional.has(token) && !allowed.has(token)) {
+          throw new AppCompositionError(
+            "undeclared_port_access",
+            `Module ${module.name} accessed undeclared Port ${token.name}`,
+          );
+        }
+        return ports.get(token) as Port | undefined;
       },
     });
     validateInstance(module, instance);

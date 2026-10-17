@@ -15,6 +15,7 @@ import {
 import {
   apiError,
   conflict,
+  dependencyConflict,
   invalidRequest,
   notFound,
   preconditionFailed,
@@ -192,14 +193,25 @@ export function buildEnvironmentRoutes(
   });
 
   app.delete("/:environmentId", async (c) => {
-    const result = await resolveApplicationPort(source, c).deleteEnvironment(
-      toDeleteEnvironmentCommand(c.req.param("environmentId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).deleteEnvironment({
+      ...toDeleteEnvironmentCommand(c.req.param("environmentId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(
         notFound(`Environment ${c.req.param("environmentId")} was not found`),
         404,
       );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
 
     const response = deletedEnvironmentResponseSchema.safeParse({
@@ -217,14 +229,25 @@ export function buildEnvironmentRoutes(
   });
 
   app.post("/:environmentId/archive", async (c) => {
-    const result = await resolveApplicationPort(source, c).archiveEnvironment(
-      toArchiveEnvironmentCommand(c.req.param("environmentId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).archiveEnvironment({
+      ...toArchiveEnvironmentCommand(c.req.param("environmentId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(
         notFound(`Environment ${c.req.param("environmentId")} was not found`),
         404,
       );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
 
     const response = environmentResponseSchema.safeParse(
@@ -234,6 +257,37 @@ export function buildEnvironmentRoutes(
       return c.json(apiError("Application returned an invalid environment"), 500);
     }
 
+    setRevisionETag(c, result.revision);
+    return c.json(response.data, 200);
+  });
+
+  app.post("/:environmentId/unarchive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).unarchiveEnvironment({
+      environmentId: c.req.param("environmentId"),
+      ...expectedRevisionOf(precondition),
+    });
+    if (result.type === "not_found") {
+      return c.json(
+        notFound(`Environment ${c.req.param("environmentId")} was not found`),
+        404,
+      );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+
+    const response = environmentResponseSchema.safeParse(
+      toEnvironmentResponse(result.environment),
+    );
+    if (!response.success) {
+      return c.json(apiError("Application returned an invalid environment"), 500);
+    }
+
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 

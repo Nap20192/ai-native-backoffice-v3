@@ -31,6 +31,7 @@ function memoryStores(
     listMemoryStores: unexpected,
     deleteMemoryStore: unexpected,
     archiveMemoryStore: unexpected,
+    unarchiveMemoryStore: unexpected,
     ...overrides,
   };
 }

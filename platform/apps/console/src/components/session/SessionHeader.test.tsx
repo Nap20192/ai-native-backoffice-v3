@@ -90,6 +90,8 @@ function props(overrides: Partial<SessionHeaderProps> = {}): SessionHeaderProps 
     onInterrupt: vi.fn(),
     onDefineOutcome: vi.fn(),
     onArchive: vi.fn(),
+    onUnarchive: vi.fn(),
+    onDelete: vi.fn(),
     onCopyEvents: vi.fn(),
     onDownloadEvents: vi.fn(),
     onDownloadTrace: vi.fn(),
@@ -347,7 +349,11 @@ describe("SessionHeader: меню «Действия»", () => {
       "data-variant",
       "destructive",
     );
-    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    expect(screen.getByRole("menuitem", { name: "Удалить" })).toHaveAttribute(
+      "data-variant",
+      "destructive",
+    );
+    expect(screen.getAllByRole("menuitem")).toHaveLength(4);
     expect(screen.queryByRole("menuitem", { name: /бюджет/i })).toBeNull();
     expect(screen.getAllByRole("separator").length).toBeGreaterThanOrEqual(1);
   });
@@ -359,6 +365,7 @@ describe("SessionHeader: меню «Действия»", () => {
       ["Прервать", p.onInterrupt],
       ["Задать результат…", p.onDefineOutcome],
       ["Архивировать", p.onArchive],
+      ["Удалить", p.onDelete],
     ] as const) {
       await userEvent.click(screen.getByRole("button", { name: "Действия" }));
       await userEvent.click(await screen.findByRole("menuitem", { name: label }));
@@ -377,15 +384,14 @@ describe("SessionHeader: меню «Действия»", () => {
     );
   });
 
-  it("в архивной сессии «Архивировать» недоступно", async () => {
-    renderHeader({ session: { ...session, archived_at: "2026-10-16T00:00:00.000Z" } });
+  it("в архивной сессии вместо «Архивировать» стоит «Вернуть из архива»", async () => {
+    const { props: p } = renderHeader({ session: { ...session, archived_at: "2026-10-16T00:00:00.000Z" } });
 
     await userEvent.click(screen.getByRole("button", { name: "Действия" }));
 
-    expect(await screen.findByRole("menuitem", { name: "Архивировать" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(screen.queryByRole("menuitem", { name: "Архивировать" })).toBeNull();
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Вернуть из архива" }));
+    expect(p.onUnarchive).toHaveBeenCalledOnce();
   });
 });
 

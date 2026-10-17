@@ -31,6 +31,9 @@ export function makeVaultsPort(
     archiveVault: async () => {
       throw new Error("unexpected archiveVault application port call");
     },
+    unarchiveVault: async () => {
+      throw new Error("unexpected unarchiveVault application port call");
+    },
     ...overrides,
   };
 }

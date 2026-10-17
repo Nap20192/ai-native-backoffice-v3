@@ -740,6 +740,64 @@ export class DeploymentsApplicationService
     });
   }
 
+  /**
+   * Restore from the archive (docs/plans/crud.md, 1.1). The deployment comes
+   * back paused. An archived or missing agent or environment refuses it with
+   * the same error type as unpause.
+   */
+  async unarchiveDeployment(
+    command: DeploymentCommand,
+  ): Promise<ChangeDeploymentStateResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      deploymentId: command.deploymentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleRevision(command, current.revision);
+    if (stale !== null) return stale;
+    if (current.deployment.archivedAt === null) {
+      return {
+        type: "changed",
+        deployment: current.deployment,
+        revision: current.revision,
+      };
+    }
+    const agent = await this.dependencies.agents.find({
+      workspaceId: this.dependencies.workspaceId,
+      selector: {
+        kind: "versioned",
+        agentId: current.deployment.agent.id,
+        version: current.deployment.agent.version,
+      },
+    });
+    const environment = await this.dependencies.environments.find({
+      workspaceId: this.dependencies.workspaceId,
+      environmentId: current.deployment.environmentId,
+    });
+    const blocked: DeploymentPauseErrorType | null =
+      agent === null || agent.archivedAt !== null
+        ? "agent_archived_error"
+        : environment === null
+          ? "environment_not_found_error"
+          : environment.archivedAt !== null
+            ? "environment_archived_error"
+            : null;
+    if (blocked !== null) {
+      return {
+        type: "conflict",
+        message: `Deployment ${command.deploymentId} cannot leave the archive: ${blocked}`,
+      };
+    }
+    const timestamp = this.dependencies.clock.now().toISOString();
+    return this.replaceState(current, {
+      ...current.deployment,
+      archivedAt: null,
+      pausedReason: { kind: "manual" },
+      status: "paused",
+      updatedAt: timestamp,
+    });
+  }
+
   async runDeployment(
     command: DeploymentCommand,
   ): Promise<RunDeploymentResult> {

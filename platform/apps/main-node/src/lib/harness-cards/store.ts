@@ -33,7 +33,12 @@ export interface HarnessCardStore {
     body: unknown,
     options?: HarnessCardUpdateOptions,
   ): Promise<HarnessCard>;
-  archive(workspaceId: string, id: string): Promise<HarnessCard>;
+  /** Archive keeps the row: a turn of an old agent still reads the card. */
+  archive(workspaceId: string, id: string, options?: HarnessCardUpdateOptions): Promise<HarnessCard>;
+  /** Restore from the archive. A card out of the archive stays as it is. */
+  unarchive(workspaceId: string, id: string, options?: HarnessCardUpdateOptions): Promise<HarnessCard>;
+  /** Removes the row (docs/plans/crud.md, 2.8). */
+  delete(workspaceId: string, id: string, options?: HarnessCardUpdateOptions): Promise<void>;
 }
 
 export interface HarnessCardUpdateOptions {
@@ -215,7 +220,7 @@ export function createHarnessCardStore(
         throw stale(row.name);
       }
       if (row.archived_at !== null) {
-        throw new HarnessCardError(409, `Harness «${row.name}» удалён, изменить его нельзя`);
+        throw new HarnessCardError(409, `Harness «${row.name}» в архиве, изменить его нельзя`);
       }
       const current = toCard(row);
       const next: HarnessCardCreateInput = {
@@ -253,18 +258,57 @@ export function createHarnessCardStore(
       return { ...current, ...next, updated_at: new Date(time).toISOString() };
     },
 
-    async archive(workspaceId, id) {
+    async archive(workspaceId, id, changeOptions = {}) {
       const row = await existing(workspaceId, id);
+      const expected = expectedTime(row, changeOptions);
       if (row.archived_at !== null) return toCard(row);
-      const time = now();
-      await sql
-        .prepare("UPDATE harness_cards SET archived_at = ?, updated_at = ? WHERE workspace_id = ? AND id = ? AND archived_at IS NULL")
-        .bind(time, time, workspaceId, id)
+      const time = Math.max(now(), Number(row.updated_at) + 1);
+      const result = await sql
+        .prepare(
+          `UPDATE harness_cards SET archived_at = ?, updated_at = ? WHERE workspace_id = ? AND id = ? AND archived_at IS NULL${expected === null ? "" : " AND updated_at = ?"}`,
+        )
+        .bind(time, time, workspaceId, id, ...(expected === null ? [] : [expected]))
         .run();
+      if (expected !== null && result.meta.changes === 0) throw stale(row.name);
       const iso = new Date(time).toISOString();
       return { ...toCard(row), archived_at: iso, updated_at: iso };
     },
+
+    async unarchive(workspaceId, id, changeOptions = {}) {
+      const row = await existing(workspaceId, id);
+      const expected = expectedTime(row, changeOptions);
+      if (row.archived_at === null) return toCard(row);
+      const time = Math.max(now(), Number(row.updated_at) + 1);
+      const result = await sql
+        .prepare(
+          `UPDATE harness_cards SET archived_at = NULL, updated_at = ? WHERE workspace_id = ? AND id = ?${expected === null ? "" : " AND updated_at = ?"}`,
+        )
+        .bind(time, workspaceId, id, ...(expected === null ? [] : [expected]))
+        .run();
+      if (expected !== null && result.meta.changes === 0) throw stale(row.name);
+      return { ...toCard(row), archived_at: null, updated_at: new Date(time).toISOString() };
+    },
+
+    async delete(workspaceId, id, changeOptions = {}) {
+      const row = await existing(workspaceId, id);
+      const expected = expectedTime(row, changeOptions);
+      const result = await sql
+        .prepare(
+          `DELETE FROM harness_cards WHERE workspace_id = ? AND id = ?${expected === null ? "" : " AND updated_at = ?"}`,
+        )
+        .bind(workspaceId, id, ...(expected === null ? [] : [expected]))
+        .run();
+      if (expected !== null && result.meta.changes === 0) throw stale(row.name);
+    },
   };
+}
+
+/** The If-Match time in ms, or null without it. Another revision throws 412. */
+function expectedTime(row: HarnessCardRow, options: HarnessCardUpdateOptions): number | null {
+  if (options.expectedUpdatedAt === undefined) return null;
+  const expected = Date.parse(options.expectedUpdatedAt);
+  if (Number.isNaN(expected) || expected !== Number(row.updated_at)) throw stale(row.name);
+  return expected;
 }
 
 function stale(name: string): HarnessCardError {

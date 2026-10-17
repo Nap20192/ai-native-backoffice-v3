@@ -7,6 +7,7 @@ import { useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import {
   ArchiveIcon,
+  ArchiveRestoreIcon,
   CheckCircleIcon,
   KeyRoundIcon,
   Loader2Icon,
@@ -31,6 +32,7 @@ import { useAsyncAction } from "../hooks/useAsyncAction";
 
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { EmptyState } from "../components/EmptyState";
 import { Skeleton, SkeletonRows } from "../components/Skeleton";
 import { Page } from "../components/Page";
@@ -198,20 +200,24 @@ export function VaultDetail() {
     setConfirmOpen(true);
   };
 
+  const restoreVault = async () => {
+    if (!id) return;
+    try {
+      await managedApi.vaults.unarchive(id);
+      reloadVault();
+    } catch {
+      // useApi already toasts the underlying error.
+    }
+  };
+
+  // Архив и удаление хранилища идут через DangerDialog. Удаление учётных
+  // данных остаётся простым подтверждением: у него нет зависимостей.
   const runConfirmed = async () => {
-    if (!id || !pending) return;
+    if (!id || pending?.kind !== "delete-credential") return;
     setConfirmBusy(true);
     try {
-      if (pending.kind === "archive-vault") {
-        await managedApi.vaults.archive(id);
-        nav("/vaults");
-      } else if (pending.kind === "delete-vault") {
-        await managedApi.vaults.delete(id);
-        nav("/vaults");
-      } else {
-        await managedApi.vaults.credentials.delete(pending.id, { vault_id: id });
-        reloadCredentials();
-      }
+      await managedApi.vaults.credentials.delete(pending.id, { vault_id: id });
+      reloadCredentials();
     } catch {
       // useApi already toasts the underlying error.
     } finally {
@@ -280,20 +286,11 @@ export function VaultDetail() {
 
   const credsCount = filteredCreds.length > 99 ? "99+" : String(filteredCreds.length);
 
-  const confirmTitle =
-    pending?.kind === "archive-vault"
-      ? "Архивировать хранилище?"
-      : pending?.kind === "delete-vault"
-        ? "Удалить хранилище?"
-        : "Удалить учётные данные?";
+  const confirmTitle = "Удалить учётные данные?";
   const confirmMessage =
-    pending?.kind === "archive-vault"
-      ? "Все его учётные данные тоже попадут в архив. Действие нельзя отменить."
-      : pending?.kind === "delete-vault"
-        ? "Хранилище и все его учётные данные будут удалены. Действие нельзя отменить."
-        : pending?.kind === "delete-credential"
-          ? `Учётные данные «${pending.name}» будут удалены. Действие нельзя отменить.`
-          : "Действие нельзя отменить.";
+    pending?.kind === "delete-credential"
+      ? `Учётные данные «${pending.name}» будут удалены. Действие нельзя отменить.`
+      : "Действие нельзя отменить.";
 
   return (
     <Page
@@ -320,7 +317,17 @@ export function VaultDetail() {
                   <span className="max-sm:sr-only">{t.common.rename}</span>
                 </Button>
               )}
-              {!archived && (
+              {archived ? (
+                <Button
+                  variant="outline"
+                  className={HEADER_ACTION_CLS}
+                  title={t.common.unarchive}
+                  onClick={() => void restoreVault()}
+                >
+                  <ArchiveRestoreIcon />
+                  <span className="max-sm:sr-only">{t.common.unarchive}</span>
+                </Button>
+              ) : (
                 <Button
                   variant="outline"
                   className={HEADER_ACTION_CLS}
@@ -576,14 +583,35 @@ export function VaultDetail() {
       )}
 
       <ConfirmDialog
-        open={confirmOpen}
+        open={confirmOpen && pending?.kind === "delete-credential"}
         title={confirmTitle}
         message={confirmMessage}
-        confirmLabel={pending?.kind === "archive-vault" ? t.common.archive : t.common.delete}
-        destructive={pending?.kind !== "archive-vault"}
+        confirmLabel={t.common.delete}
+        destructive
         busy={confirmBusy}
         onConfirm={() => void runConfirmed()}
         onCancel={() => setConfirmOpen(false)}
+      />
+      <DangerDialog
+        open={confirmOpen && pending?.kind === "archive-vault"}
+        operation="archive"
+        target={{ kind: "vault", id }}
+        title="Отправить хранилище в архив?"
+        message="Хранилище и его учётные данные станут недоступны агентам."
+        confirmLabel={t.common.archive}
+        run={(options) => managedApi.vaults.archive(id, options)}
+        onDone={() => nav("/vaults")}
+        onClose={() => setConfirmOpen(false)}
+      />
+      <DangerDialog
+        open={confirmOpen && pending?.kind === "delete-vault"}
+        operation="delete"
+        target={{ kind: "vault", id }}
+        title="Удалить хранилище?"
+        message="Хранилище и все его учётные данные будут удалены."
+        run={(options) => managedApi.vaults.delete(id, options)}
+        onDone={() => nav("/vaults")}
+        onClose={() => setConfirmOpen(false)}
       />
     </Page>
   );

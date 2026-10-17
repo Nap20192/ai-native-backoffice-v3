@@ -1,3 +1,4 @@
+import type { DependencyConflict } from "./dependencies";
 import type {
   Environment,
   EnvironmentConfig,
@@ -96,10 +97,20 @@ export interface EnvironmentsPage {
 
 export interface DeleteEnvironmentCommand {
   environmentId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export interface ArchiveEnvironmentCommand {
   environmentId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
+}
+
+export interface UnarchiveEnvironmentCommand {
+  environmentId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export type CreateEnvironmentResult =
@@ -123,10 +134,20 @@ export type ListEnvironmentsResult =
 
 export type DeleteEnvironmentResult =
   | { type: "deleted"; environmentId: string }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export type ArchiveEnvironmentResult =
-  | { type: "archived"; environment: EnvironmentView }
+  | { type: "archived"; environment: EnvironmentView; revision?: number }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
+  | { type: "not_found" };
+
+/** Restore from the archive. An environment out of the archive stays as it is. */
+export type UnarchiveEnvironmentResult =
+  | { type: "unarchived"; environment: EnvironmentView; revision?: number }
+  | { type: "precondition_failed"; message: string }
   | { type: "not_found" };
 
 export interface EnvironmentsApplicationPort {
@@ -136,4 +157,5 @@ export interface EnvironmentsApplicationPort {
   listEnvironments(query: ListEnvironmentsQuery): Promise<ListEnvironmentsResult>;
   deleteEnvironment(command: DeleteEnvironmentCommand): Promise<DeleteEnvironmentResult>;
   archiveEnvironment(command: ArchiveEnvironmentCommand): Promise<ArchiveEnvironmentResult>;
+  unarchiveEnvironment(command: UnarchiveEnvironmentCommand): Promise<UnarchiveEnvironmentResult>;
 }

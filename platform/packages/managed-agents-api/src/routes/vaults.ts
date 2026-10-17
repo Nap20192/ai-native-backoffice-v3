@@ -12,7 +12,13 @@ import {
   vaultResponseSchema,
   vaultUpdateBodySchema,
 } from "../contracts/vaults";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import {
+  apiError,
+  conflict,
+  dependencyConflict,
+  invalidRequest,
+  notFound,
+} from "../errors";
 import {
   toArchiveVaultCommand,
   toCreateVaultCommand,
@@ -140,6 +146,9 @@ export function buildVaultRoutes(
     if (result.type === "not_found") {
       return c.json(notFound(`Vault ${c.req.param("vaultId")} was not found`), 404);
     }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
+    }
     const response = deletedVaultResponseSchema.safeParse({
       id: result.vaultId,
       type: "vault_deleted",
@@ -150,12 +159,29 @@ export function buildVaultRoutes(
     return c.json(response.data, 200);
   });
 
+  app.post("/:vaultId/unarchive", async (c) => {
+    const result = await resolveApplicationPort(source, c).unarchiveVault({
+      vaultId: c.req.param("vaultId"),
+    });
+    if (result.type === "not_found") {
+      return c.json(notFound(`Vault ${c.req.param("vaultId")} was not found`), 404);
+    }
+    const response = vaultResponseSchema.safeParse(toVaultResponse(result.vault));
+    if (!response.success) {
+      return c.json(apiError("Application returned an invalid vault"), 500);
+    }
+    return c.json(response.data, 200);
+  });
+
   app.post("/:vaultId/archive", async (c) => {
     const result = await resolveApplicationPort(source, c).archiveVault(
       toArchiveVaultCommand(c.req.param("vaultId")),
     );
     if (result.type === "not_found") {
       return c.json(notFound(`Vault ${c.req.param("vaultId")} was not found`), 404);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
     const response = vaultResponseSchema.safeParse(
       toVaultResponse(result.vault),

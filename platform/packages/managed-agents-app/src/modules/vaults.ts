@@ -16,6 +16,9 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { dependenciesPort } from "./dependency-port";
+import { credentialStorePort } from "./credentials";
+
 
 export const vaultStorePort = createPortToken<VaultStore>(
   "managed-agents.store.vaults",
@@ -41,7 +44,8 @@ export function vaultsModule(): AppModule {
       idGeneratorPort,
       vaultStorePort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort, credentialStorePort],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const ids = port(idGeneratorPort);
       return {
@@ -50,8 +54,10 @@ export function vaultsModule(): AppModule {
           new VaultsApplicationService({
             workspaceId: workspace.workspaceId,
             store: port(vaultStorePort),
+            credentials: optionalPort(credentialStorePort),
             clock: port(clockPort),
             ids: { nextVaultId: () => ids.next("vault") },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };

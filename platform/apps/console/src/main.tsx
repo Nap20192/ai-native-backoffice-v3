@@ -149,6 +149,49 @@ const protectedRoutes: RouteObject[] = [
       },
     ],
   },
+  {
+    path: "deployments",
+    handle: { crumb: "Деплойменты" },
+    children: [
+      {
+        index: true,
+        lazy: async () => {
+          const { DeploymentsList } = await import("./pages/deployments/DeploymentsList");
+          return { Component: DeploymentsList };
+        },
+      },
+      {
+        // Стоит до ":id", иначе "new" стал бы id деплоймента.
+        path: "new",
+        handle: { crumb: "Новый деплоймент" },
+        lazy: async () => {
+          const { DeploymentForm } = await import("./pages/deployments/DeploymentForm");
+          return { Component: DeploymentForm };
+        },
+      },
+      {
+        path: ":id",
+        handle: { crumb: (m: UIMatch) => crumbName(m.params.id, "Деплоймент") },
+        children: [
+          {
+            index: true,
+            lazy: async () => {
+              const { DeploymentDetail } = await import("./pages/deployments/DeploymentDetail");
+              return { Component: DeploymentDetail };
+            },
+          },
+          {
+            path: "edit",
+            handle: { crumb: "Правка" },
+            lazy: async () => {
+              const { DeploymentForm } = await import("./pages/deployments/DeploymentForm");
+              return { Component: DeploymentForm };
+            },
+          },
+        ],
+      },
+    ],
+  },
   { path: "files", element: <FilesList />, handle: { crumb: "Файлы" } },
   {
     path: "evals",

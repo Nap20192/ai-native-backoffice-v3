@@ -245,6 +245,33 @@ function msgScript(n, L, R) {
   }
 }
 
+/**
+ * Сценарий crud (journey-crud.mjs): опасные операции помощника. Сначала зависимости,
+ * затем архив сессии, снова зависимости и удаление файла. Каждая запись ждёт клика
+ * по красной карточке; сбой шага даёт VERIFY_FAIL_<n>.
+ */
+function crudScript(n, L, R) {
+  const fail = (index, what) =>
+    R[index]?.isError ? say(`VERIFY_FAIL_${n}: ${what}: ${brief(R[index].text)}`, { decision: "fail" }) : null;
+  switch (R.length) {
+    case 0:
+      return call("get_dependencies", { kind: "session", id: L["Сессия"], operation: "archive" });
+    case 1:
+      return fail(0, "get_dependencies сессии") ?? call("archive_object", { kind: "session", id: L["Сессия"] });
+    case 2:
+      return fail(1, "archive_object") ?? call("get_dependencies", { kind: "file", id: L["Файл"], operation: "delete" });
+    case 3:
+      return fail(2, "get_dependencies файла") ?? call("delete_object", { kind: "file", id: L["Файл"] });
+    default:
+      return fail(3, "delete_object") ?? say(`VERIFY_BUILDER_CRUD_DONE_${n} archive=${brief(R[1].text)} delete=${brief(R[3].text)}`);
+  }
+}
+
+/** Отказ: карточка удаления файла, пользователь жмёт «Отклонить». */
+function crudDenyScript(n, L, R) {
+  return oneCall(n, R, () => call("delete_object", { kind: "file", id: L["Файл"] }), "VERIFY_BUILDER_CRUDDENY_DONE");
+}
+
 /** 6.7: чтение всего, где лежат секреты и их копии. */
 function secretsPlan(L) {
   const plan = [
@@ -376,6 +403,8 @@ export function decideBuilder(body, { canaryFile, oracleFile } = {}) {
     case "ROTATE":
     case "ROTATE2": d = rotateScript(n, L, R, sub); break;
     case "ORACLE": d = oracleScript(n, L, R, oracleFile); break;
+    case "CRUD": d = crudScript(n, L, R); break;
+    case "CRUDDENY": d = crudDenyScript(n, L, R); break;
     default: d = say(`VERIFY_FAIL_${n}: неизвестный вид ${sub}`, { decision: "fail" });
   }
   if (d.reply.tool && !toolNames.includes(d.reply.tool)) {

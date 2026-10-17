@@ -15,7 +15,7 @@
 //   - E2BSandboxExecutor (./adapters/e2b.ts) — wraps the official `e2b`
 //     SDK. The configured API may be E2B Cloud or any compatible service.
 
-import type { SandboxEnvironmentSpec } from "./environment-setup";
+import type { SandboxEnvironmentSnapshot, SandboxEnvironmentSpec } from "./environment-setup";
 
 export interface ProcessHandle {
   id: string;
@@ -146,6 +146,23 @@ export interface SandboxSessionOutputMountPort {
     tenantId: string;
     sessionId: string;
   }): Promise<void>;
+}
+
+/** Narrow Port of a sandbox that knows the VM its commands run in
+ * (docs/plans/environments.md, 4.5). The host builds the "Environment"
+ * prompt block from this snapshot and the image manifest of its digest, not
+ * from the environment config, which can change while the VM lives. */
+export interface SandboxEnvironmentSnapshotPort {
+  /** Facts of the VM. Before the VM boots, the facts it will boot with;
+   * `vm` is null until then. Reading them never creates the VM. */
+  environmentSnapshot(): SandboxEnvironmentSnapshot;
+}
+
+export function supportsEnvironmentSnapshot(
+  value: unknown,
+): value is SandboxEnvironmentSnapshotPort {
+  if (typeof value !== "object" || value === null) return false;
+  return typeof (value as Partial<SandboxEnvironmentSnapshotPort>).environmentSnapshot === "function";
 }
 
 export function supportsWorkspaceBackup(
@@ -288,6 +305,7 @@ export interface SandboxFactoryContext {
   /** The session's cloud Environment (packages + networking). Adapters that
    *  own an isolated machine install the packages once it exists and map
    *  networking onto their egress controls; host-process adapters ignore it.
+   *  `image`, when present, is the catalog image the machine boots from.
    *  Absent for self-hosted environments and hosts that predate the field. */
   environment?: SandboxEnvironmentSpec;
 }

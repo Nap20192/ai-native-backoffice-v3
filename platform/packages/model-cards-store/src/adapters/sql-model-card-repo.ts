@@ -228,6 +228,7 @@ export class SqlModelCardRepo implements ModelCardRepo {
     if (update.apiKeyCipher !== undefined) set.api_key_cipher = update.apiKeyCipher;
     if (update.apiKeyPreview !== undefined) set.api_key_preview = update.apiKeyPreview;
     if (update.isDefault !== undefined) set.is_default = update.isDefault ? 1 : 0;
+    if (update.archivedAt !== undefined) set.archived_at = update.archivedAt;
 
     // With an expected revision the row is written only while it still has
     // that revision. The comparison is part of the UPDATE itself, so an edit

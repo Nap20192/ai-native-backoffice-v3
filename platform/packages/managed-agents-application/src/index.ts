@@ -26,6 +26,7 @@ export * from "./domain/vault";
 export * from "./files/application";
 export * from "./files/content-store";
 export * from "./files/persistence";
+export * from "./dependencies/application";
 export * from "./environments/application";
 export * from "./environments/persistence";
 export * from "./environment-work/availability-waiter";

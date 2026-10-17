@@ -10,6 +10,8 @@
 //
 // Packages install system-wide (the sandbox runs as root and is disposable),
 // so binaries land on the image's default PATH without a sourced env file.
+// pip installs into the python3 that PATH resolves: the venv of a catalog
+// image, the system Python elsewhere.
 
 export type SandboxPackageManager = "apt" | "cargo" | "gem" | "go" | "npm" | "pip";
 
@@ -26,11 +28,98 @@ export type SandboxEnvironmentNetworking =
       allowMcpServers: boolean;
     };
 
+/** VM resources; null keeps the adapter's server setting. */
+export interface SandboxVmResources {
+  diskGb: number | null;
+  memoryMib: number | null;
+  cpus: number | null;
+}
+
+/** Shell that runs agent commands: bash, or POSIX sh on an image without it. */
+export type SandboxShell = "bash" | "sh";
+
+/**
+ * An image of the operator's sandbox image catalog (docs/plans/environments.md,
+ * 1.5 and 1.6) that the host resolved from the environment's `config.image`.
+ * The key picks the image, the digest fixes its content. Adapters that do not
+ * choose an image ignore it.
+ */
+export interface SandboxEnvironmentImage {
+  /** Catalog key, for example `workplace`. */
+  key: string;
+  /** An OCI layout directory on the host, or a registry reference pinned with `@sha256:`. */
+  source: { type: "oci"; dir: string } | { type: "registry"; reference: string };
+  /** OCI manifest digest the catalog verified. */
+  digest: string;
+  /** sha256 of the image manifest file the catalog read; null without one. */
+  manifestSha256: string | null;
+  /** image-manifest.json of this digest as the catalog read it; null without
+   *  one. The VM snapshot keeps it for the prompt block. */
+  manifest: Readonly<Record<string, unknown>> | null;
+  resources: SandboxVmResources;
+  /** Shell of the image from its manifest; null makes the adapter look for bash. */
+  shell: SandboxShell | null;
+}
+
 /** Structurally the cloud branch of the managed `EnvironmentConfig`, so a
  * host can pass `{ packages, networking }` of a domain Environment as is. */
 export interface SandboxEnvironmentSpec {
   packages?: SandboxEnvironmentPackages;
   networking?: SandboxEnvironmentNetworking;
+  /** Catalog image of the VM. Absent: the adapter's server image, as before the catalog. */
+  image?: SandboxEnvironmentImage;
+}
+
+/** Egress the VM got: open, a host allowlist, or no network at all. */
+export type SandboxEgress =
+  | { type: "unrestricted" }
+  | { type: "allowlist"; hosts: string[] }
+  | { type: "none" };
+
+/**
+ * What a sandbox VM is created with (docs/plans/environments.md, 4.5): the
+ * facts the "Environment" prompt block states. The adapter fixes them once
+ * per VM, image manifest included, so a live VM keeps its block while
+ * someone edits the environment or rebuilds the catalog. Host paths stay out.
+ */
+export interface SandboxEnvironmentSnapshot {
+  image: {
+    /** Catalog key; null for the adapter's server image. */
+    key: string | null;
+    /** Registry reference; null for an OCI layout of the catalog. */
+    reference: string | null;
+    /** Verified manifest digest; null for the server image. */
+    digest: string | null;
+    manifestSha256: string | null;
+    /** image-manifest.json of `digest`, frozen; null for the server image or
+     *  a catalog entry without one. */
+    manifest: Readonly<Record<string, unknown>> | null;
+  };
+  /** Null until the adapter has looked for bash in the VM. */
+  shell: SandboxShell | null;
+  workingDirectory: string;
+  /** The environment networking the VM received; unrestricted when absent. */
+  networking: SandboxEnvironmentNetworking;
+  egress: SandboxEgress;
+  /** Environment packages the VM installs when it boots, as configured. */
+  packages: Partial<Record<SandboxPackageManager, string[]>>;
+  resources: SandboxVmResources;
+  /** Set once the VM is up with its packages installed. */
+  vm: { readyAt: string; readyMs: number } | null;
+}
+
+export type SandboxEnvironmentErrorCode = "image_changed_on_disk" | "image_unavailable";
+
+/** The sandbox cannot get the image its environment names. No VM was created. */
+export class SandboxEnvironmentError extends Error {
+  override name = "SandboxEnvironmentError";
+
+  constructor(
+    readonly code: SandboxEnvironmentErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 /** Registry hosts opened when networking is limited and the environment
@@ -103,10 +192,16 @@ function installCommand(manager: SandboxPackageManager, names: string[]): string
         `else ${missing("apt-get (or apk)")}; fi`
       );
     case "pip":
+      // The python3 first on PATH: on a catalog image that is the /opt/venv
+      // shim in /usr/local/bin. `uv pip install --system` would pass over the
+      // venv for the system Python. The break-system-packages flags only
+      // matter for an image whose python3 is the system Python.
       return (
-        `if command -v uv >/dev/null 2>&1; then uv pip install --system --break-system-packages ${args}; ` +
-        `elif python3 -m pip --version >/dev/null 2>&1; then ` +
-        `PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install --no-cache-dir --disable-pip-version-check -q ${args}; ` +
+        `py=$(command -v python3) || py=""; ` +
+        `if [ -n "$py" ] && command -v uv >/dev/null 2>&1; then ` +
+        `uv pip install --python "$py" --break-system-packages ${args}; ` +
+        `elif [ -n "$py" ] && "$py" -m pip --version >/dev/null 2>&1; then ` +
+        `PIP_BREAK_SYSTEM_PACKAGES=1 "$py" -m pip install --no-cache-dir --disable-pip-version-check -q ${args}; ` +
         `else ${missing("python3 with pip (or uv)")}; fi`
       );
     case "npm":

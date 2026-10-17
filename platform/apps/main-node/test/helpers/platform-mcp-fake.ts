@@ -342,11 +342,195 @@ export function createFakePlatform() {
     return c.json({ id: id("skillver"), skill_id: skill.id, version, type: "skill_version" }, 200, { etag: etag(skill.rev) });
   });
 
+  // archive, restore and delete (docs/plans/crud.md, 1.1 to 1.4)
+  type Report = { blocking: Json[]; affected: Json[]; truncated: boolean };
+  const dependencyReports = new Map<string, Report>();
+  const reportOf = (kind: string, targetId: string, operation: string): Report =>
+    dependencyReports.get(`${kind}:${targetId}:${operation}`) ?? { blocking: [], affected: [], truncated: false };
+  const unquote = (value: string) => value.trim().replace(/^"(.*)"$/, "$1");
+  const staleIfMatch = (c: any, current: string | number | null | undefined) => {
+    const header = c.req.header("if-match");
+    return header !== undefined && unquote(header) !== unquote(String(current ?? ""));
+  };
+  const preconditionFailed = (c: any) => c.json({ type: "error", error: { type: "precondition_failed_error", message: "precondition failed" } }, 412);
+  const dependencyConflict = (c: any, report: Report) =>
+    c.json({ type: "error", error: { type: "dependency_conflict_error", message: "remove the blocking dependencies first", dependencies: report } }, 409);
+  app.get("/v1/oma/dependencies/:kind/:id", (c) => {
+    const operation = c.req.query("operation") ?? "";
+    if (operation !== "archive" && operation !== "delete") return c.json({ error: { message: "operation" } }, 400);
+    const version = c.req.query("version");
+    return c.json(reportOf(c.req.param("kind"), version ? `${c.req.param("id")}@${version}` : c.req.param("id"), operation));
+  });
+
+  interface Archivable {
+    kind: string;
+    base: string;
+    find(objectId: string): Json | undefined;
+    revision(object: Json): string | number;
+    view(object: Json): Json;
+    bump(object: Json): void;
+    remove(objectId: string): void;
+  }
+  const revBump = (object: Json) => {
+    object.rev += 1;
+  };
+  const archivables: Archivable[] = [
+    {
+      kind: "agent",
+      base: "/v1/agents",
+      find: (objectId) => (agents.has(objectId) ? { id: objectId, entry: agents.get(objectId) } : undefined),
+      revision: (object) => object.entry.versions.at(-1).version,
+      view: (object) => agentView(object.id)!,
+      bump: () => {},
+      remove: (objectId) => agents.delete(objectId),
+    },
+    { kind: "environment", base: "/v1/environments", find: (key) => environments.get(key), revision: (o) => etag(o.rev), view: ({ rev: _r, ...o }) => o, bump: revBump, remove: (key) => environments.delete(key) },
+    { kind: "session", base: "/v1/sessions", find: (key) => sessions.get(key), revision: (o) => etag(o.rev), view: ({ rev: _r, ...o }) => o, bump: revBump, remove: (key) => sessions.delete(key) },
+    { kind: "deployment", base: "/v1/deployments", find: (key) => deployments.get(key), revision: (o) => etag(o.rev), view: ({ rev: _r, ...o }) => o, bump: revBump, remove: (key) => deployments.delete(key) },
+    { kind: "memory_store", base: "/v1/memory_stores", find: (key) => stores.get(key), revision: (o) => etag(o.rev), view: ({ rev: _r, ...o }) => o, bump: revBump, remove: (key) => stores.delete(key) },
+    { kind: "model_card", base: "/v1/oma/model_cards", find: (key) => modelCards.get(key), revision: (o) => o.updated_at ?? o.created_at, view: ({ api_key: _k, ...o }) => o, bump: (o) => { o.updated_at = now(); }, remove: (key) => modelCards.delete(key) },
+    { kind: "harness_card", base: "/v1/oma/harness_cards", find: (key) => harnessCards.get(key), revision: (o) => o.updated_at, view: (o) => o, bump: (o) => { o.updated_at = now(); }, remove: (key) => harnessCards.delete(key) },
+  ];
+  for (const target of archivables) {
+    const state = (action: "archive" | "unarchive") => async (c: any) => {
+      const object = target.find(c.req.param("id"));
+      if (!object) return notFound(c);
+      if (staleIfMatch(c, target.revision(object))) return preconditionFailed(c);
+      if (action === "archive") {
+        const report = reportOf(target.kind, c.req.param("id"), "archive");
+        if (report.blocking.length > 0) return dependencyConflict(c, report);
+      }
+      const holder = target.kind === "agent" ? object.entry : object;
+      holder.archived_at = action === "archive" ? now() : null;
+      if (target.kind === "deployment" && action === "unarchive") Object.assign(object, { status: "paused", paused_reason: { type: "manual" } });
+      target.bump(object);
+      return c.json(target.view(object), 200, { etag: String(target.revision(object)) });
+    };
+    app.post(`${target.base}/:id/archive`, state("archive"));
+    app.post(`${target.base}/:id/unarchive`, state("unarchive"));
+    if (target.kind === "deployment") continue;
+    app.delete(`${target.base}/:id`, (c) => {
+      const object = target.find(c.req.param("id"));
+      if (!object) return notFound(c);
+      if (staleIfMatch(c, target.revision(object))) return preconditionFailed(c);
+      const report = reportOf(target.kind, c.req.param("id"), "delete");
+      if (report.blocking.length > 0) return dependencyConflict(c, report);
+      target.remove(c.req.param("id"));
+      return c.json({ id: c.req.param("id"), type: `${target.kind}_deleted` });
+    });
+  }
+  app.delete("/v1/files/:id", (c) => {
+    if (!files.has(c.req.param("id"))) return notFound(c);
+    const report = reportOf("file", c.req.param("id"), "delete");
+    if (report.blocking.length > 0) return dependencyConflict(c, report);
+    files.delete(c.req.param("id"));
+    return c.json({ id: c.req.param("id"), type: "file_deleted" });
+  });
+  app.delete("/v1/skills/:id", (c) => {
+    const skill = skills.get(c.req.param("id"));
+    if (!skill) return notFound(c);
+    if (staleIfMatch(c, etag(skill.rev))) return preconditionFailed(c);
+    const report = reportOf("skill", skill.id, "delete");
+    if (report.blocking.length > 0) return dependencyConflict(c, report);
+    skills.delete(skill.id);
+    return c.json({ id: skill.id, type: "skill_deleted" });
+  });
+  app.get("/v1/skills/:id/versions/:version", (c) => {
+    const skill = skills.get(c.req.param("id"));
+    if (!skill?.versions.has(c.req.param("version"))) return notFound(c);
+    return c.json({ type: "skill_version", skill_id: skill.id, version: c.req.param("version"), name: skill.display_title }, 200, { etag: etag(skill.rev) });
+  });
+  app.delete("/v1/skills/:id/versions/:version", (c) => {
+    const skill = skills.get(c.req.param("id"));
+    if (!skill?.versions.has(c.req.param("version"))) return notFound(c);
+    if (staleIfMatch(c, etag(skill.rev))) return preconditionFailed(c);
+    const report = reportOf("skill_version", `${skill.id}@${c.req.param("version")}`, "delete");
+    if (report.blocking.length > 0) return dependencyConflict(c, report);
+    skill.versions.delete(c.req.param("version"));
+    skill.rev += 1;
+    return c.json({ id: c.req.param("version"), type: "skill_version_deleted" }, 200, { etag: etag(skill.rev) });
+  });
+  app.delete("/v1/memory_stores/:id/memories/:mid", (c) => {
+    const memory = memories.get(c.req.param("mid"));
+    if (!memory || memory.memory_store_id !== c.req.param("id")) return notFound(c);
+    const expected = c.req.query("expected_content_sha256");
+    if (expected && expected !== memory.content_sha256) return c.json({ error: { message: "precondition failed" } }, 409);
+    memories.delete(memory.id);
+    return c.json({ id: memory.id, type: "memory_deleted" });
+  });
+
+  // session title, metadata and resources
+  app.post("/v1/sessions/:id", async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session) return notFound(c);
+    if (staleIfMatch(c, etag(session.rev))) return preconditionFailed(c);
+    const body = await c.req.json();
+    if (body.title !== undefined) session.title = body.title;
+    if (body.metadata !== undefined) {
+      const metadata = { ...session.metadata };
+      for (const [key, value] of Object.entries(body.metadata ?? {})) {
+        if (value === null) delete metadata[key];
+        else metadata[key] = value;
+      }
+      session.metadata = metadata;
+    }
+    session.rev += 1;
+    return c.json(sessionView(session), 200, { etag: etag(session.rev) });
+  });
+  app.get("/v1/sessions/:id/resources", (c) => {
+    const session = sessions.get(c.req.param("id"));
+    return session ? c.json(page(session.resources)) : notFound(c);
+  });
+  app.post("/v1/sessions/:id/resources", async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session) return notFound(c);
+    const body = await c.req.json();
+    if (!files.has(body.file_id)) return c.json({ error: { message: "file missing" } }, 404);
+    const resource = { id: id("sesrsc"), type: "file", file_id: body.file_id, mount_path: body.mount_path ?? `/mnt/session/uploads/${body.file_id}`, created_at: now(), updated_at: now() };
+    session.resources = [...session.resources, resource];
+    session.rev += 1;
+    return c.json(resource);
+  });
+  app.get("/v1/sessions/:id/resources/:rid", (c) => {
+    const resource = sessions.get(c.req.param("id"))?.resources.find((item: Json) => item.id === c.req.param("rid"));
+    return resource ? c.json(resource) : notFound(c);
+  });
+  app.delete("/v1/sessions/:id/resources/:rid", (c) => {
+    const session = sessions.get(c.req.param("id"));
+    const resource = session?.resources.find((item: Json) => item.id === c.req.param("rid"));
+    if (!session || !resource) return notFound(c);
+    session.resources = session.resources.filter((item: Json) => item.id !== resource.id);
+    session.rev += 1;
+    return c.json({ id: resource.id, type: "session_resource_deleted" });
+  });
+
+  // deployment state
+  for (const action of ["pause", "unpause"] as const) {
+    app.post(`/v1/deployments/:id/${action}`, (c) => {
+      const deployment = deployments.get(c.req.param("id"));
+      if (!deployment) return notFound(c);
+      if (staleIfMatch(c, etag(deployment.rev))) return preconditionFailed(c);
+      if (deployment.archived_at) return c.json({ error: { message: "archived" } }, 409);
+      Object.assign(deployment, action === "pause" ? { status: "paused", paused_reason: { type: "manual" } } : { status: "active", paused_reason: null });
+      deployment.rev += 1;
+      return c.json(deploymentView(deployment), 200, { etag: etag(deployment.rev) });
+    });
+  }
+  const runs: Json[] = [];
+  app.post("/v1/deployments/:id/run", (c) => {
+    const deployment = deployments.get(c.req.param("id"));
+    if (!deployment) return notFound(c);
+    if (deployment.archived_at) return c.json({ error: { message: "archived" } }, 409);
+    const run = { id: id("deprun"), type: "deployment_run", deployment_id: deployment.id, session_id: id("sesn"), agent: deployment.agent, error: null, created_at: now() };
+    runs.push(run);
+    return c.json(run);
+  });
+
   // vaults
   app.get("/v1/vaults", (c) => c.json(page([{ id: "vlt_1", type: "vault", display_name: "Главное", metadata: {} }])));
   app.get("/v1/vaults/:id/credentials", (c) => c.json(page(credentials)));
   app.get("/v1/oma/evals/runs", (c) => c.json({ data: [] }));
-  app.get("/v1/deployment_runs", (c) => c.json(page([])));
+  app.get("/v1/deployment_runs", (c) => c.json(page(runs.filter((run) => !c.req.query("deployment_id") || run.deployment_id === c.req.query("deployment_id")))));
 
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -472,6 +656,14 @@ export function createFakePlatform() {
       toolCheck = value;
     },
     writes: () => calls.filter((call) => call.method === "POST"),
+    deletes: () => calls.filter((call) => call.method === "DELETE"),
+    /** The report of `GET /v1/oma/dependencies/:kind/:id`; a skill version is `skill_id@version`. */
+    setDependencies(kind: string, targetId: string, operation: "archive" | "delete", report: Partial<Report>) {
+      dependencyReports.set(`${kind}:${targetId}:${operation}`, { blocking: [], affected: [], truncated: false, ...report });
+    },
+    runs: () => runs,
+    hasFile: (fileId: string) => files.has(fileId),
+    hasAgent: (agentId: string) => agents.has(agentId),
     addAgent(body: Json): Json {
       const agentId = body.id ?? id("agent");
       const created = now();

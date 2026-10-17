@@ -96,6 +96,9 @@ export function makeSessionsPort(
     archiveSession: async () => {
       throw new Error("unexpected archiveSession application port call");
     },
+    unarchiveSession: async () => {
+      throw new Error("unexpected unarchiveSession application port call");
+    },
     ...overrides,
   };
 }

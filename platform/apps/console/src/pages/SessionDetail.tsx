@@ -25,7 +25,7 @@ import { toast } from "sonner";
 import { Markdown } from "../components/Markdown";
 import { EMPTY_VALUE, formatDateTimeRu, sessionErrorText } from "../components/session/format-ru";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { Skeleton } from "../components/Skeleton";
 import type { Event } from "../lib/events";
 import {
@@ -226,7 +226,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 
-type Dialog = "outcome" | "shortcuts" | "archive" | null;
+type Dialog = "outcome" | "shortcuts" | "archive" | "delete" | null;
 
 export function SessionDetail() {
   const { id } = useParams();
@@ -284,7 +284,6 @@ export function SessionDetail() {
    *  place in the events array via the regular SSE broadcast. */
   const [pendingByEventId, setPendingByEventId] = useState<Map<string, PendingEntry>>(new Map());
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [archiving, setArchiving] = useState(false);
   /** История событий загружена (первая выгрузка завершена). Пока нет, вместо
    *  пустого состояния показываем скелетон: «Отправьте сообщение» до конца
    *  загрузки вводило бы в заблуждение (правило 12 DDC). */
@@ -1045,18 +1044,16 @@ export function SessionDetail() {
     await managedApi.sessions.events.send(id, { events: [event] });
   };
 
-  const archive = async () => {
+  // Архив и удаление идут через DangerDialog: он читает зависимости, берёт
+  // ETag сессии для If-Match и показывает список при ответе 409.
+  const unarchive = async () => {
     if (!id) return;
-    setArchiving(true);
     try {
-      await managedApi.sessions.archive(id);
-      toast.success("Сессия архивирована");
-      navigate("/sessions");
+      const restored = await managedApi.sessions.unarchive(id);
+      setSession(restored);
+      toast.success("Сессия возвращена из архива");
     } catch {
       // Обращение к серверу уже показало ошибку.
-    } finally {
-      setArchiving(false);
-      setDialog(null);
     }
   };
 
@@ -1288,6 +1285,8 @@ export function SessionDetail() {
           onInterrupt={() => void interrupt()}
           onDefineOutcome={() => setDialog("outcome")}
           onArchive={() => setDialog("archive")}
+          onUnarchive={() => void unarchive()}
+          onDelete={() => setDialog("delete")}
           onCopyEvents={() => void copyAllEvents()}
           onDownloadEvents={() => {
             if (id) downloadEventsFile(id, events);
@@ -1323,14 +1322,35 @@ export function SessionDetail() {
         sessionId={id}
       />
       <ShortcutsDialog open={dialog === "shortcuts"} onClose={() => setDialog(null)} />
-      <ConfirmDialog
+      <DangerDialog
         open={dialog === "archive"}
-        title="Архивировать сессию?"
-        message="Сессия уйдёт в архив и пропадёт из списка активных."
+        operation="archive"
+        target={id ? { kind: "session", id } : null}
+        etagPath={id ? `/v1/sessions/${id}` : undefined}
+        title="Отправить сессию в архив?"
+        message="Сессия пропадёт из списка активных."
         confirmLabel="Архивировать"
-        busy={archiving}
-        onConfirm={() => void archive()}
-        onCancel={() => setDialog(null)}
+        run={(options) => managedApi.sessions.archive(id!, options)}
+        onDone={() => {
+          toast.success("Сессия архивирована");
+          setDialog(null);
+          navigate("/sessions");
+        }}
+        onClose={() => setDialog(null)}
+      />
+      <DangerDialog
+        open={dialog === "delete"}
+        operation="delete"
+        target={id ? { kind: "session", id } : null}
+        etagPath={id ? `/v1/sessions/${id}` : undefined}
+        title="Удалить сессию?"
+        run={(options) => managedApi.sessions.delete(id!, options)}
+        onDone={() => {
+          toast.success("Сессия удалена");
+          setDialog(null);
+          navigate("/sessions");
+        }}
+        onClose={() => setDialog(null)}
       />
       {outputViewer.dialog}
     </div>

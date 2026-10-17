@@ -34,6 +34,7 @@ export const READ_TOOLS = [
   "get_session_events",
   "get_trajectory",
   "request_secret",
+  "get_dependencies",
 ] as const;
 
 /** Инструменты записи: каждый ждёт кнопки пользователя (раздел 2.3). */
@@ -56,6 +57,15 @@ export const WRITE_TOOLS = [
   "update_harness_card",
   "send_message",
   "apply_changes",
+  "update_session",
+  "add_session_resource",
+  "update_session_resource",
+  "pause_deployment",
+  "unpause_deployment",
+  "run_deployment",
+  "archive_object",
+  "unarchive_object",
+  "delete_object",
 ] as const;
 
 /** Четыре инструмента набора «черновик» (раздел 1.1). */
@@ -77,9 +87,9 @@ export function isWriteTool(name: string): boolean {
 
 /* ---------- Предложение: preview ---------- */
 
-export type OpClass = "read" | "draft" | "create" | "edit" | "out_of_v1";
+export type OpClass = "read" | "draft" | "create" | "edit" | "danger" | "out_of_v1";
 
-const CLASS_ORDER: OpClass[] = ["read", "draft", "create", "edit", "out_of_v1"];
+const CLASS_ORDER: OpClass[] = ["read", "draft", "create", "edit", "danger", "out_of_v1"];
 
 const CLASS_ALIASES: Record<string, OpClass> = {
   read: "read",
@@ -91,6 +101,8 @@ const CLASS_ALIASES: Record<string, OpClass> = {
   update: "edit",
   edit: "edit",
   правка: "edit",
+  danger: "danger",
+  опасное: "danger",
   out_of_v1: "out_of_v1",
   "вне v1": "out_of_v1",
 };
@@ -106,6 +118,24 @@ export function maxOpClass(classes: readonly OpClass[]): OpClass {
   for (const c of classes) best = Math.max(best, CLASS_ORDER.indexOf(c));
   return CLASS_ORDER[best] ?? "read";
 }
+
+/** Строка зависимости из GET /v1/oma/dependencies (docs/plans/crud.md, 1.2). */
+export interface PreviewDependency {
+  kind: string;
+  id: string;
+  name: string | null;
+  status: string | null;
+  note: string | null;
+}
+
+export interface PreviewDependencies {
+  blocking: PreviewDependency[];
+  affected: PreviewDependency[];
+  truncated: boolean;
+}
+
+/** Архив, возврат из архива или удаление (crud.md, 3.2). */
+export type DangerOperation = "archive" | "unarchive" | "delete";
 
 export interface PreviewOperation {
   index: number;
@@ -128,6 +158,12 @@ export interface PreviewOperation {
   access: string[];
   /** Три ближайших запуска расписания деплоймента. */
   nextRuns: string[];
+  /** Архив, возврат или удаление; `null` у остальных инструментов. */
+  operation: DangerOperation | null;
+  /** Что мешает операции и что она затронет; `null`, если сервер списка не прислал. */
+  dependencies: PreviewDependencies | null;
+  /** Удаление: «Это нельзя отменить». */
+  irreversible: boolean;
 }
 
 export interface SessionPreviewInfo {
@@ -186,6 +222,34 @@ const num = (v: unknown): number | null =>
 const strList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
+const DANGER_TOOL_OPERATION: Record<string, DangerOperation> = {
+  archive_object: "archive",
+  unarchive_object: "unarchive",
+  delete_object: "delete",
+};
+
+function normalizeDependency(raw: unknown): PreviewDependency | null {
+  const r = rec(raw);
+  const kind = str(r.kind);
+  const id = str(r.id);
+  if (!kind || !id) return null;
+  return { kind, id, name: str(r.name), status: str(r.status), note: str(r.note) };
+}
+
+function normalizeDependencies(raw: unknown): PreviewDependencies | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = rec(raw);
+  const list = (v: unknown) =>
+    (Array.isArray(v) ? v : []).map(normalizeDependency).filter((d): d is PreviewDependency => d !== null);
+  return { blocking: list(r.blocking), affected: list(r.affected), truncated: r.truncated === true };
+}
+
+function dangerOperation(tool: string, details: Record<string, unknown>): DangerOperation | null {
+  const fromCard = str(rec(details.card).operation);
+  if (fromCard === "archive" || fromCard === "unarchive" || fromCard === "delete") return fromCard;
+  return DANGER_TOOL_OPERATION[assistantToolName(tool)] ?? null;
+}
+
 /**
  * Операция preview. Сервер (`previewJson` в main-node) шлёт `op_index`,
  * `target_kind`, `reason` и `details`; старые имена полей тоже читаются.
@@ -210,6 +274,9 @@ function normalizeOperation(raw: unknown, fallbackIndex: number): PreviewOperati
     versionTo: num(r.version_to),
     access: strList(r.access),
     nextRuns: r.next_runs !== undefined ? strList(r.next_runs) : strList(details.upcoming_runs),
+    operation: dangerOperation(str(r.tool) ?? "", details),
+    dependencies: normalizeDependencies(r.dependencies),
+    irreversible: r.irreversible === true,
   };
 }
 

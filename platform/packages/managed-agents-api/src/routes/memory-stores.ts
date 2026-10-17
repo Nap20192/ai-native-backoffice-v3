@@ -15,6 +15,7 @@ import {
 import {
   apiError,
   conflict,
+  dependencyConflict,
   invalidRequest,
   notFound,
   preconditionFailed,
@@ -161,14 +162,25 @@ export function buildMemoryStoreRoutes(
   });
 
   app.delete("/:memoryStoreId", async (c) => {
-    const result = await resolveApplicationPort(source, c).deleteMemoryStore(
-      toDeleteMemoryStoreCommand(c.req.param("memoryStoreId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).deleteMemoryStore({
+      ...toDeleteMemoryStoreCommand(c.req.param("memoryStoreId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(
         notFound(`Memory store ${c.req.param("memoryStoreId")} was not found`),
         404,
       );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
     const response = deletedMemoryStoreResponseSchema.safeParse({
       id: result.memoryStoreId,
@@ -184,14 +196,25 @@ export function buildMemoryStoreRoutes(
   });
 
   app.post("/:memoryStoreId/archive", async (c) => {
-    const result = await resolveApplicationPort(source, c).archiveMemoryStore(
-      toArchiveMemoryStoreCommand(c.req.param("memoryStoreId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).archiveMemoryStore({
+      ...toArchiveMemoryStoreCommand(c.req.param("memoryStoreId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(
         notFound(`Memory store ${c.req.param("memoryStoreId")} was not found`),
         404,
       );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
     const response = memoryStoreResponseSchema.safeParse(
       toMemoryStoreResponse(result.memoryStore),
@@ -199,6 +222,35 @@ export function buildMemoryStoreRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid memory store"), 500);
     }
+    setRevisionETag(c, result.revision);
+    return c.json(response.data, 200);
+  });
+
+  app.post("/:memoryStoreId/unarchive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).unarchiveMemoryStore({
+      memoryStoreId: c.req.param("memoryStoreId"),
+      ...expectedRevisionOf(precondition),
+    });
+    if (result.type === "not_found") {
+      return c.json(
+        notFound(`Memory store ${c.req.param("memoryStoreId")} was not found`),
+        404,
+      );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    const response = memoryStoreResponseSchema.safeParse(
+      toMemoryStoreResponse(result.memoryStore),
+    );
+    if (!response.success) {
+      return c.json(apiError("Application returned an invalid memory store"), 500);
+    }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 

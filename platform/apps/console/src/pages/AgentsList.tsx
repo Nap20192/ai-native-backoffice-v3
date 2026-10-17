@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, ArrowRightIcon, PencilIcon, PlusIcon, SparklesIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  ArrowRightIcon,
+  PencilIcon,
+  PlusIcon,
+  RocketIcon,
+  SparklesIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import { useApi } from "../lib/api";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { useOptionalAssistant } from "../components/assistant/AssistantProvider";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
@@ -43,7 +52,7 @@ export function AgentsList() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [archivingAgent, setArchivingAgent] = useState<Agent | null>(null);
-  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
 
   // Managed Agents exposes include_archived plus RFC3339 created-at bounds.
   // Archived-only and text search remain feed presentation filters; they do
@@ -130,20 +139,15 @@ export function AgentsList() {
 
   const modelStr = (m: Agent["model"]) => (typeof m === "string" ? m : m?.id || "");
 
-  // Архивация необратима, поэтому перед ней спрашиваем (правило 11 DDC), как и
-  // на странице агента. Ошибку API показывает useApi, здесь окно просто
-  // остаётся открытым до новой попытки или отмены.
-  const confirmArchive = async () => {
-    if (!archivingAgent) return;
-    setArchiveBusy(true);
+  // Архив и удаление идут через DangerDialog со списком зависимостей. Версия
+  // агента служит значением If-Match (docs/plans/crud.md, 1.4). Ошибку API
+  // показывает окно или useApi.
+  const unarchiveAgent = async (agent: Agent) => {
     try {
-      await managedApi.agents.archive(archivingAgent.id);
-      setArchivingAgent(null);
+      await managedApi.agents.unarchive(agent.id, { ifMatch: `"${agent.version}"` });
       refreshAgents();
     } catch {
       // Сообщение об ошибке уже показано.
-    } finally {
-      setArchiveBusy(false);
     }
   };
 
@@ -169,11 +173,31 @@ export function AgentsList() {
         disabled: archived,
         onSelect: () => setEditingAgent(agent),
       },
+      ...(archived
+        ? []
+        : [
+            {
+              label: "Создать деплоймент",
+              icon: <RocketIcon className="size-4" />,
+              onSelect: () => nav(`/deployments/new?agent=${agent.id}`),
+            },
+          ]),
+      archived
+        ? {
+            label: t.common.unarchive,
+            icon: <ArchiveRestoreIcon className="size-4" />,
+            onSelect: () => void unarchiveAgent(agent),
+          }
+        : {
+            label: t.common.archive,
+            icon: <ArchiveIcon className="size-4" />,
+            onSelect: () => setArchivingAgent(agent),
+          },
       {
-        label: archived ? t.common.unarchive : t.common.archive,
-        icon: <ArchiveIcon className="size-4" />,
-        disabled: archived,
-        onSelect: () => setArchivingAgent(agent),
+        label: t.common.delete,
+        icon: <Trash2Icon className="size-4" />,
+        destructive: true,
+        onSelect: () => setDeletingAgent(agent),
       },
     ];
   };
@@ -351,15 +375,34 @@ export function AgentsList() {
         customSkills={customSkills}
         modelCards={modelCards}
       />
-      <ConfirmDialog
-        open={!!archivingAgent}
+      <DangerDialog
+        open={archivingAgent !== null}
+        operation="archive"
+        target={archivingAgent ? { kind: "agent", id: archivingAgent.id } : null}
+        ifMatch={archivingAgent ? `"${archivingAgent.version}"` : undefined}
         title="Отправить агента в архив?"
-        message={`Агент станет доступен только для чтения, новые сессии с ним создать нельзя. ${t.agents.confirmDelete}`}
+        message="Агент станет доступен только для чтения, новые сессии с ним создать нельзя."
         confirmLabel={t.common.archive}
-        destructive
-        busy={archiveBusy}
-        onConfirm={() => void confirmArchive()}
-        onCancel={() => setArchivingAgent(null)}
+        run={(options) => managedApi.agents.archive(archivingAgent!.id, options)}
+        onDone={() => {
+          setArchivingAgent(null);
+          refreshAgents();
+        }}
+        onClose={() => setArchivingAgent(null)}
+      />
+      <DangerDialog
+        open={deletingAgent !== null}
+        operation="delete"
+        target={deletingAgent ? { kind: "agent", id: deletingAgent.id } : null}
+        ifMatch={deletingAgent ? `"${deletingAgent.version}"` : undefined}
+        title={deletingAgent ? `Удалить агента «${deletingAgent.name}»?` : "Удалить агента?"}
+        message="Агент и все его версии будут удалены. Сессии сохранят снимок агента."
+        run={(options) => managedApi.agents.delete(deletingAgent!.id, options)}
+        onDone={() => {
+          setDeletingAgent(null);
+          refreshAgents();
+        }}
+        onClose={() => setDeletingAgent(null)}
       />
     </DataTable>
   );

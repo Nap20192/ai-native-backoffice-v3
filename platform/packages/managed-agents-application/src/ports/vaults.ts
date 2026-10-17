@@ -1,3 +1,4 @@
+import type { DependencyConflict } from "./dependencies";
 import type { Vault } from "../domain/vault";
 
 export type VaultView = Vault;
@@ -36,6 +37,10 @@ export interface ArchiveVaultCommand {
   vaultId: string;
 }
 
+export interface UnarchiveVaultCommand {
+  vaultId: string;
+}
+
 export type CreateVaultResult =
   | { type: "created"; vault: VaultView }
   | { type: "invalid_request"; message: string };
@@ -56,10 +61,16 @@ export type ListVaultsResult =
 
 export type DeleteVaultResult =
   | { type: "deleted"; vaultId: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export type ArchiveVaultResult =
   | { type: "archived"; vault: VaultView }
+  | DependencyConflict
+  | { type: "not_found" };
+
+export type UnarchiveVaultResult =
+  | { type: "unarchived"; vault: VaultView }
   | { type: "not_found" };
 
 export interface VaultsApplicationPort {
@@ -69,4 +80,5 @@ export interface VaultsApplicationPort {
   listVaults(query: ListVaultsQuery): Promise<ListVaultsResult>;
   deleteVault(command: DeleteVaultCommand): Promise<DeleteVaultResult>;
   archiveVault(command: ArchiveVaultCommand): Promise<ArchiveVaultResult>;
+  unarchiveVault(command: UnarchiveVaultCommand): Promise<UnarchiveVaultResult>;
 }

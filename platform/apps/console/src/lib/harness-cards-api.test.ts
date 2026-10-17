@@ -12,8 +12,10 @@ import {
   isHarnessCardsUnsupported,
   requestHarnessCards,
   useArchivedHarnessCard,
+  useArchiveHarnessCard,
   useCreateHarnessCard,
   useDeleteHarnessCard,
+  useUnarchiveHarnessCard,
   useHarnessCards,
   useUpdateHarnessCard,
   type HarnessCard,
@@ -234,20 +236,69 @@ describe("создание, правка и удаление", () => {
     expect(seen).toEqual({ url: "hcard_1", body: { name: "Новое имя" } });
   });
 
-  it("удаляет карточку и возвращает ответ сервера", async () => {
+  it("убирает карточку в архив через /archive с If-Match", async () => {
+    let seen: { ifMatch: string | null } | undefined;
     server.use(
-      http.delete(`*${HARNESS_CARDS_PATH}/:id`, ({ params }) =>
-        HttpResponse.json({ type: "harness_card_deleted", id: params.id }),
+      http.post(`*${HARNESS_CARDS_PATH}/:id/archive`, ({ params, request }) => {
+        seen = { ifMatch: request.headers.get("if-match") };
+        return HttpResponse.json({ id: params.id, archived_at: "2026-10-16T00:00:00.000Z" });
+      }),
+    );
+    const { result } = renderHook(() => useArchiveHarnessCard(), { wrapper: wrapper() });
+
+    let reply: unknown;
+    await act(async () => {
+      reply = await result.current.mutateAsync({ id: "hcard_1", ifMatch: "2026-10-16T11:00:00.000Z" });
+    });
+
+    expect(reply).toEqual({ id: "hcard_1", archived_at: "2026-10-16T00:00:00.000Z" });
+    expect(seen).toEqual({ ifMatch: "2026-10-16T11:00:00.000Z" });
+  });
+
+  it("возвращает карточку из архива через /unarchive", async () => {
+    let called = "";
+    server.use(
+      http.post(`*${HARNESS_CARDS_PATH}/:id/unarchive`, ({ params }) => {
+        called = String(params.id);
+        return HttpResponse.json(card({ archived_at: null }));
+      }),
+    );
+    const { result } = renderHook(() => useUnarchiveHarnessCard(), { wrapper: wrapper() });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: "hcard_1" });
+    });
+
+    expect(called).toBe("hcard_1");
+  });
+
+  it("удаляет карточку совсем через DELETE и отдаёт 409 со списком зависимостей", async () => {
+    const dependencies = {
+      blocking: [{ kind: "agent", id: "agent_1", name: "Бот", status: null, note: null }],
+      affected: [],
+      truncated: false,
+    };
+    server.use(
+      http.delete(`*${HARNESS_CARDS_PATH}/:id`, () =>
+        HttpResponse.json(
+          {
+            type: "error",
+            error: { type: "dependency_conflict_error", message: "blocked", dependencies },
+          },
+          { status: 409 },
+        ),
       ),
     );
     const { result } = renderHook(() => useDeleteHarnessCard(), { wrapper: wrapper() });
 
-    let reply: unknown;
+    let error: unknown;
     await act(async () => {
-      reply = await result.current.mutateAsync("hcard_1");
+      error = await result.current.mutateAsync({ id: "hcard_1" }).catch((e: unknown) => e);
     });
 
-    expect(reply).toEqual({ type: "harness_card_deleted", id: "hcard_1" });
+    expect(error).toBeInstanceOf(HarnessCardsApiError);
+    expect((error as HarnessCardsApiError).status).toBe(409);
+    expect((error as HarnessCardsApiError).dependencies).toEqual(dependencies);
   });
 
   it("отдаёт ошибку создания с полем из ответа сервера", async () => {

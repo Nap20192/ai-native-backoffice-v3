@@ -4,6 +4,8 @@
 import { Hono, type Context } from "hono";
 import {
   BUILDER_ALWAYS_ALLOW_TOOLS,
+  BUILDER_DANGER_TOOLS,
+  BUILDER_TEMPLATE_VERSION,
   BUILDER_WRITE_TOOLS,
   buildBuilderAgentConfig,
   buildBuilderDraftTools,
@@ -25,6 +27,7 @@ const TOOL_GROUPS = [
   { id: "read", title: "Чтение и поиск", confirm: false, tools: READ_TOOLS },
   { id: "draft", title: "Черновик", confirm: false, tools: ["preview_change"] },
   { id: "write", title: "Создание и правка", confirm: true, tools: [...BUILDER_WRITE_TOOLS] },
+  { id: "danger", title: "Архив и удаление", confirm: true, tools: [...BUILDER_DANGER_TOOLS] },
 ];
 
 export function buildBuilderBundleRoutes(deps: BuilderBundleRoutesDeps): Hono<{ Variables: Variables }> {
@@ -39,6 +42,7 @@ export function buildBuilderBundleRoutes(deps: BuilderBundleRoutesDeps): Hono<{ 
     return c.json(
       {
         type: "builder_bundle",
+        template_version: BUILDER_TEMPLATE_VERSION,
         needs_model: model === undefined,
         environment: buildBuilderEnvironmentConfig(),
         agent: buildBuilderAgentConfig({ platformMcpUrl: deps.platformMcpUrl, ...(model === undefined ? {} : { model }) }),

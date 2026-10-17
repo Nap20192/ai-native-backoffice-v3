@@ -6,7 +6,8 @@ import { unzipSync } from "fflate";
 import { z } from "zod";
 import { isAssistantAgent } from "../classify";
 import { wrapData } from "../data-wrap";
-import { ROUTES } from "../route-rules";
+import { DEPENDENCY_KINDS, DEPENDENCY_ROUTES, ROUTES, type DependencyKind } from "../route-rules";
+import { DELETE_OR_ARCHIVE_KINDS, readDependencies } from "./danger";
 import { cleanObject, scanValue, type ShapeKind } from "../response-shape";
 import {
   encodeId,
@@ -51,6 +52,7 @@ export const LIST_KINDS: Readonly<Record<string, ListKind>> = {
   credentials: { shape: "credential", required: ["vault_id"], path: (f) => `/v1/vaults/${enc(String(f.vault_id))}/credentials` },
   deployments: { shape: "deployment", path: () => "/v1/deployments" },
   deployment_runs: { shape: "deployment_run", path: () => "/v1/deployment_runs", query: { deployment_id: "deployment_id" } },
+  session_resources: { shape: "session_resource", required: ["session_id"], path: (f) => `/v1/sessions/${enc(String(f.session_id))}/resources` },
   sessions: {
     shape: "session",
     path: () => "/v1/sessions",
@@ -159,7 +161,7 @@ export const listTool: ToolDef<z.infer<typeof listArgs>> = {
   routes: [
     ROUTES.agents, ROUTES.agentVersions, ROUTES.environments, ROUTES.skills, ROUTES.skillVersions, ROUTES.files,
     ROUTES.memoryStores, ROUTES.memories, ROUTES.vaults, ROUTES.credentials, ROUTES.deployments, ROUTES.deploymentRuns,
-    ROUTES.sessions, ROUTES.evalRuns, ROUTES.modelCards, ROUTES.modelOptions, ROUTES.harnesses, ROUTES.harnessCards,
+    ROUTES.sessions, ROUTES.sessionResources, ROUTES.evalRuns, ROUTES.modelCards, ROUTES.modelOptions, ROUTES.harnesses, ROUTES.harnessCards,
   ],
   precondition: null,
   async run(ctx, args) {
@@ -529,4 +531,36 @@ export const requestSecretTool: ToolDef<z.infer<typeof requestSecretArgs>> = {
   },
 };
 
-export const READ_TOOLS = [listTool, getTool, readContentTool, getSessionEventsTool, getTrajectoryTool, requestSecretTool];
+const dependencyArgs = z
+  .object({
+    kind: z.enum(DELETE_OR_ARCHIVE_KINDS),
+    id: z.string().min(1),
+    operation: z.enum(["archive", "delete"]),
+    version: z.union([z.string().min(1), z.number().int().min(1)]).optional(),
+    parent_id: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const getDependenciesTool: ToolDef<z.infer<typeof dependencyArgs>> = {
+  name: "get_dependencies",
+  group: "read",
+  description:
+    "Что мешает архиву или удалению объекта (blocking) и что они затронут (affected). Вызывай до archive_object и delete_object. version нужен для skill_version.",
+  args: dependencyArgs,
+  routes: Object.values(DEPENDENCY_ROUTES),
+  precondition: null,
+  async run(ctx, args) {
+    if (args.kind === "skill_version" && args.version === undefined) return errorOutput("Для вида skill_version нужен version");
+    const kind = (DEPENDENCY_KINDS as readonly string[]).includes(args.kind) ? (args.kind as DependencyKind) : null;
+    let report;
+    try {
+      report = await readDependencies({ ...ctx, batch: null }, kind, args, args.operation);
+    } catch (error) {
+      if (error instanceof RouteError && error.response.status === 404) return errorOutput("Объект не найден. Проверь id через list");
+      throw error;
+    }
+    return { text: json({ kind: args.kind, id: args.id, operation: args.operation, ...report }) };
+  },
+};
+
+export const READ_TOOLS = [listTool, getTool, readContentTool, getSessionEventsTool, getTrajectoryTool, requestSecretTool, getDependenciesTool];

@@ -1,4 +1,5 @@
 import type {
+  DeleteVaultCredentials,
   ArchiveCredentialRecord,
   ArchiveCredentialRecordResult,
   CredentialLocation,
@@ -124,5 +125,15 @@ export class MemoryCredentialStore implements CredentialStore {
         || left.credential.id.localeCompare(right.credential.id))
       .slice(0, input.limit)
       .map(clone);
+  }
+
+  async deleteAllInVault(
+    input: DeleteVaultCredentials,
+  ): Promise<{ deleted: number }> {
+    const workspace = this.workspaces.get(input.workspaceId);
+    const vault = workspace?.get(input.vaultId);
+    if (vault === undefined) return { deleted: 0 };
+    workspace?.delete(input.vaultId);
+    return { deleted: vault.size };
   }
 }

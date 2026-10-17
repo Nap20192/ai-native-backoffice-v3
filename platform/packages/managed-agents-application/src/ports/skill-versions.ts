@@ -1,3 +1,4 @@
+import type { DependencyConflict } from "./dependencies";
 export interface SkillVersionUploadFileInput {
   filename: string;
   mimeType: string;
@@ -43,6 +44,8 @@ export interface SkillVersionsPage {
 export interface DeleteSkillVersionCommand {
   skillId: string;
   version: string;
+  /** The skill revision from ETag (`If-Match`). */
+  expectedRevision?: number;
 }
 
 export interface DownloadSkillVersionQuery {
@@ -73,8 +76,10 @@ export type ListSkillVersionsResult =
   | { type: "not_found" };
 
 export type DeleteSkillVersionResult =
-  | { type: "deleted"; version: string }
+  | { type: "deleted"; version: string; skillRevision?: number }
   | { type: "version_conflict"; message: string }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export type DownloadSkillVersionResult =

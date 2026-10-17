@@ -49,3 +49,12 @@ export {
   type SqlErrorTranslator,
   type TaggedDbError,
 } from "./db-errors";
+
+/**
+ * `%value%` for `column LIKE ? ESCAPE '!'`: matches rows whose text contains
+ * `value` literally. The `!` escape works the same on SQLite, PostgreSQL and
+ * MySQL, a backslash does not.
+ */
+export function containsLikePattern(value: string): string {
+  return `%${value.replace(/[!%_]/gu, (character) => `!${character}`)}%`;
+}

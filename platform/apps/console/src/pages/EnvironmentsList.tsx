@@ -1,16 +1,14 @@
 import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, TrashIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, TrashIcon, PlusIcon } from "lucide-react";
 import type { BetaEnvironment as Env } from "@anthropic-ai/sdk/resources/beta/environments/environments";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { Modal } from "../components/Modal";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
@@ -19,11 +17,9 @@ import { DataTable, type ColumnDef } from "../components/DataTable";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip, CreatedFilterChip } from "../components/FilterChip";
 import { useI18n } from "../i18n";
-import {
-  ENVIRONMENT_TEMPLATES,
-  environmentTemplateFields,
-  type EnvironmentTemplate,
-} from "../lib/environment-templates";
+import { EMPTY_TEMPLATE_ID, pickTemplate, templatesFor } from "../lib/environment-templates";
+import { useSandboxCatalog } from "../lib/sandbox-catalog";
+import { TemplatePicker } from "./environments/TemplatePicker";
 
 type StatusValue = "any" | "active" | "archived";
 
@@ -48,12 +44,20 @@ export function EnvironmentsList() {
   const emptyForm = {
     name: "",
     description: "",
-    template: "empty" as EnvironmentTemplate["id"],
+    template: EMPTY_TEMPLATE_ID,
   };
   const [form, setForm] = useState(emptyForm);
+  // Шаблоны приходят из каталога сервера. Запрос идёт при открытии страницы, к
+  // моменту нажатия «Новое окружение» ответ уже в кэше.
+  const sandboxCatalog = useSandboxCatalog();
+  const templates = useMemo(
+    () => templatesFor({ catalog: sandboxCatalog.catalog, isLoading: sandboxCatalog.isLoading }),
+    [sandboxCatalog.catalog, sandboxCatalog.isLoading],
+  );
+  const selectedTemplate = pickTemplate(templates, form.template);
+  // Архив и удаление идут через DangerDialog со списком зависимостей.
+  const [archiveTarget, setArchiveTarget] = useState<Env | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Env | null>(null);
-  const [askDelete, setAskDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   // Фильтры идут на сервер: каждое значение попадает в envsParams,
   // useInfiniteApiQuery при смене параметров возвращается на первую
@@ -94,7 +98,7 @@ export function EnvironmentsList() {
     try {
       await managedApi.environments.create({
         name: form.name,
-        ...environmentTemplateFields(form.template),
+        ...selectedTemplate.fields,
         description: form.description || undefined,
       });
       setShowCreate(false);
@@ -107,17 +111,12 @@ export function EnvironmentsList() {
     }
   };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
+  const restore = async (environment: Env) => {
     try {
-      await managedApi.environments.delete(deleteTarget.id);
+      await managedApi.environments.unarchive(environment.id);
       load();
     } catch {
       // Ошибку уже показал клиент API.
-    } finally {
-      setDeleting(false);
-      setAskDelete(false);
     }
   };
 
@@ -230,27 +229,22 @@ export function EnvironmentsList() {
       getRowId={(e) => e.id}
       onRowClick={(e) => nav(`/environments/${e.id}`)}
       rowActions={(environment) => [
-        {
-          label: t.common.archive,
-          icon: <ArchiveIcon className="size-4" />,
-          disabled: Boolean(environment.archived_at),
-          onSelect: async () => {
-            try {
-              await managedApi.environments.archive(environment.id);
-              load();
-            } catch {
-              // Ошибку уже показал клиент API.
+        environment.archived_at
+          ? {
+              label: t.common.unarchive,
+              icon: <ArchiveRestoreIcon className="size-4" />,
+              onSelect: () => void restore(environment),
             }
-          },
-        },
+          : {
+              label: t.common.archive,
+              icon: <ArchiveIcon className="size-4" />,
+              onSelect: () => setArchiveTarget(environment),
+            },
         {
           label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
           destructive: true,
-          onSelect: () => {
-            setDeleteTarget(environment);
-            setAskDelete(true);
-          },
+          onSelect: () => setDeleteTarget(environment),
         },
       ]}
       hasMore={hasMore}
@@ -273,13 +267,18 @@ export function EnvironmentsList() {
         onClose={() => setShowCreate(false)}
         title="Новое окружение"
         subtitle="Окружения дают изолированные песочницы для выполнения кода."
+        maxWidth="max-w-3xl"
         closeDisabled={creating}
         footer={
           <>
             <Button variant="ghost" onClick={() => setShowCreate(false)} disabled={creating}>
               {t.common.cancel}
             </Button>
-            <Button onClick={create} disabled={!form.name} loading={creating}>
+            <Button
+              onClick={create}
+              disabled={!form.name || !selectedTemplate.available}
+              loading={creating}
+            >
               {t.common.create}
             </Button>
           </>
@@ -303,34 +302,13 @@ export function EnvironmentsList() {
           </Field>
           <div>
             <div className="label" id="env-template-label">Шаблон</div>
-            <RadioGroup
-              aria-labelledby="env-template-label"
-              value={form.template}
-              onValueChange={(value) =>
-                setForm({ ...form, template: value as EnvironmentTemplate["id"] })
-              }
-              className="gap-2"
-            >
-              {ENVIRONMENT_TEMPLATES.map((template) => (
-                <Label
-                  key={template.id}
-                  htmlFor={`env-template-${template.id}`}
-                  className="flex cursor-pointer items-start gap-2 rounded-xl border border-ddc-border p-3"
-                >
-                  <RadioGroupItem
-                    id={`env-template-${template.id}`}
-                    value={template.id}
-                    className="mt-0.5"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-ddc-heading">{template.label}</span>
-                    <span className="block text-xs leading-relaxed font-normal text-ddc-text-muted">
-                      {template.hint}
-                    </span>
-                  </span>
-                </Label>
-              ))}
-            </RadioGroup>
+            <TemplatePicker
+              labelId="env-template-label"
+              templates={templates}
+              value={selectedTemplate.id}
+              onChange={(template) => setForm({ ...form, template })}
+              loading={sandboxCatalog.isLoading}
+            />
           </div>
           <Field label="Описание (необязательно)">
             <Textarea
@@ -344,15 +322,34 @@ export function EnvironmentsList() {
         </div>
       </Modal>
 
-      <ConfirmDialog
-        open={askDelete}
+      <DangerDialog
+        open={archiveTarget !== null}
+        operation="archive"
+        target={archiveTarget ? { kind: "environment", id: archiveTarget.id } : null}
+        etagPath={archiveTarget ? `/v1/environments/${archiveTarget.id}` : undefined}
+        title="Отправить окружение в архив?"
+        message={archiveTarget ? `Окружение «${archiveTarget.name}» перестанет выбираться для новых сессий.` : undefined}
+        confirmLabel={t.common.archive}
+        run={(options) => managedApi.environments.archive(archiveTarget!.id, options)}
+        onDone={() => {
+          setArchiveTarget(null);
+          load();
+        }}
+        onClose={() => setArchiveTarget(null)}
+      />
+      <DangerDialog
+        open={deleteTarget !== null}
+        operation="delete"
+        target={deleteTarget ? { kind: "environment", id: deleteTarget.id } : null}
+        etagPath={deleteTarget ? `/v1/environments/${deleteTarget.id}` : undefined}
         title={`Удалить окружение «${deleteTarget?.name ?? ""}»?`}
-        message="Действие нельзя отменить."
-        confirmLabel={t.common.delete}
-        destructive
-        busy={deleting}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setAskDelete(false)}
+        message="Окружение будет удалено вместе с настройками."
+        run={(options) => managedApi.environments.delete(deleteTarget!.id, options)}
+        onDone={() => {
+          setDeleteTarget(null);
+          load();
+        }}
+        onClose={() => setDeleteTarget(null)}
       />
     </DataTable>
   );

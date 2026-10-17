@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { OP_CLASS_ORDER, type ActionResult, type ActionRow, type ConfirmationRow, type OpClass } from "./ports";
 import { buildPreview, opContext } from "./preview";
 import { resolveRefs } from "./tools/batch";
-import { RouteError, type CallContext, type ToolDef, type ToolOutput, type WriteOutcome } from "./tools/common";
+import { dependencyDigest, RouteError, targetKindOf, type CallContext, type ToolDef, type ToolOutput, type WriteOutcome } from "./tools/common";
 import { readAllEvents } from "./tools/read";
 
 export const MESSAGES = {
@@ -186,7 +186,7 @@ export async function runConfirmedCall(
         opIndex: op.opIndex,
         args: op.args,
         result,
-        targetKind: op.tool.op?.targetKind ?? null,
+        targetKind: targetKindOf(op.tool, op.args),
         startedAt: opStarted,
         ...confirmLog,
         ...extra,
@@ -214,6 +214,14 @@ export async function runConfirmedCall(
         await row("refused_class", { cls: plan.cls, targetId: plan.targetId, errorMessage: MESSAGES.cls });
         failed = MESSAGES.cls;
         lines.push(`${index + 1}. ${op.tool.name}: ${MESSAGES.cls}`);
+        continue;
+      }
+      // Archive and delete read the dependencies once more right before the write (crud.md 3.4).
+      const confirmedDependencies = ctx.libs.canonicalJson(dependencyDigest(preview.ops[index]?.plan.dependencies));
+      if (ctx.libs.canonicalJson(dependencyDigest(plan.dependencies)) !== confirmedDependencies) {
+        await row("refused_stale", { cls: plan.cls, targetId: plan.targetId, errorMessage: MESSAGES.stale });
+        failed = MESSAGES.stale;
+        lines.push(`${index + 1}. ${op.tool.name}: ${MESSAGES.stale}`);
         continue;
       }
       const revision = confirmation.targetRevisions[index] ?? plan.revision;

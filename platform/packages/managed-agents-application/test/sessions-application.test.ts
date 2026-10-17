@@ -1019,8 +1019,8 @@ describe("SessionsApplicationService", () => {
         type: "stopped",
         workspaceId: "workspace_01",
         sessionId: "session_archive",
-        session:
-          archived.type === "archived" ? archived.session : null,
+        // The turn stops before the archive write (docs/plans/crud.md, 2.2).
+        session: expect.objectContaining({ id: "session_archive", archivedAt: null }),
         reason: "archived",
       },
     ]);

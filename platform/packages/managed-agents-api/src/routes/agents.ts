@@ -13,8 +13,17 @@ import {
   agentRetrieveQuerySchema,
   agentUpdateBodySchema,
   agentVersionListQuerySchema,
+  deletedAgentResponseSchema,
 } from "../contracts/agents";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
+import {
+  apiError,
+  conflict,
+  dependencyConflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import { readRevisionIfMatch, setRevisionETag } from "../if-match";
 import {
   toAgentResponse,
   toCreateAgentCommand,
@@ -113,6 +122,9 @@ export function buildAgentRoutes(source: AgentsApplicationPortSource): Hono {
       return c.json(apiError("Application returned an invalid agent resource"), 500);
     }
 
+    // ETag carries the current version; If-Match on archive and delete
+    // compares it (docs/plans/crud.md, 1.4).
+    if (query.data.version === undefined) setRevisionETag(c, result.agent.version);
     return c.json(agent, 200);
   });
 
@@ -150,11 +162,22 @@ export function buildAgentRoutes(source: AgentsApplicationPortSource): Hono {
   });
 
   app.post("/:agentId/archive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     const result = await resolveApplicationPort(source, c).archiveAgent({
       agentId: c.req.param("agentId"),
+      ...(precondition.type === "revision" && { expectedVersion: precondition.revision }),
     });
     if (result.type === "not_found") {
       return c.json(notFound(`Agent ${c.req.param("agentId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
 
     const agent = serializeAgent(result.agent);
@@ -162,7 +185,59 @@ export function buildAgentRoutes(source: AgentsApplicationPortSource): Hono {
       return c.json(apiError("Application returned an invalid agent resource"), 500);
     }
 
+    setRevisionETag(c, result.agent.version);
     return c.json(agent, 200);
+  });
+
+  app.post("/:agentId/unarchive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).unarchiveAgent({
+      agentId: c.req.param("agentId"),
+      ...(precondition.type === "revision" && { expectedVersion: precondition.revision }),
+    });
+    if (result.type === "not_found") {
+      return c.json(notFound(`Agent ${c.req.param("agentId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    const agent = serializeAgent(result.agent);
+    if (agent === null) {
+      return c.json(apiError("Application returned an invalid agent resource"), 500);
+    }
+    setRevisionETag(c, result.agent.version);
+    return c.json(agent, 200);
+  });
+
+  app.delete("/:agentId", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).deleteAgent({
+      agentId: c.req.param("agentId"),
+      ...(precondition.type === "revision" && { expectedVersion: precondition.revision }),
+    });
+    if (result.type === "not_found") {
+      return c.json(notFound(`Agent ${c.req.param("agentId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
+    }
+    const response = deletedAgentResponseSchema.safeParse({
+      id: result.agentId,
+      type: "agent_deleted",
+    });
+    if (!response.success) {
+      return c.json(apiError("Application returned an invalid agent deletion result"), 500);
+    }
+    return c.json(response.data, 200);
   });
 
   app.post("/:agentId", async (c) => {
@@ -202,6 +277,7 @@ export function buildAgentRoutes(source: AgentsApplicationPortSource): Hono {
       return c.json(apiError("Application returned an invalid agent resource"), 500);
     }
 
+    setRevisionETag(c, result.agent.version);
     return c.json(agent, 200);
   });
 

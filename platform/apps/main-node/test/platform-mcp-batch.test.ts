@@ -108,7 +108,7 @@ describe("platform MCP batch", () => {
     const secondUse = fake.propose("apply_changes", second);
     expect((await fake.confirm(secondUse)).status).toBe(200);
     fake.hooks.afterDigestCheck = (info) => {
-      if (info.tool === "update_memory_store") fake.deployment(deployment.id).status = "active";
+      if (info.tool === "update_memory_store") fake.deployment(deployment.id).archived_at = "2026-10-16T11:00:00.000Z";
     };
     await fake.run("apply_changes", second, secondUse);
     fake.hooks.afterDigestCheck = undefined;

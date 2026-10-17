@@ -7,6 +7,7 @@ import {
 import { useCallback, useMemo } from "react";
 
 import { getActiveTenantId, localizeApiError, readApiError } from "./api";
+import { dependenciesFromErrorBody, type DependencyReport } from "./dependencies";
 
 /**
  * Клиент карточек своих harness (`/v1/oma/harness_cards`). Типы повторяют
@@ -70,12 +71,20 @@ export interface HarnessCardDeleted {
 export class HarnessCardsApiError extends Error {
   readonly status: number;
   readonly field: string | null;
+  /** Список зависимостей из 409 `dependency_conflict_error`. */
+  readonly dependencies?: DependencyReport;
 
-  constructor(message: string, status: number, field: string | null) {
+  constructor(
+    message: string,
+    status: number,
+    field: string | null,
+    dependencies?: DependencyReport,
+  ) {
     super(message);
     this.name = "HarnessCardsApiError";
     this.status = status;
     this.field = field;
+    this.dependencies = dependencies;
   }
 }
 
@@ -114,6 +123,7 @@ export async function requestHarnessCards<T>(
       localizeApiError(readApiError(body, response.status), response.status),
       response.status,
       field,
+      dependenciesFromErrorBody(body) ?? undefined,
     );
   }
   return (await response.json()) as T;
@@ -242,13 +252,51 @@ export function useUpdateHarnessCard() {
   });
 }
 
+/** Карточка и её ревизия для `If-Match`: у карточки это `updated_at`. */
+export interface HarnessCardTarget {
+  id: string;
+  ifMatch?: string;
+}
+
+function guardedInit(method: string, ifMatch?: string): RequestInit {
+  return ifMatch ? { method, headers: { "If-Match": ifMatch } } : { method };
+}
+
+/** Убирает карточку в архив (docs/plans/crud.md, 2.8). */
+export function useArchiveHarnessCard() {
+  const refresh = useRefreshAfterChange();
+  return useMutation<HarnessCard, Error, HarnessCardTarget>({
+    mutationFn: ({ id, ifMatch }) =>
+      requestHarnessCards<HarnessCard>(
+        `${HARNESS_CARDS_PATH}/${encodeURIComponent(id)}/archive`,
+        guardedInit("POST", ifMatch),
+      ),
+    onSuccess: refresh,
+  });
+}
+
+/** Возвращает карточку из архива. */
+export function useUnarchiveHarnessCard() {
+  const refresh = useRefreshAfterChange();
+  return useMutation<HarnessCard, Error, HarnessCardTarget>({
+    mutationFn: ({ id, ifMatch }) =>
+      requestHarnessCards<HarnessCard>(
+        `${HARNESS_CARDS_PATH}/${encodeURIComponent(id)}/unarchive`,
+        guardedInit("POST", ifMatch),
+      ),
+    onSuccess: refresh,
+  });
+}
+
+/** Удаляет карточку совсем. Агенты с этим `harness_id` блокируют удаление (409). */
 export function useDeleteHarnessCard() {
   const refresh = useRefreshAfterChange();
-  return useMutation<HarnessCardDeleted, Error, string>({
-    mutationFn: (id) =>
-      requestHarnessCards<HarnessCardDeleted>(`${HARNESS_CARDS_PATH}/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      }),
+  return useMutation<HarnessCardDeleted, Error, HarnessCardTarget>({
+    mutationFn: ({ id, ifMatch }) =>
+      requestHarnessCards<HarnessCardDeleted>(
+        `${HARNESS_CARDS_PATH}/${encodeURIComponent(id)}`,
+        guardedInit("DELETE", ifMatch),
+      ),
     onSuccess: refresh,
   });
 }

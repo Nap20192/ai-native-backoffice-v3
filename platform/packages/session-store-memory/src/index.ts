@@ -115,6 +115,13 @@ export class MemorySessionStore implements SessionStore {
       .filter((record) => input.createdAtOrBefore === undefined || record.session.createdAt <= input.createdAtOrBefore)
       .filter((record) => input.deploymentId === undefined || record.session.deploymentId === input.deploymentId)
       .filter((record) => input.statuses === undefined || input.statuses.includes(record.session.status))
+      .filter((record) => input.environmentId === undefined || record.session.environmentId === input.environmentId)
+      .filter((record) =>
+        input.fileId === undefined
+        || record.session.resources.some(
+          (resource) => resource.type === "file" && resource.fileId === input.fileId,
+        ))
+      .filter((record) => input.vaultId === undefined || record.session.vaultIds.includes(input.vaultId))
       .filter((record) =>
         input.memoryStoreId === undefined
         || record.session.resources.some(

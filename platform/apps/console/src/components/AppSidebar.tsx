@@ -38,6 +38,7 @@ function useNavGroups(): NavGroup[] {
       items: [
         { to: "/agents", label: t.nav.agents, icon: NAV_ICONS.agents },
         { to: "/sessions", label: t.nav.sessions, icon: NAV_ICONS.sessions },
+        { to: "/deployments", label: t.nav.deployments, icon: NAV_ICONS.deployments },
         { to: "/files", label: t.nav.files, icon: NAV_ICONS.files },
         { to: "/evals", label: t.nav.evalRuns, icon: NAV_ICONS.evals },
       ],

@@ -22,22 +22,39 @@
 // must be collected via setEnvVars / mountMemoryStore / ctor opts before
 // the first exec/readFile/writeFile call. We track this via `created` —
 // once true, mutating ops that affect ctor opts throw.
+//
+// Image: the server image (`SANDBOX_IMAGE`, default node:22-bookworm) with
+// the LITEBOX_* resources, or the catalog image of the environment
+// (docs/plans/environments.md, 1.6-1.7): an OCI layout passed to BoxLite as
+// `rootfsPath`, or a registry reference pinned by digest, with the catalog's
+// disk, memory and CPUs. The digest of a layout is checked against its
+// index.json right before the VM boots. Agent commands run in bash when the
+// image has it; the server image keeps POSIX sh.
 
 import type {
   ProcessHandle,
   SandboxDuplexProcess,
   SandboxDuplexProcessPort,
   SandboxDuplexProcessSpec,
+  SandboxEgress,
+  SandboxEnvironmentImage,
   SandboxEnvironmentNetworking,
+  SandboxEnvironmentSnapshot,
+  SandboxEnvironmentSnapshotPort,
   SandboxEnvironmentSpec,
   SandboxExecutor,
   SandboxFactory,
+  SandboxPackageManager,
+  SandboxShell,
+  SandboxVmResources,
 } from "@open-managed-agents/sandbox";
 import {
   buildEnvironmentSetupScript,
   environmentPackageLists,
   PACKAGE_MANAGER_HOSTS,
+  SandboxEnvironmentError,
 } from "@open-managed-agents/sandbox";
+import { readOciIndexDigest } from "@open-managed-agents/sandbox/environment";
 import { promises as dns } from "node:dns";
 import { promises as fs, mkdirSync } from "node:fs";
 import { isIP } from "node:net";
@@ -71,10 +88,33 @@ type LiteBoxNetwork =
   | { mode: "enabled"; allowNet?: string[] }
   | { mode: "disabled" };
 
+const WORKSPACE = "/workspace";
+const DEFAULT_SERVER_IMAGE = "node:22-bookworm";
+/** Looks for bash once on a catalog image whose manifest names no shell. */
+const BASH_PROBE = "command -v bash >/dev/null 2>&1";
+
+/** How the box is created, fixed once per sandbox: the VM snapshot states it. */
+interface BoxPlan {
+  /** What SimpleBox boots: an OCI layout, or an image reference. */
+  source: { rootfsPath: string } | { image: string };
+  /** The catalog image; null for the server image. */
+  catalogImage: SandboxEnvironmentImage | null;
+  facts: SandboxEnvironmentSnapshot["image"];
+  /** The image as the "creating box" log line names it. */
+  label: string;
+  /** Shell of agent commands; null makes the box look for bash when it boots. */
+  shell: SandboxShell | null;
+  network: LiteBoxNetwork;
+  networking: SandboxEnvironmentNetworking;
+  resources: SandboxVmResources;
+  packages: Partial<Record<SandboxPackageManager, string[]>>;
+}
+
 export interface LiteBoxSandboxOptions {
-  /** Container image. Default: `node:22-bookworm` (includes git for Managed repository resources). */
+  /** Server image, used when the environment has no catalog image.
+   *  Default: `node:22-bookworm` (includes git for Managed repository resources). */
   image?: string;
-  /** Optional VM resource limits. */
+  /** Optional VM resource limits; a catalog image brings its own. */
   memoryMib?: number;
   cpus?: number;
   /** Root disk size of the VM in GB. BoxLite 0.9.0 sizes it to the image
@@ -101,7 +141,8 @@ export interface LiteBoxSandboxOptions {
    *  the session workdir so crash leftovers are reaped with the session. */
   scratchRoot?: string;
   /** Managed Environment applied when the box is created: packages are
-   *  installed right after boot, networking becomes the box egress policy. */
+   *  installed right after boot, networking becomes the box egress policy,
+   *  and a catalog image replaces the server image and its resources. */
   environment?: SandboxEnvironmentSpec;
   /** Host-side IPv4 lookup for allowed hosts pinned in the guest's
    *  /etc/hosts. Default: the host resolver (`dns.lookup`). */
@@ -158,13 +199,17 @@ interface LiteBoxInstance {
   _ensureBox?(): Promise<LiteBoxNativeBox>;
 }
 
-export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort {
+export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort, SandboxEnvironmentSnapshotPort {
   private envVars: Record<string, string> = {};
   private commandSecrets: Array<{ prefix: string; secrets: Record<string, string> }> = [];
   private volumes: Array<{ hostPath: string; guestPath: string; readOnly?: boolean }> = [];
   private boxPromise: Promise<LiteBoxInstance> | null = null;
   private logger: NonNullable<LiteBoxSandboxOptions["logger"]>;
   private tmpRoot: string;
+  private plan: BoxPlan | null = null;
+  /** What the booted box answered when the plan left the shell open. */
+  private probedShell: SandboxShell | null = null;
+  private ready: { readyAt: string; readyMs: number } | null = null;
 
   constructor(private opts: LiteBoxSandboxOptions = {}) {
     this.logger = opts.logger ?? {
@@ -184,8 +229,8 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
     const env = this.buildEnv(command);
     const timeoutMs = timeout ?? this.opts.defaultTimeoutMs ?? 120_000;
     try {
-      const r = await box.exec("sh", ["-c", command], env, {
-        cwd: "/workspace",
+      const r = await box.exec(this.agentShell() ?? "sh", ["-c", command], env, {
+        cwd: WORKSPACE,
         timeoutSecs: Math.max(1, Math.ceil(timeoutMs / 1000)),
       });
       const stderr = stripRuntimeNoise(r.stderr);
@@ -277,6 +322,31 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
         }
       },
       exited,
+    };
+  }
+
+  /**
+   * Facts of the VM for the "Environment" prompt block (plan 4.5): the image
+   * key and digest, the shell, the networking and the egress the box gets,
+   * the environment packages and the resources. Before the box boots these
+   * are the facts it will boot with and `vm` is null; reading them never
+   * boots it. Every call returns a fresh copy.
+   */
+  environmentSnapshot(): SandboxEnvironmentSnapshot {
+    const plan = this.boxPlan();
+    return {
+      image: { ...plan.facts },
+      shell: this.agentShell(),
+      workingDirectory: WORKSPACE,
+      networking: plan.networking.type === "limited"
+        ? { ...plan.networking, allowedHosts: [...plan.networking.allowedHosts] }
+        : { type: "unrestricted" },
+      egress: egressOf(plan.network),
+      packages: Object.fromEntries(
+        Object.entries(plan.packages).map(([manager, names]) => [manager, [...names]]),
+      ),
+      resources: { ...plan.resources },
+      vm: this.ready === null ? null : { ...this.ready },
     };
   }
 
@@ -451,6 +521,7 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
         this.logger.warn(`destroy stop failed: ${(err as Error).message}`);
       } finally {
         this.boxPromise = null;
+        this.ready = null;
       }
     }
     await removeBestEffort(this.tmpRoot, true);
@@ -460,12 +531,65 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
 
   private pendingCaUpload: { hostPath: string; guestPath: string } | null = null;
 
+  /** Image, resources, egress and packages of the box, worked out once:
+   *  the box boots with exactly what the snapshot states. */
+  private boxPlan(): BoxPlan {
+    if (this.plan) return this.plan;
+    const environment = this.opts.environment;
+    const catalogImage = environment?.image ?? null;
+    const serverImage = this.opts.image ?? DEFAULT_SERVER_IMAGE;
+    let source: BoxPlan["source"];
+    let facts: BoxPlan["facts"];
+    if (catalogImage === null) {
+      source = { image: serverImage };
+      facts = { key: null, reference: serverImage, digest: null, manifestSha256: null, manifest: null };
+    } else {
+      const reference = catalogImage.source.type === "registry" ? catalogImage.source.reference : null;
+      source = catalogImage.source.type === "oci"
+        ? { rootfsPath: catalogImage.source.dir }
+        : { image: catalogImage.source.reference };
+      facts = {
+        key: catalogImage.key,
+        reference,
+        digest: catalogImage.digest,
+        manifestSha256: catalogImage.manifestSha256,
+        // Every snapshot shares one copy, frozen, which the host cannot edit either.
+        manifest: catalogImage.manifest === null ? null : deepFreeze(structuredClone(catalogImage.manifest)),
+      };
+    }
+    this.plan = {
+      source,
+      catalogImage,
+      facts,
+      label: catalogImage === null ? serverImage : `${catalogImage.key} ${catalogImage.digest}`,
+      // The server image keeps POSIX sh, as before the catalog.
+      shell: catalogImage === null ? "sh" : catalogImage.shell,
+      network: liteBoxNetwork(environment?.networking, outboundProxyHosts()),
+      networking: environment?.networking ?? { type: "unrestricted" },
+      resources: {
+        diskGb: catalogImage?.resources.diskGb ?? this.opts.diskSizeGb ?? null,
+        memoryMib: catalogImage?.resources.memoryMib ?? this.opts.memoryMib ?? null,
+        cpus: catalogImage?.resources.cpus ?? this.opts.cpus ?? null,
+      },
+      packages: Object.fromEntries(
+        environmentPackageLists(environment?.packages).map(({ manager, names }) => [manager, names]),
+      ),
+    };
+    return this.plan;
+  }
+
+  /** Null until a box without a planned shell has looked for bash. */
+  private agentShell(): SandboxShell | null {
+    return this.boxPlan().shell ?? this.probedShell;
+  }
+
   private async ensureBox(): Promise<LiteBoxInstance> {
     if (this.boxPromise) return this.boxPromise;
     this.boxPromise = (async () => {
       type LiteBoxModule = {
         SimpleBox: new (options: {
           image?: string;
+          rootfsPath?: string;
           memoryMib?: number;
           cpus?: number;
           diskSizeGb?: number;
@@ -482,19 +606,20 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
           `pnpm add @boxlite-ai/boxlite (cause: ${String(err)})`,
         );
       })) as LiteBoxModule;
-      const image = this.opts.image ?? "node:22-bookworm";
+      const plan = this.boxPlan();
+      if (plan.catalogImage !== null) await verifyCatalogLayout(plan.catalogImage);
       const networking = this.opts.environment?.networking;
-      const network = liteBoxNetwork(networking, outboundProxyHosts());
-      this.logger.log(`creating box (image=${image}, network=${describeNetwork(network)})`);
-      for (const warning of allowlistWarnings(networking, network)) this.logger.warn(warning);
+      this.logger.log(`creating box (image=${plan.label}, network=${describeNetwork(plan.network)})`);
+      for (const warning of allowlistWarnings(networking, plan.network)) this.logger.warn(warning);
+      const startedAt = Date.now();
       const box = new mod.SimpleBox({
-        image,
-        memoryMib: this.opts.memoryMib,
-        cpus: this.opts.cpus,
-        diskSizeGb: this.opts.diskSizeGb,
+        ...plan.source,
+        memoryMib: plan.resources.memoryMib ?? undefined,
+        cpus: plan.resources.cpus ?? undefined,
+        diskSizeGb: plan.resources.diskGb ?? undefined,
         name: this.opts.name,
         volumes: this.volumes,
-        network,
+        network: plan.network,
       });
       try {
         await this.initializeBox(box, networking);
@@ -502,6 +627,9 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
         await box.stop().catch(() => {});
         throw err;
       }
+      const readyMs = Date.now() - startedAt;
+      this.ready = { readyAt: new Date().toISOString(), readyMs };
+      this.logger.log(`box ready in ${readyMs} ms`);
       return box;
     })();
     return this.boxPromise;
@@ -525,6 +653,10 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
       throw new Error(
         `LiteBoxSandbox could not initialize /workspace: ${stripRuntimeNoise(workspace.stderr) || workspace.stdout}`,
       );
+    }
+    if (this.boxPlan().shell === null) {
+      const probe = await box.exec("sh", ["-c", BASH_PROBE]);
+      this.probedShell = probe.exitCode === 0 ? "bash" : "sh";
     }
     const pinnable = [...(environmentAllowedHosts(networking) ?? [])]
       .filter((host) => !host.startsWith("*.") && isIP(host) === 0);
@@ -936,6 +1068,38 @@ function allowlistWarnings(
 function describeNetwork(network: LiteBoxNetwork): string {
   if (network.mode === "disabled") return "disabled";
   return network.allowNet ? `allow ${network.allowNet.length} host(s)` : "unrestricted";
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null) {
+    for (const item of Object.values(value)) deepFreeze(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function egressOf(network: LiteBoxNetwork): SandboxEgress {
+  if (network.mode === "disabled") return { type: "none" };
+  return network.allowNet ? { type: "allowlist", hosts: [...network.allowNet] } : { type: "unrestricted" };
+}
+
+/**
+ * The catalog checked the digest of an OCI layout when it loaded; a rebuild
+ * or an edit of the directory since then would boot other content under the
+ * same key. The layout is read again right before the VM: on a mismatch no
+ * VM is created. A registry reference is pinned by digest, BoxLite pulls
+ * exactly that.
+ */
+async function verifyCatalogLayout(image: SandboxEnvironmentImage): Promise<void> {
+  if (image.source.type !== "oci") return;
+  const onDisk = await readOciIndexDigest(image.source.dir);
+  if (onDisk === image.digest) return;
+  throw new SandboxEnvironmentError(
+    "image_changed_on_disk",
+    `sandbox image "${image.key}" changed on disk after the catalog checked it: index.json ` +
+    `${onDisk === null ? "has no readable manifest digest" : `points to ${onDisk}`}, the catalog verified ` +
+    `${image.digest}. The VM was not created (image_changed_on_disk).`,
+  );
 }
 
 /** The vault proxy stays reachable when egress is limited to some hosts.

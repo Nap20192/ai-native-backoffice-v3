@@ -67,6 +67,7 @@ const TONE_PLATE: Record<EmptyStateTone, string> = {
 export type EmptyStateKind =
   | "agent"
   | "session"
+  | "deployment"
   | "file"
   | "vault"
   | "env"
@@ -80,6 +81,7 @@ export type EmptyStateKind =
 const KIND_ICONS: Record<EmptyStateKind, ComponentType<{ className?: string }>> = {
   agent: NAV_ICONS.agents,
   session: NAV_ICONS.sessions,
+  deployment: NAV_ICONS.deployments,
   file: NAV_ICONS.files,
   vault: NAV_ICONS.vaults,
   env: NAV_ICONS.environments,

@@ -23,41 +23,38 @@ const FORBIDDEN: [string, string][] = [
   ["POST", "/v1/oma/platform-mcp/preview"],
   ["POST", "/v1/oma/platform-mcp/confirm"],
   ["POST", "/v1/oma/platform-mcp"],
-  // second version
-  ["POST", "/v1/sessions/sesn_1"],
-  ["POST", "/v1/sessions/sesn_1/resources"],
+  // vaults, credentials, keys and members stay with the human (crud.md 3.3)
+  ["DELETE", "/v1/vaults/vlt_1"],
+  ["POST", "/v1/vaults/vlt_1/archive"],
+  ["POST", "/v1/vaults/vlt_1/unarchive"],
+  ["DELETE", "/v1/vaults/vlt_1/credentials/cred_1"],
+  ["POST", "/v1/vaults/vlt_1/credentials/cred_1/archive"],
+  ["GET", "/v1/oma/dependencies/vault/vlt_1"],
+  ["DELETE", "/v1/oma/api_keys/key_1"],
+  ["DELETE", "/v1/oma/tenants/ws_1/members/user_1"],
+  // out of this plan
   ["POST", "/v1/sessions/sesn_1/resources/res_1"],
-  ["POST", "/v1/sessions/sesn_1/archive"],
-  ["DELETE", "/v1/sessions/sesn_1"],
-  ["POST", "/v1/deployments/depl_1/run"],
-  ["POST", "/v1/deployments/depl_1/pause"],
-  ["POST", "/v1/deployments/depl_1/unpause"],
-  ["POST", "/v1/deployments/depl_1/archive"],
-  ["POST", "/v1/agents/agent_1/archive"],
-  ["POST", "/v1/environments/env_1/archive"],
-  ["DELETE", "/v1/environments/env_1"],
-  ["POST", "/v1/memory_stores/ms_1/archive"],
-  ["DELETE", "/v1/memory_stores/ms_1/memories/mem_1"],
-  ["DELETE", "/v1/skills/skill_1"],
-  ["DELETE", "/v1/files/file_1"],
-  ["DELETE", "/v1/oma/harness_cards/hc_1"],
+  ["POST", "/v1/sessions/sesn_1/threads/thr_1/archive"],
+  ["DELETE", "/v1/deployments/depl_1"],
+  ["POST", "/v1/vaults/vlt_1/credentials/cred_1/unarchive"],
+  ["DELETE", "/v1/oma/agents/agent_1"],
   ["POST", "/v1/oma/evals/runs"],
   ["POST", "/v1/oma/skill-sources/install"],
 ];
 
 describe("platform MCP tool table", () => {
-  it("has 28 tools: 9 reads, 1 draft and 18 writes", () => {
+  it("has 37 tools: 10 reads, 1 draft and 26 writes", () => {
     const groups = [...TOOL_TABLE.values()].map((tool) => tool.group);
-    expect(TOOL_TABLE.size).toBe(28);
-    expect(groups.filter((group) => group === "read")).toHaveLength(9);
+    expect(TOOL_TABLE.size).toBe(37);
+    expect(groups.filter((group) => group === "read")).toHaveLength(10);
     expect(groups.filter((group) => group === "draft")).toHaveLength(1);
-    expect(groups.filter((group) => group === "write" || group === "batch")).toHaveLength(18);
+    expect(groups.filter((group) => group === "write" || group === "batch")).toHaveLength(26);
   });
 
-  it("allows exactly the 10 read and draft tools without asking", () => {
+  it("allows exactly the 11 read and draft tools without asking", () => {
     const allow = [...TOOL_TABLE.values()].filter((tool) => defaultPolicy(tool) === "always_allow").map((tool) => tool.name);
     expect(allow.sort()).toEqual(
-      ["help", "search_docs", "search_config", "list", "get", "read_content", "get_session_events", "get_trajectory", "request_secret", "preview_change"].sort(),
+      ["help", "search_docs", "search_config", "list", "get", "read_content", "get_session_events", "get_trajectory", "request_secret", "get_dependencies", "preview_change"].sort(),
     );
     for (const name of DRAFT_SET) expect(TOOL_TABLE.has(name)).toBe(true);
   });
@@ -78,19 +75,40 @@ describe("platform MCP tool table", () => {
     expect(TOOL_TABLE.get("send_message")?.precondition).toBe("if_match");
   });
 
-  it("keeps every forbidden and second-version route out of the allowlist", () => {
+  it("keeps every forbidden route out of the allowlist", () => {
     for (const [method, path] of FORBIDDEN) expect(routeAllowlist.match(method, path), `${method} ${path}`).toBeNull();
-    expect(allRouteRules().every((rule) => rule.method === "GET" || rule.method === "POST")).toBe(true);
+    expect(allRouteRules().every((rule) => ["GET", "POST", "DELETE"].includes(rule.method))).toBe(true);
+    expect(allRouteRules().some((rule) => rule.pattern.includes("vault") && rule.method !== "GET")).toBe(false);
   });
 
-  it("checks the body of five routes", () => {
+  it("checks the body or the headers of the writes", () => {
     const checks = Object.fromEntries(allRouteRules().filter((rule) => rule.bodyCheck).map((rule) => [`${rule.method} ${rule.pattern}`, rule.bodyCheck]));
+    const ifMatch = [
+      "POST /v1/agents/:id/archive",
+      "DELETE /v1/agents/:id",
+      "POST /v1/environments/:id/archive",
+      "DELETE /v1/environments/:id",
+      "POST /v1/sessions/:id/archive",
+      "DELETE /v1/sessions/:id",
+      "POST /v1/deployments/:id/archive",
+      "DELETE /v1/skills/:id",
+      "DELETE /v1/skills/:id/versions/:version",
+      "POST /v1/memory_stores/:id/archive",
+      "DELETE /v1/memory_stores/:id",
+      "POST /v1/oma/model_cards/:id/archive",
+      "DELETE /v1/oma/model_cards/:id",
+      "POST /v1/oma/harness_cards/:id/archive",
+      "DELETE /v1/oma/harness_cards/:id",
+    ];
     expect(checks).toEqual({
       "POST /v1/deployments": "deployment_paused",
       "POST /v1/oma/model_cards/:id": "model_card_safe",
       "POST /v1/oma/harness_cards/:id": "harness_card_safe",
       "POST /v1/sessions": "session_create",
       "POST /v1/sessions/:id/events": "session_event",
+      "POST /v1/sessions/:id": "session_update",
+      "POST /v1/sessions/:id/resources": "session_resource",
+      ...Object.fromEntries(ifMatch.map((key) => [key, "if_match_required"])),
     });
   });
 
@@ -141,5 +159,21 @@ describe("platform MCP tool table", () => {
     deny("POST", events, { events: [confirm] }, { issuer: "confirm", headers, toolUseId: "t2" } as never);
     deny("POST", events, { events: [message] }, { issuer: "confirm", headers: withIfMatch, toolUseId: "t1" } as never);
     deny("GET", "/v1/agents", null, { issuer: "confirm", headers } as never);
+
+    pass("POST", "/v1/sessions/sesn_1", { title: "Разбор", metadata: { team: "a", old: null } });
+    deny("POST", "/v1/sessions/sesn_1", { title: "x", agent: { tools: [] } });
+    deny("POST", "/v1/sessions/sesn_1", { vault_ids: ["v"] });
+    deny("POST", "/v1/sessions/sesn_1", { budget: null });
+    deny("POST", "/v1/sessions/sesn_1", { metadata: { oma_assistant_session: "x" } });
+    pass("POST", "/v1/sessions/sesn_1/resources", { type: "file", file_id: "file_1" });
+    pass("POST", "/v1/sessions/sesn_1/resources", { type: "memory_store", memory_store_id: "ms_1" });
+    deny("POST", "/v1/sessions/sesn_1/resources", { type: "github_repository", url: "u", authorization_token: "t" });
+    deny("POST", "/v1/sessions/sesn_1/resources", { type: "file", file_id: "f", authorization_token: "t" });
+    for (const [method, path] of [["DELETE", "/v1/agents/agent_1"], ["POST", "/v1/environments/env_1/archive"], ["DELETE", "/v1/oma/harness_cards/hc_1"]]) {
+      deny(method, path, null);
+      pass(method, path, null, { issuer: "handler", headers: withIfMatch });
+    }
+    pass("DELETE", "/v1/files/file_1", null);
+    pass("POST", "/v1/agents/agent_1/unarchive", {});
   });
 });

@@ -1,3 +1,5 @@
+import type { DependenciesApplicationPort } from "../ports/dependencies";
+import { dependencyConflictOf } from "../dependencies/application";
 import type { Skill, SkillVersion } from "@open-managed-agents/domain/skills";
 import type { SkillStore } from "@open-managed-agents/skill-store";
 import type {
@@ -23,6 +25,8 @@ export interface SkillsApplicationServiceDependencies {
     nextSkillVersionId(): string;
     nextSkillVersion(): string;
   };
+  /** Delete checks dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
 }
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -157,6 +161,28 @@ export class SkillsApplicationService implements SkillsApplicationPort {
   }
 
   async deleteSkill(command: DeleteSkillCommand): Promise<DeleteSkillResult> {
+    const current = await this.dependencies.store.findSkill({
+      workspaceId: this.dependencies.workspaceId,
+      skillId: command.skillId,
+    });
+    if (current === null) return { type: "not_found" };
+    // A platform skill (source anthropic) never goes: not_found, as before.
+    if (current.skill.source !== "custom") return { type: "not_found" };
+    if (
+      command.expectedRevision !== undefined
+      && command.expectedRevision !== current.revision
+    ) {
+      return {
+        type: "precondition_failed",
+        message: `Skill ${command.skillId} is at revision ${current.revision}, not ${command.expectedRevision}`,
+      };
+    }
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "skill",
+      id: command.skillId,
+      operation: "delete",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.deleteSkill({
       workspaceId: this.dependencies.workspaceId,
       skillId: command.skillId,

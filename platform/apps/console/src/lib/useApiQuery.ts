@@ -204,9 +204,13 @@ function useInfiniteFeedQuery<T, TPage extends { data: T[] }>(
     }
   }, [query]);
 
+  // После архива, возврата из архива или удаления строка переходит между
+  // фильтрами. Сбрасываем все списки этого адреса, иначе соседний фильтр
+  // 30 с показывает кэш до действия (docs/plans/crud.md, 4.2).
+  const queryClient = useQueryClient();
   const refresh = useCallback(() => {
-    void query.refetch();
-  }, [query]);
+    void queryClient.invalidateQueries({ queryKey: [endpoint] });
+  }, [queryClient, endpoint]);
 
   return {
     items,

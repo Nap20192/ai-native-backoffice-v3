@@ -1,3 +1,18 @@
+/** Wire form of a dependency report, the same as GET /v1/oma/dependencies. */
+export interface DependencyReportWire {
+  blocking: DependencyEntryWire[];
+  affected: DependencyEntryWire[];
+  truncated: boolean;
+}
+
+export interface DependencyEntryWire {
+  kind: string;
+  id: string;
+  name: string | null;
+  status: string | null;
+  note: string | null;
+}
+
 export interface AnthropicErrorEnvelope {
   type: "error";
   error:
@@ -13,6 +28,11 @@ export interface AnthropicErrorEnvelope {
     | {
         type: "memory_precondition_failed_error";
         message: string;
+      }
+    | {
+        type: "dependency_conflict_error";
+        message: string;
+        dependencies: DependencyReportWire;
       }
     | {
         type: "memory_path_conflict_error";
@@ -98,6 +118,28 @@ export function memoryPathConflict(conflictDetails: {
       ...(conflictDetails.conflictingPath !== undefined && {
         conflicting_path: conflictDetails.conflictingPath,
       }),
+    },
+  };
+}
+
+/**
+ * 409 of archive and delete when a dependency blocks the operation
+ * (docs/plans/crud.md, 1.2). The body lists the dependencies.
+ */
+export function dependencyConflict(conflictDetails: {
+  message: string;
+  dependencies: DependencyReportWire;
+}): AnthropicErrorEnvelope {
+  return {
+    type: "error",
+    error: {
+      type: "dependency_conflict_error",
+      message: conflictDetails.message,
+      dependencies: {
+        blocking: conflictDetails.dependencies.blocking.map((entry) => ({ ...entry })),
+        affected: conflictDetails.dependencies.affected.map((entry) => ({ ...entry })),
+        truncated: conflictDetails.dependencies.truncated,
+      },
     },
   };
 }

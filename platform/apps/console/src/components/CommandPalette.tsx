@@ -41,6 +41,12 @@ function useCommands(): NavCommand[] {
     { label: "Быстрый старт", to: "/quickstart", icon: NAV_ICONS.dashboard, aliases: "quickstart начало мастер новый агент" },
     { label: t.nav.agents, to: "/agents", icon: NAV_ICONS.agents },
     { label: t.nav.sessions, to: "/sessions", icon: NAV_ICONS.sessions },
+    {
+      label: t.nav.deployments,
+      to: "/deployments",
+      icon: NAV_ICONS.deployments,
+      aliases: "deployments расписание запуски cron",
+    },
     { label: t.nav.files, to: "/files", icon: NAV_ICONS.files },
     {
       label: t.nav.evalRuns,

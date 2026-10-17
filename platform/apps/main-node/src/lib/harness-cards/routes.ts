@@ -4,8 +4,35 @@ import { Hono, type Context } from "hono";
 import type { HarnessCardStore } from "./store.js";
 import { HarnessCardError, isHarnessCardError, type HarnessCardListOptions } from "./types.js";
 
+/** One row of a dependency report (docs/plans/crud.md, 1.2). */
+export interface HarnessCardDependencyEntry {
+  kind: string;
+  id: string;
+  name: string | null;
+  status: string | null;
+  note: string | null;
+}
+
+export interface HarnessCardDependencyReport {
+  blocking: HarnessCardDependencyEntry[];
+  affected: HarnessCardDependencyEntry[];
+  truncated: boolean;
+}
+
+/**
+ * Agents that run on the card (table 1.3): archive looks at agents out of
+ * the archive, delete at every version of every agent. Without it archive
+ * and delete check nothing.
+ */
+export type HarnessCardDependencyCheck = (input: {
+  workspaceId: string;
+  harnessId: string;
+  operation: "archive" | "delete";
+}) => Promise<HarnessCardDependencyReport>;
+
 export interface HarnessCardRoutesDeps {
   store: HarnessCardStore;
+  dependencies?: HarnessCardDependencyCheck;
 }
 
 type Variables = { tenant_id?: string; user_id?: string | null };
@@ -57,9 +84,65 @@ export function buildHarnessCardRoutes(deps: HarnessCardRoutesDeps): Hono<{ Vari
     return c.json(card, 200);
   });
 
+  // Archive, restore and delete read If-Match; archive and delete check
+  // dependencies (docs/plans/crud.md, 2.8). DELETE removes the card, the
+  // archive is POST /:id/archive.
+  const blocked = async (
+    workspaceId: string,
+    id: string,
+    operation: "archive" | "delete",
+  ): Promise<HarnessCardDependencyReport | null> => {
+    if (deps.dependencies === undefined) return null;
+    const card = await deps.store.get(workspaceId, id);
+    if (card === null) throw new HarnessCardError(404, "Harness не найден");
+    const report = await deps.dependencies({ workspaceId, harnessId: card.harness_id, operation });
+    return report.blocking.length > 0 ? report : null;
+  };
+  const conflictBody = (message: string, dependencies: HarnessCardDependencyReport) => ({
+    type: "error",
+    error: { type: "dependency_conflict_error", message, dependencies },
+  });
+
+  app.post("/:id/archive", async (c) => {
+    const workspaceId = workspaceOf(c)!;
+    const expectedUpdatedAt = ifMatchTime(c.req.header("If-Match"));
+    const report = await blocked(workspaceId, c.req.param("id"), "archive");
+    if (report !== null) {
+      return c.json(conflictBody("Сначала уберите зависимости: harness используют агенты", report), 409);
+    }
+    const card = await deps.store.archive(
+      workspaceId,
+      c.req.param("id"),
+      expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt },
+    );
+    c.header("ETag", revisionTag(card));
+    return c.json(card, 200);
+  });
+
+  app.post("/:id/unarchive", async (c) => {
+    const expectedUpdatedAt = ifMatchTime(c.req.header("If-Match"));
+    const card = await deps.store.unarchive(
+      workspaceOf(c)!,
+      c.req.param("id"),
+      expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt },
+    );
+    c.header("ETag", revisionTag(card));
+    return c.json(card, 200);
+  });
+
   app.delete("/:id", async (c) => {
-    const card = await deps.store.archive(workspaceOf(c)!, c.req.param("id"));
-    return c.json({ type: "harness_card_deleted", id: card.id }, 200);
+    const workspaceId = workspaceOf(c)!;
+    const expectedUpdatedAt = ifMatchTime(c.req.header("If-Match"));
+    const report = await blocked(workspaceId, c.req.param("id"), "delete");
+    if (report !== null) {
+      return c.json(conflictBody("Сначала уберите зависимости: harness используют агенты", report), 409);
+    }
+    await deps.store.delete(
+      workspaceId,
+      c.req.param("id"),
+      expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt },
+    );
+    return c.json({ type: "harness_card_deleted", id: c.req.param("id") }, 200);
   });
 
   return app;

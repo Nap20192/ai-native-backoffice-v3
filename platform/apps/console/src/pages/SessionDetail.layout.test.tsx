@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
     retrieve: vi.fn(),
     update: vi.fn(),
     archive: vi.fn(),
+    unarchive: vi.fn(),
+    delete: vi.fn(),
     threads: { list: vi.fn() },
     events: { list: vi.fn(), stream: vi.fn(), send: vi.fn() },
     resources: { list: vi.fn(), add: vi.fn() },
@@ -280,6 +282,8 @@ beforeEach(() => {
     ...body,
   }));
   api.sessions.archive.mockReset().mockResolvedValue({ ...SESSION, archived_at: "2026-10-16T02:00:00.000Z" });
+  api.sessions.unarchive.mockReset().mockResolvedValue({ ...SESSION, archived_at: null });
+  api.sessions.delete.mockReset().mockResolvedValue({ id: "sesn_1", type: "session_deleted" });
   api.sessions.threads.list.mockReset().mockImplementation(async () => ({ data: state.threads }));
   api.sessions.events.list.mockReset().mockImplementation(async () => ({ data: state.history, next_page: null }));
   api.sessions.events.stream.mockReset().mockImplementation(
@@ -308,7 +312,12 @@ beforeEach(() => {
   api.agents.retrieve.mockReset().mockResolvedValue({ id: "agent_1", created_at: "2026-10-15T00:00:00.000Z" });
   api.files.upload.mockReset().mockResolvedValue({ id: "file_1" });
 
-  server.use(http.get("*/v1/sessions/sesn_1/outputs", () => HttpResponse.json({ data: [], has_more: false })));
+  server.use(
+    http.get("*/v1/sessions/sesn_1/outputs", () => HttpResponse.json({ data: [], has_more: false })),
+    http.get("*/v1/oma/dependencies/session/sesn_1", () =>
+      HttpResponse.json({ blocking: [], affected: [], truncated: false }),
+    ),
+  );
 });
 
 afterEach(() => {
@@ -1019,17 +1028,54 @@ describe("SessionDetail: действия", () => {
   });
 
   it("«Архивировать» спрашивает подтверждение, архивирует и ведёт к списку", async () => {
+    server.use(
+      http.get("*/v1/sessions/sesn_1", () => HttpResponse.json(SESSION, { headers: { ETag: '"5"' } })),
+    );
     openPage();
     await pageReady();
 
     await userEvent.click(screen.getByRole("button", { name: "Действия" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Архивировать" }));
     expect(api.sessions.archive).not.toHaveBeenCalled();
-    await userEvent.click(await screen.findByRole("button", { name: "Архивировать" }));
+    const dialog = await screen.findByRole("dialog", { name: "Отправить сессию в архив?" });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Архивировать" })).toBeEnabled());
+    await userEvent.click(within(dialog).getByRole("button", { name: "Архивировать" }));
 
-    await waitFor(() => expect(api.sessions.archive).toHaveBeenCalledWith("sesn_1"));
+    await waitFor(() => expect(api.sessions.archive).toHaveBeenCalledWith("sesn_1", { ifMatch: '"5"' }));
     expect(await screen.findByText("Список сессий")).toBeInTheDocument();
     expect(toast.success).toHaveBeenCalledWith("Сессия архивирована");
+  });
+
+  it("«Удалить» показывает «Это нельзя отменить», удаляет и ведёт к списку", async () => {
+    openPage();
+    await pageReady();
+
+    await userEvent.click(screen.getByRole("button", { name: "Действия" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Удалить" }));
+    const dialog = await screen.findByRole("dialog", { name: "Удалить сессию?" });
+    expect(within(dialog).getByText(/Это нельзя отменить/)).toBeInTheDocument();
+    expect(api.sessions.delete).not.toHaveBeenCalled();
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Удалить" })).toBeEnabled());
+    await userEvent.click(within(dialog).getByRole("button", { name: "Удалить" }));
+
+    await waitFor(() => expect(api.sessions.delete).toHaveBeenCalledWith("sesn_1", {}));
+    expect(await screen.findByText("Список сессий")).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("Сессия удалена");
+  });
+
+  it("архивная сессия возвращается из архива пунктом «Вернуть из архива»", async () => {
+    api.sessions.retrieve.mockImplementation(async () => ({
+      ...SESSION,
+      archived_at: "2026-10-16T02:00:00.000Z",
+    }));
+    openPage();
+    await pageReady();
+
+    await userEvent.click(screen.getByRole("button", { name: "Действия" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Вернуть из архива" }));
+
+    await waitFor(() => expect(api.sessions.unarchive).toHaveBeenCalledWith("sesn_1"));
+    expect(toast.success).toHaveBeenCalledWith("Сессия возвращена из архива");
   });
 
   it("«Копировать все события» и «Скачать все события» берут все события сессии", async () => {

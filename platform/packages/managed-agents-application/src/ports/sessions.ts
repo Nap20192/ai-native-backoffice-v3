@@ -87,10 +87,20 @@ export interface ListSessionsQuery {
 
 export interface DeleteSessionCommand {
   sessionId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export interface ArchiveSessionCommand {
   sessionId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
+}
+
+export interface UnarchiveSessionCommand {
+  sessionId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export type SessionAgentView = SessionAgent;
@@ -125,10 +135,18 @@ export type ListSessionsResult =
 
 export type DeleteSessionResult =
   | { type: "deleted"; sessionId: string }
+  | { type: "precondition_failed"; message: string }
   | { type: "not_found" };
 
 export type ArchiveSessionResult =
-  | { type: "archived"; session: SessionView }
+  | { type: "archived"; session: SessionView; revision?: number }
+  | { type: "precondition_failed"; message: string }
+  | { type: "not_found" };
+
+/** Restore from the archive. The status stays as it was. */
+export type UnarchiveSessionResult =
+  | { type: "unarchived"; session: SessionView; revision?: number }
+  | { type: "precondition_failed"; message: string }
   | { type: "not_found" };
 
 export interface SessionsApplicationPort {
@@ -138,4 +156,5 @@ export interface SessionsApplicationPort {
   listSessions(query: ListSessionsQuery): Promise<ListSessionsResult>;
   deleteSession(command: DeleteSessionCommand): Promise<DeleteSessionResult>;
   archiveSession(command: ArchiveSessionCommand): Promise<ArchiveSessionResult>;
+  unarchiveSession(command: UnarchiveSessionCommand): Promise<UnarchiveSessionResult>;
 }

@@ -18,6 +18,18 @@ class MemoryAgentStore implements AgentStore {
   private readonly records = new Map<string, AgentRecord>();
   private readonly versions = new Map<string, AgentRecord>();
 
+  async unarchiveCurrent(): Promise<never> {
+    throw new Error("unarchiveCurrent is not part of this test");
+  }
+
+  async deleteCurrent(): Promise<never> {
+    throw new Error("deleteCurrent is not part of this test");
+  }
+
+  async listReferencing(): Promise<AgentRecord[]> {
+    return [];
+  }
+
   async insert(input: InsertAgentRecord): Promise<AgentRecord> {
     const key = `${input.workspaceId}:${input.agent.id}`;
     this.records.set(key, structuredClone(input.agent));

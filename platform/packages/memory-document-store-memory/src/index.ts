@@ -7,6 +7,8 @@ import type {
   CreateMemoryRecord,
   CreateMemoryRecordResult,
   DeleteMemoryRecord,
+  DeleteMemoryStoreContents,
+  DeletedMemoryStoreContents,
   DeleteMemoryRecordResult,
   ListMemoryRecords,
   ListMemoryVersionRecords,
@@ -310,5 +312,20 @@ export class InMemoryMemoryDocumentStore implements MemoryDocumentStore {
     const record = { version, revision: current.revision + 1 };
     this.versions.set(key, record);
     return { type: "redacted", record: clone(record) };
+  }
+
+  async deleteAllInStore(
+    input: DeleteMemoryStoreContents,
+  ): Promise<DeletedMemoryStoreContents> {
+    const prefix = `${input.workspaceId}\u0000${input.memoryStoreId}\u0000`;
+    let deletedMemories = 0;
+    let deletedVersions = 0;
+    for (const key of [...this.memories.keys()]) {
+      if (key.startsWith(prefix) && this.memories.delete(key)) deletedMemories += 1;
+    }
+    for (const key of [...this.versions.keys()]) {
+      if (key.startsWith(prefix) && this.versions.delete(key)) deletedVersions += 1;
+    }
+    return { deletedMemories, deletedVersions };
   }
 }

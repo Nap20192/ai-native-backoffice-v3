@@ -45,6 +45,7 @@ export const ru: Messages = {
     dashboard: "Сводка",
     agents: "Агенты",
     sessions: "Сессии",
+    deployments: "Деплойменты",
     files: "Файлы",
     evalRuns: "Запуски оценки",
     infrastructure: "Инфраструктура",

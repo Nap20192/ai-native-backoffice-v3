@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -38,15 +39,24 @@ vi.mock("../lib/useApiQuery", () => {
   };
 });
 
-describe("EnvironmentDetail focus treatment", () => {
-  it("does not override the shared DDC focus ring on switches", async () => {
-    render(
+// Страница спрашивает каталог образов у сервера, поэтому ей нужен QueryClient.
+// Подставной `api` отвечает пустотой: сервер без каталога, раздела «Образ» нет.
+function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/environments/env-1"]}>
         <Routes>
           <Route path="/environments/:id" element={<EnvironmentDetail />} />
         </Routes>
-      </MemoryRouter>,
-    );
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("EnvironmentDetail focus treatment", () => {
+  it("does not override the shared DDC focus ring on switches", async () => {
+    renderPage();
 
     const toggle = await screen.findByRole("switch", {
       name: "Разрешить сетевой доступ MCP-серверам",
@@ -60,19 +70,14 @@ describe("EnvironmentDetail focus treatment", () => {
   });
 
   it("uses the shared settings stack and compact section-card geometry", async () => {
-    render(
-      <MemoryRouter initialEntries={["/environments/env-1"]}>
-        <Routes>
-          <Route path="/environments/:id" element={<EnvironmentDetail />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    renderPage();
 
     expect(await screen.findByTestId("settings-layout")).toHaveClass(
       "console-settings-layout",
     );
+    // Пока каталог образов грузится, у раздела «Образ» стоит заглушка: ждём ответа.
+    await waitFor(() => expect(screen.getAllByTestId("settings-section")).toHaveLength(3));
     const sections = screen.getAllByTestId("settings-section");
-    expect(sections).toHaveLength(3);
     expect(sections[0]).toHaveClass("console-settings-section");
     expect(screen.getByTestId("settings-actions")).toHaveClass(
       "console-settings-actions",
@@ -80,17 +85,12 @@ describe("EnvironmentDetail focus treatment", () => {
   });
 
   it("shows Russian section titles and keeps the switch state in aria-checked", async () => {
-    render(
-      <MemoryRouter initialEntries={["/environments/env-1"]}>
-        <Routes>
-          <Route path="/environments/:id" element={<EnvironmentDetail />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    renderPage();
 
-    const titles = (await screen.findAllByTestId("settings-section")).map(
-      (section) => section.querySelector("h2")?.textContent,
-    );
+    await waitFor(() => expect(screen.getAllByTestId("settings-section")).toHaveLength(3));
+    const titles = screen
+      .getAllByTestId("settings-section")
+      .map((section) => section.querySelector("h2")?.textContent);
     expect(titles).toEqual(["Сеть", "Пакеты", "Метаданные"]);
 
     const toggle = screen.getByRole("switch", {
@@ -102,13 +102,7 @@ describe("EnvironmentDetail focus treatment", () => {
   });
 
   it("labels icon-only buttons and form rows in Russian", async () => {
-    render(
-      <MemoryRouter initialEntries={["/environments/env-1"]}>
-        <Routes>
-          <Route path="/environments/:id" element={<EnvironmentDetail />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    renderPage();
 
     await screen.findByTestId("settings-layout");
     fireEvent.click(screen.getByRole("button", { name: "Добавить пакет" }));

@@ -57,6 +57,8 @@ export interface ModelCardUpdateFields {
    * to 1. When false, the repo just sets is_default=0.
    */
   isDefault?: boolean;
+  /** Epoch ms of the archive, or null to restore (docs/plans/crud.md, 2.8). */
+  archivedAt?: number | null;
   updatedAt: number;
   /**
    * Epoch ms of `updated_at` (or `created_at` for a card without edits) the

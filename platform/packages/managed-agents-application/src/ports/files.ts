@@ -1,3 +1,4 @@
+import type { DependencyConflict } from "./dependencies";
 import type { FileMetadata, FileScope, FileOrigin } from "../domain/file";
 
 export type FileScopeView = FileScope;
@@ -57,6 +58,7 @@ export type UploadFileResult =
 
 export type DeleteFileResult =
   | { type: "deleted"; fileId: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export type DownloadFileResult =

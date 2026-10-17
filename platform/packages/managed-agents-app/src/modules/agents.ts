@@ -15,6 +15,8 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { dependenciesPort } from "./dependency-port";
+
 
 export const agentStorePort = createPortToken<AgentStore>(
   "managed-agents.store.agents",
@@ -30,7 +32,8 @@ export function agentsModule(): AppModule {
       idGeneratorPort,
       agentStorePort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const clock = port(clockPort);
       const ids = port(idGeneratorPort);
@@ -43,6 +46,7 @@ export function agentsModule(): AppModule {
             clock,
             store,
             ids: { nextAgentId: () => ids.next("agent") },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };

@@ -10,4 +10,9 @@ export {
   type HarnessCardStore,
   type HarnessCardStoreOptions,
 } from "./store.js";
-export { buildHarnessCardRoutes, type HarnessCardRoutesDeps } from "./routes.js";
+export {
+  buildHarnessCardRoutes,
+  type HarnessCardDependencyCheck,
+  type HarnessCardDependencyReport,
+  type HarnessCardRoutesDeps,
+} from "./routes.js";

@@ -17,6 +17,8 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { dependenciesPort } from "./dependency-port";
+
 
 export const skillStorePort = createPortToken<SkillStore>(
   "managed-agents.store.skills",
@@ -38,7 +40,8 @@ export function skillsModule(): AppModule {
       skillStorePort,
       skillPackageCompilerPort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort],
+    setup({ port, optionalPort }) {
       const ids = port(idGeneratorPort);
       return {
         ports: [bindPort(
@@ -53,6 +56,7 @@ export function skillsModule(): AppModule {
               nextSkillVersionId: () => ids.next("skill-version"),
               nextSkillVersion: () => ids.next("skill-version-value"),
             },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };
@@ -71,7 +75,8 @@ export function skillVersionsModule(): AppModule {
       skillStorePort,
       skillPackageCompilerPort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort],
+    setup({ port, optionalPort }) {
       const ids = port(idGeneratorPort);
       return {
         ports: [bindPort(
@@ -85,6 +90,7 @@ export function skillVersionsModule(): AppModule {
               nextSkillVersionId: () => ids.next("skill-version"),
               nextSkillVersion: () => ids.next("skill-version-value"),
             },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };

@@ -11,6 +11,7 @@ import {
   LockKeyholeIcon,
   MessagesSquareIcon,
   PuzzleIcon,
+  RocketIcon,
   TerminalIcon,
   UsersIcon,
 } from "lucide-react";
@@ -25,6 +26,7 @@ export const NAV_ICONS = {
   dashboard: GaugeIcon,
   agents: BotIcon,
   sessions: MessagesSquareIcon,
+  deployments: RocketIcon,
   files: FolderIcon,
   evals: FlaskConicalIcon,
   environments: BoxesIcon,

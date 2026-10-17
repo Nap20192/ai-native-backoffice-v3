@@ -187,7 +187,7 @@ describe("AgentDetail Linear rail", () => {
     await userEvent.click(await screen.findByRole("button", { name: "В архив" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Отправить агента в архив?" });
-    expect(dialog).toHaveAccessibleDescription(/Действие нельзя отменить/);
+    expect(dialog).toHaveAccessibleDescription(/Можно вернуть из архива/);
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
     expect(screen.queryByRole("dialog")).toBeNull();

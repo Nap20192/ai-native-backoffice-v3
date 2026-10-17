@@ -23,6 +23,24 @@
 
 import type { AgentSpec } from "./types.js";
 
+/**
+ * How a client in the sandbox receives the platform instructions: the
+ * session system prompt with the "Environment" block
+ * (docs/plans/environments.md, 4.4). The harness delivers them before
+ * each process starts, through the channel the client reads.
+ *   - `meta`: `_meta.systemPrompt.append` on session/new, session/resume
+ *     and session/load (claude-agent-acp).
+ *   - `file`: a section between markers in a file the client reads from
+ *     its working directory; `path` is relative to that directory. Text
+ *     outside the markers stays.
+ *   - `prefix`: text before the first prompt of every new process. It
+ *     reaches any client, so it is the default for unknown ones.
+ */
+export type AcpInstructionsDelivery =
+  | { kind: "meta" }
+  | { kind: "file"; path: string }
+  | { kind: "prefix" };
+
 export interface KnownAgentEntry {
   /** Canonical id used by hosts and dropdowns. Slug-only, no spaces. */
   id: string;
@@ -99,6 +117,8 @@ export interface KnownAgentEntry {
          *  `archives`, or as a fallback hint in the audit. */
         downloadUrl?: string;
       };
+  /** Channel for the platform instructions; unset means `prefix`. */
+  instructions?: AcpInstructionsDelivery;
 }
 
 /**
@@ -123,6 +143,9 @@ export const OMA_OVERLAY_AGENTS: KnownAgentEntry[] = [
     install: { kind: "npm", package: "@agentclientprotocol/claude-agent-acp" },
     installHint: "npm install -g @agentclientprotocol/claude-agent-acp",
     homepage: "https://github.com/agentclientprotocol/claude-agent-acp",
+    // Claude Code reads CLAUDE.md, not AGENTS.md. The wrapper appends
+    // `_meta.systemPrompt.append` to its system prompt instead.
+    instructions: { kind: "meta" },
   },
   // codex-acp: ACP wrapper around the user's `codex` binary. Zed
   // Industries' Rust binary; distributed as GitHub release tarballs +
@@ -138,6 +161,7 @@ export const OMA_OVERLAY_AGENTS: KnownAgentEntry[] = [
     wraps: "codex",
     installHint: "download from https://github.com/zed-industries/codex-acp/releases and place on PATH",
     homepage: "https://github.com/zed-industries/codex-acp",
+    instructions: { kind: "file", path: "AGENTS.md" },
   },
   // gemini: official id is `gemini`. Pre-registry OMA had `gemini-cli`.
   {
@@ -147,6 +171,7 @@ export const OMA_OVERLAY_AGENTS: KnownAgentEntry[] = [
     aliases: ["gemini-cli"],
     installHint: "npm install -g @google/gemini-cli",
     homepage: "https://github.com/google-gemini/gemini-cli",
+    instructions: { kind: "file", path: "GEMINI.md" },
   },
   // opencode: official id matches ours, no alias needed. Listed here
   // anyway so the Console (overlay-only) still sees it without needing
@@ -157,6 +182,7 @@ export const OMA_OVERLAY_AGENTS: KnownAgentEntry[] = [
     spec: { command: "opencode", args: ["acp"] },
     installHint: "npm install -g opencode-ai@latest  # or curl -fsSL https://opencode.ai/install | bash",
     homepage: "https://opencode.ai/",
+    instructions: { kind: "file", path: "AGENTS.md" },
   },
   // Aider does not ship an ACP server. This community bridge is a real ACP
   // process which invokes the installed `aider` CLI, so the upstream binary
@@ -245,6 +271,24 @@ export function resolveOverlayAgent(id: string): KnownAgentEntry | null {
     if (e.aliases?.includes(id)) return e;
   }
   return null;
+}
+
+/**
+ * The instructions channel for an agent spec. The id or alias decides
+ * first: a wrapper such as `sh -c '... exec claude-agent-acp'` keeps the
+ * id of the client it starts. Old records without an id match by the
+ * command name. Unknown clients get `prefix`, which reaches any client.
+ */
+export function resolveAcpInstructionsDelivery(agent: {
+  id?: string;
+  command: string;
+}): AcpInstructionsDelivery {
+  const byId = agent.id === undefined ? null : resolveOverlayAgent(agent.id);
+  const command = agent.command.replaceAll("\\", "/").split("/").at(-1) ?? "";
+  const entry = byId ?? OMA_OVERLAY_AGENTS.find((e) =>
+    e.spec.command === command || e.aliases?.includes(command)
+  );
+  return entry?.instructions ?? { kind: "prefix" };
 }
 
 // Back-compat aliases for the names this module exported before we

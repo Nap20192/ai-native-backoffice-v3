@@ -12,8 +12,18 @@ import {
   sessionResponseSchema,
   sessionUpdateBodySchema,
 } from "../contracts/sessions";
-import { apiError, conflict, invalidRequest, notFound } from "../errors";
-import { setRevisionETag } from "../if-match";
+import {
+  apiError,
+  conflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import {
+  expectedRevisionOf,
+  readRevisionIfMatch,
+  setRevisionETag,
+} from "../if-match";
 import {
   toCreateSessionCommand,
   toListSessionsQuery,
@@ -127,14 +137,22 @@ export function buildSessionRoutes(
   });
 
   app.delete("/:sessionId", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     const result = await resolveApplicationPort(source, c).deleteSession({
       sessionId: c.req.param("sessionId"),
+      ...expectedRevisionOf(precondition),
     });
     if (result.type === "not_found") {
       return c.json(
         notFound(`Session ${c.req.param("sessionId")} was not found`),
         404,
       );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
 
     const response = deletedSessionResponseSchema.safeParse({
@@ -152,8 +170,13 @@ export function buildSessionRoutes(
   });
 
   app.post("/:sessionId/archive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     const result = await resolveApplicationPort(source, c).archiveSession({
       sessionId: c.req.param("sessionId"),
+      ...expectedRevisionOf(precondition),
     });
     if (result.type === "not_found") {
       return c.json(
@@ -161,12 +184,44 @@ export function buildSessionRoutes(
         404,
       );
     }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
 
     const session = serializeSession(result.session);
     if (session === null) {
       return c.json(apiError("Application returned an invalid session resource"), 500);
     }
 
+    setRevisionETag(c, result.revision);
+    return c.json(session, 200);
+  });
+
+  app.post("/:sessionId/unarchive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).unarchiveSession({
+      sessionId: c.req.param("sessionId"),
+      ...expectedRevisionOf(precondition),
+    });
+    if (result.type === "not_found") {
+      return c.json(
+        notFound(`Session ${c.req.param("sessionId")} was not found`),
+        404,
+      );
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+
+    const session = serializeSession(result.session);
+    if (session === null) {
+      return c.json(apiError("Application returned an invalid session resource"), 500);
+    }
+
+    setRevisionETag(c, result.revision);
     return c.json(session, 200);
   });
 

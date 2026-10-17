@@ -1,3 +1,4 @@
+import type { DependencyConflict } from "./dependencies";
 import type { MemoryStore } from "../domain/memory-store";
 
 export type MemoryStoreView = MemoryStore;
@@ -39,10 +40,20 @@ export interface MemoryStoresPage {
 
 export interface DeleteMemoryStoreCommand {
   memoryStoreId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export interface ArchiveMemoryStoreCommand {
   memoryStoreId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
+}
+
+export interface UnarchiveMemoryStoreCommand {
+  memoryStoreId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export type CreateMemoryStoreResult =
@@ -64,12 +75,22 @@ export type ListMemoryStoresResult =
   | { type: "page"; page: MemoryStoresPage }
   | { type: "invalid_request"; message: string };
 
+/** Deleting a store deletes its memories and memory versions too. */
 export type DeleteMemoryStoreResult =
   | { type: "deleted"; memoryStoreId: string }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export type ArchiveMemoryStoreResult =
-  | { type: "archived"; memoryStore: MemoryStoreView }
+  | { type: "archived"; memoryStore: MemoryStoreView; revision?: number }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
+  | { type: "not_found" };
+
+export type UnarchiveMemoryStoreResult =
+  | { type: "unarchived"; memoryStore: MemoryStoreView; revision?: number }
+  | { type: "precondition_failed"; message: string }
   | { type: "not_found" };
 
 export interface MemoryStoresApplicationPort {
@@ -79,4 +100,5 @@ export interface MemoryStoresApplicationPort {
   listMemoryStores(query: ListMemoryStoresQuery): Promise<ListMemoryStoresResult>;
   deleteMemoryStore(command: DeleteMemoryStoreCommand): Promise<DeleteMemoryStoreResult>;
   archiveMemoryStore(command: ArchiveMemoryStoreCommand): Promise<ArchiveMemoryStoreResult>;
+  unarchiveMemoryStore(command: UnarchiveMemoryStoreCommand): Promise<UnarchiveMemoryStoreResult>;
 }

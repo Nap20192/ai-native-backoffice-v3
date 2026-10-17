@@ -1,10 +1,11 @@
 import { formatDateTime } from "../lib/date-format";
-import { useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { useMemo, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router";
 import { DownloadIcon, TrashIcon } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type ColumnDef } from "../components/DataTable";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { FacetedFilter } from "../components/FacetedFilter";
 import { FilterChip } from "../components/FilterChip";
 import {
@@ -28,9 +29,12 @@ export function FilesList() {
   const managedApi = useManagedApi();
   const [scopeId, setScopeId] = useState<string>(ALL_SCOPE);
   const [search, setSearch] = useState("");
+  // Цель удаления держим и после закрытия окна: заголовок не мигает пустым
+  // именем, пока окно уходит.
   const [deleteTarget, setDeleteTarget] = useState<FileRecord | null>(null);
   const [askDelete, setAskDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const { t } = useI18n();
 
   // У файлов своя пагинация официального SDK (`before_id` и
@@ -102,22 +106,38 @@ export function FilesList() {
     }
   };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
+  // Загрузка идёт по одному файлу: POST /v1/files принимает один файл. Список
+  // обновляется после каждого удачного файла.
+  const uploadFiles = async (files: File[]) => {
+    if (files.length === 0) return;
+    setUploading(true);
     try {
-      await managedApi.files.delete(deleteTarget.id);
-      // Сбрасываем все запросы /v1/files (с любой сессией в фильтре):
-      // refresh() возвращает список на первую страницу. Это дешевле
-      // локальной оптимистичной копии, а следующий запрос принесёт
-      // свежие данные сервера.
-      refreshFiles();
-    } catch {
-      // Ошибку уже показал клиент API.
+      for (const file of files) {
+        try {
+          await managedApi.files.upload({ file });
+          toast.success(`Файл «${file.name}» загружен`);
+          // Сбрасываем все запросы /v1/files: refresh() возвращает список на
+          // первую страницу, следующий запрос принесёт данные сервера.
+          refreshFiles();
+        } catch (e) {
+          toast.error(
+            `Не удалось загрузить «${file.name}»: ${e instanceof Error ? e.message : "ошибка сети"}`,
+          );
+        }
+      }
     } finally {
-      setDeleting(false);
-      setAskDelete(false);
+      setUploading(false);
     }
+  };
+
+  const onDragOver = (event: DragEvent) => {
+    if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) event.preventDefault();
+  };
+  const onDrop = (event: DragEvent) => {
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void uploadFiles(files);
   };
 
   // Поиск работает на клиенте по уже загруженной странице: сервер не
@@ -236,8 +256,13 @@ export function FilesList() {
   );
 
   return (
+    // `contents` не меняет раскладку страницы, а события перетаскивания
+    // всплывают к этому узлу от всей таблицы.
+    <div data-file-drop className="contents" onDragOver={onDragOver} onDrop={onDrop}>
     <DataTable<FileRecord>
       title={t.nav.files}
+      createLabel={uploading ? "Загрузка…" : "Загрузить"}
+      onCreate={() => fileInput.current?.click()}
       subtitle="Файлы, которые агенты получили и сохранили в сессиях."
       searchPlaceholder="Поиск по загруженным файлам…"
       searchValue={search}
@@ -276,24 +301,41 @@ export function FilesList() {
           "Сбросьте фильтр по сессии или проверьте её id."
         ) : (
           <>
-            Загрузите файл через <code className="font-mono text-xs">POST /v1/files</code> или SDK:{" "}
-            <code className="font-mono text-xs">client.beta.files.create()</code>.
+            Нажмите «Загрузить» или перетащите файл на страницу. Через API файлы грузит{" "}
+            <code className="font-mono text-xs">POST /v1/files</code>.
           </>
         )
       }
       columns={columns}
     >
-      <ConfirmDialog
+      <Input
+        ref={fileInput}
+        type="file"
+        multiple
+        aria-label="Файл для загрузки"
+        className="hidden"
+        tabIndex={-1}
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          void uploadFiles(files);
+        }}
+      />
+      <DangerDialog
         open={askDelete}
+        operation="delete"
+        target={deleteTarget ? { kind: "file", id: deleteTarget.id } : null}
         title={`Удалить файл «${deleteTarget?.filename ?? ""}»?`}
-        message="Файл и его метаданные будут удалены. Действие нельзя отменить."
-        confirmLabel={t.common.delete}
-        destructive
-        busy={deleting}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setAskDelete(false)}
+        message="Файл и его метаданные будут удалены."
+        run={() => managedApi.files.delete(deleteTarget!.id)}
+        onDone={() => {
+          setAskDelete(false);
+          refreshFiles();
+        }}
+        onClose={() => setAskDelete(false)}
       />
     </DataTable>
+    </div>
   );
 }
 

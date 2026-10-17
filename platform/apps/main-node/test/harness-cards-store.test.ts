@@ -24,7 +24,8 @@ describe("harness card store", () => {
     expect(await store.listActive("ws1")).toEqual([]);
     expect((await store.list("ws1")).data).toEqual([]);
     expect((await store.list("ws1", { include_archived: true })).data).toHaveLength(1);
-    expect(await store.findByHarnessId("ws1", input.harness_id)).toMatchObject({ archived_at: new Date(time).toISOString() });
+    // The revision always moves: the archive in the same millisecond as the edit lands 1 ms later.
+    expect(await store.findByHarnessId("ws1", input.harness_id)).toMatchObject({ archived_at: new Date(time + 1).toISOString() });
     await expect(store.create("ws1", input)).rejects.toMatchObject({ status: 409, field: "harness_id" });
   });
   it("paginates tied timestamps and escapes search wildcard characters", async () => {

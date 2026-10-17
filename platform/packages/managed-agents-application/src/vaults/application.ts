@@ -10,11 +10,16 @@ import type {
   ListVaultsResult,
   RetrieveVaultQuery,
   RetrieveVaultResult,
+  UnarchiveVaultCommand,
+  UnarchiveVaultResult,
   UpdateVaultCommand,
   UpdateVaultResult,
   VaultsApplicationPort,
 } from "../ports/vaults";
 import type { VaultStore } from "@open-managed-agents/vault-store";
+import type { CredentialStore } from "@open-managed-agents/credential-store";
+import type { DependenciesApplicationPort } from "../ports/dependencies";
+import { dependencyConflictOf } from "../dependencies/application";
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -90,8 +95,12 @@ function patchMetadata(
 export interface VaultsApplicationServiceDependencies {
   workspaceId: string;
   store: VaultStore;
+  /** Delete removes the credentials of the vault with it. */
+  credentials?: CredentialStore;
   clock: { now(): Date };
   ids: { nextVaultId(): string };
+  /** Archive and delete check dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
 }
 
 export class VaultsApplicationService implements VaultsApplicationPort {
@@ -199,6 +208,21 @@ export class VaultsApplicationService implements VaultsApplicationPort {
   }
 
   async deleteVault(command: DeleteVaultCommand): Promise<DeleteVaultResult> {
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "vault",
+      id: command.vaultId,
+      operation: "delete",
+    });
+    if (conflict !== null) return conflict;
+    const found = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      vaultId: command.vaultId,
+    });
+    if (found === null) return { type: "not_found" };
+    await this.dependencies.credentials?.deleteAllInVault({
+      workspaceId: this.dependencies.workspaceId,
+      vaultId: command.vaultId,
+    });
     const result = await this.dependencies.store.delete({
       workspaceId: this.dependencies.workspaceId,
       vaultId: command.vaultId,
@@ -209,6 +233,12 @@ export class VaultsApplicationService implements VaultsApplicationPort {
   }
 
   async archiveVault(command: ArchiveVaultCommand): Promise<ArchiveVaultResult> {
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "vault",
+      id: command.vaultId,
+      operation: "archive",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.archive({
       workspaceId: this.dependencies.workspaceId,
       vaultId: command.vaultId,
@@ -217,5 +247,29 @@ export class VaultsApplicationService implements VaultsApplicationPort {
     return result.type === "not_found"
       ? result
       : { type: "archived", vault: result.record.vault };
+  }
+
+  async unarchiveVault(command: UnarchiveVaultCommand): Promise<UnarchiveVaultResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      vaultId: command.vaultId,
+    });
+    if (current === null) return { type: "not_found" };
+    if (current.vault.archivedAt === null) {
+      return { type: "unarchived", vault: current.vault };
+    }
+    const replaced = await this.dependencies.store.replace({
+      workspaceId: this.dependencies.workspaceId,
+      vaultId: command.vaultId,
+      expectedRevision: current.revision,
+      next: {
+        ...current.vault,
+        archivedAt: null,
+        updatedAt: this.dependencies.clock.now().toISOString(),
+      },
+    });
+    return replaced.type === "replaced"
+      ? { type: "unarchived", vault: replaced.record.vault }
+      : { type: "not_found" };
   }
 }

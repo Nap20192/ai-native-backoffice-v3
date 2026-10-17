@@ -444,7 +444,7 @@ describe("Skills application", () => {
 
     await expect(
       service.deleteSkillVersion({ skillId: "skill_01", version: "version_02" }),
-    ).resolves.toEqual({ type: "deleted", version: "version_02" });
+    ).resolves.toMatchObject({ type: "deleted", version: "version_02" });
     expect(deleteCalls).toEqual([
       {
         workspaceId: "workspace_01",

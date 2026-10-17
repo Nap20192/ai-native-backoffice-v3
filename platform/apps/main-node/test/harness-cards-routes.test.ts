@@ -33,13 +33,17 @@ describe("harness card routes", () => {
       expect(response.status).toBe(400);
       expect(JSON.stringify(await response.json())).not.toContain("sk-secret-test");
     }
-    expect(await (await app.request(`${root}/${card.id}`, { method: "DELETE" })).json()).toEqual({ type: "harness_card_deleted", id: card.id });
+    expect(await (await app.request(`${root}/${card.id}/archive`, { method: "POST" })).json()).toMatchObject({ id: card.id, archived_at: expect.any(String) });
     expect(await store.listActive("ws1")).toEqual([]);
     expect(await (await app.request(root)).json()).toEqual({ data: [], next_cursor: null });
     expect((await app.request(`${root}/${card.id}`)).status).toBe(200);
     expect((await post(root, input)).status).toBe(409);
     expect((await app.request(`${root}?include_archived=true`)).status).toBe(200);
     expect((await post(root, input, "ws2")).status).toBe(201);
+    // DELETE removes the card (docs/plans/crud.md, 2.8): the harness_id is free again.
+    expect(await (await app.request(`${root}/${card.id}`, { method: "DELETE" })).json()).toEqual({ type: "harness_card_deleted", id: card.id });
+    expect((await app.request(`${root}/${card.id}`)).status).toBe(404);
+    expect((await post(root, input)).status).toBe(201);
   });
   it("validates JSON, query fields and the workspace context", async () => {
     const sql = await createBetterSqlite3SqlClient(":memory:");

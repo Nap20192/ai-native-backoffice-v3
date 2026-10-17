@@ -2,12 +2,12 @@ import { formatDate } from "../lib/date-format";
 import { Input } from "@/components/ui/input";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, TrashIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, TrashIcon, PlusIcon } from "lucide-react";
 import type { BetaManagedAgentsVault as Vault } from "@anthropic-ai/sdk/resources/beta/vaults/vaults";
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { Modal } from "../components/Modal";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { PopoverContent } from "@/components/ui/popover";
@@ -34,12 +34,10 @@ export function VaultsList() {
   const [vaultName, setVaultName] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Подтверждение архивации и удаления (правило 11 DDC). Выбранное действие
+  // Архив и удаление идут через DangerDialog со списком зависимостей. Цель
   // не сбрасываем при закрытии, чтобы текст окна не пропадал на время
-  // анимации ухода, а видимостью управляет отдельный флаг.
+  // анимации ухода. У хранилищ секретов нет ревизии, поэтому If-Match не шлём.
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmBusy, setConfirmBusy] = useState(false);
 
   // Server-driven filter state. Any change to these flows into vaultParams
   // → useInfiniteApiQuery resets to page 1 on params change → the list
@@ -87,26 +85,14 @@ export function VaultsList() {
     }
   };
 
-  const askConfirm = (action: PendingAction) => {
-    setPending(action);
-    setConfirmOpen(true);
-  };
+  const askConfirm = (action: PendingAction) => setPending(action);
 
-  const runConfirmed = async () => {
-    if (!pending) return;
-    setConfirmBusy(true);
+  const restoreVault = async (vault: Vault) => {
     try {
-      if (pending.kind === "archive") {
-        await managedApi.vaults.archive(pending.vault.id);
-      } else {
-        await managedApi.vaults.delete(pending.vault.id);
-      }
+      await managedApi.vaults.unarchive(vault.id);
       load();
     } catch {
       // useApi уже показал ошибку тостом.
-    } finally {
-      setConfirmBusy(false);
-      setConfirmOpen(false);
     }
   };
 
@@ -212,14 +198,6 @@ export function VaultsList() {
   };
 
   const pendingName = pending?.vault.display_name ?? "";
-  const confirmTitle =
-    pending?.kind === "archive"
-      ? `Архивировать хранилище «${pendingName}»?`
-      : `Удалить хранилище «${pendingName}»?`;
-  const confirmMessage =
-    pending?.kind === "archive"
-      ? "Все его учётные данные тоже попадут в архив. Действие нельзя отменить."
-      : "Хранилище и все его учётные данные будут удалены. Действие нельзя отменить.";
 
   return (
     <DataTable<Vault>
@@ -236,12 +214,17 @@ export function VaultsList() {
       getRowId={(v) => v.id}
       onRowClick={(v) => nav(`/vaults/${v.id}`)}
       rowActions={(vault) => [
-        {
-          label: t.common.archive,
-          icon: <ArchiveIcon className="size-4" />,
-          disabled: Boolean(vault.archived_at),
-          onSelect: () => askConfirm({ kind: "archive", vault }),
-        },
+        vault.archived_at
+          ? {
+              label: t.common.unarchive,
+              icon: <ArchiveRestoreIcon className="size-4" />,
+              onSelect: () => void restoreVault(vault),
+            }
+          : {
+              label: t.common.archive,
+              icon: <ArchiveIcon className="size-4" />,
+              onSelect: () => askConfirm({ kind: "archive", vault }),
+            },
         {
           label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
@@ -293,15 +276,32 @@ export function VaultsList() {
         </div>
       </Modal>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        title={confirmTitle}
-        message={confirmMessage}
-        confirmLabel={pending?.kind === "archive" ? t.common.archive : t.common.delete}
-        destructive={pending?.kind === "delete"}
-        busy={confirmBusy}
-        onConfirm={() => void runConfirmed()}
-        onCancel={() => setConfirmOpen(false)}
+      <DangerDialog
+        open={pending?.kind === "archive"}
+        operation="archive"
+        target={pending?.kind === "archive" ? { kind: "vault", id: pending.vault.id } : null}
+        title="Отправить хранилище в архив?"
+        message={`Хранилище «${pendingName}» и его учётные данные станут недоступны агентам.`}
+        confirmLabel={t.common.archive}
+        run={(options) => managedApi.vaults.archive(pending!.vault.id, options)}
+        onDone={() => {
+          setPending(null);
+          load();
+        }}
+        onClose={() => setPending(null)}
+      />
+      <DangerDialog
+        open={pending?.kind === "delete"}
+        operation="delete"
+        target={pending?.kind === "delete" ? { kind: "vault", id: pending.vault.id } : null}
+        title={`Удалить хранилище «${pendingName}»?`}
+        message="Хранилище и все его учётные данные будут удалены."
+        run={(options) => managedApi.vaults.delete(pending!.vault.id, options)}
+        onDone={() => {
+          setPending(null);
+          load();
+        }}
+        onClose={() => setPending(null)}
       />
     </DataTable>
   );

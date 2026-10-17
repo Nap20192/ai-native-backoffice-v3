@@ -5,12 +5,13 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { PlusIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useApi } from "../lib/api";
 import { useOmaInfiniteApiQuery } from "../lib/useApiQuery";
+import { modelCardRevision, useModelCardActions } from "../lib/model-cards-api";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { Modal } from "../components/Modal";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { Field } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { PlainButton } from "@/components/ui/plain-button";
@@ -38,6 +39,14 @@ const PROVIDERS = [
 ] as const;
 
 type ProviderValue = string;
+
+type StatusValue = "active" | "archived" | "any";
+
+const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
+  { value: "any", label: "Все" },
+];
 
 const PROVIDER_FILTER_OPTIONS: { value: ProviderValue | "any"; label: string }[] = [
   { value: "any", label: "Все" },
@@ -68,12 +77,12 @@ export function ModelCardsList() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [showModelSuggestions, setShowModelSuggestions] = useState(false);
 
-  // Удаление карточки подтверждается окном ConfirmDialog (правило 11 DDC).
-  // Цель не сбрасываем при закрытии: текст окна не должен пропасть, пока оно
-  // уходит с экрана.
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  // Архив и удаление идут через DangerDialog со списком зависимостей
+  // (docs/plans/crud.md, 4.2). Цель не сбрасываем при закрытии: текст окна не
+  // должен пропасть, пока оно уходит с экрана.
+  const actions = useModelCardActions();
+  const [archiveTarget, setArchiveTarget] = useState<ModelCard | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ModelCard | null>(null);
 
   // Server-driven filter state. Each piece flows into cardsParams below
   // → useInfiniteApiQuery resets to page 1 on params change → the list
@@ -81,6 +90,7 @@ export function ModelCardsList() {
   const [provider, setProvider] = useState<ProviderValue | "any">("any");
   const [created, setCreated] = useState<{ after?: number; before?: number }>({});
   const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<StatusValue>("active");
 
   const cardsParams = useMemo(
     () => ({
@@ -92,18 +102,24 @@ export function ModelCardsList() {
         ? { created_before: new Date(created.before).toISOString() }
         : {}),
       ...(search ? { q: search } : {}),
+      ...(status !== "active" ? { include_archived: "true" } : {}),
     }),
-    [provider, created.after, created.before, search],
+    [provider, created.after, created.before, search, status],
   );
 
   const {
-    items: cards,
+    items: allCards,
     isLoading: loading,
     hasMore,
     isLoadingMore,
     loadMore,
     refresh: load,
   } = useOmaInfiniteApiQuery<ModelCard>("/v1/oma/model_cards", { limit: 20, params: cardsParams });
+
+  const cards = useMemo(
+    () => (status === "archived" ? allCards.filter((card) => card.archived_at) : allCards),
+    [allCards, status],
+  );
 
   // Provider discovery is Pi catalog metadata; credentials stay in the Model
   // Card create/rotate request and are never forwarded just to browse models.
@@ -195,23 +211,13 @@ export function ModelCardsList() {
   // карточку, поэтому сохранение идёт через useAsyncAction.
   const saveAction = useAsyncAction(save);
 
-  const remove = async (id: string) => {
-    try { await api(`/v1/oma/model_cards/${id}`, { method: "DELETE" }); load(); } catch {}
-  };
-
-  const askDelete = () => {
-    if (!editingId) return;
-    setDeleteTarget({ id: editingId, name: form.model_id });
-    setDeleteOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    await remove(deleteTarget.id);
-    setDeleting(false);
-    setDeleteOpen(false);
-    closeDialog();
+  const restore = async (card: ModelCard) => {
+    try {
+      await actions.unarchive({ id: card.id, ifMatch: modelCardRevision(card) });
+      load();
+    } catch {
+      // Сообщение об ошибке уже показано.
+    }
   };
 
   const startEdit = (card: ModelCard) => {
@@ -400,6 +406,22 @@ export function ModelCardsList() {
         </PopoverContent>
       </FilterChip>
 
+      <FilterChip
+        label="Статус"
+        active={status !== "active"}
+        display={status === "active" ? undefined : STATUS_OPTIONS.find((o) => o.value === status)?.label}
+        onClear={() => setStatus("active")}
+      >
+        <PopoverContent align="start" sideOffset={4} collisionPadding={8} className="w-48 p-0">
+          <FacetedFilter
+            options={STATUS_OPTIONS}
+            value={status}
+            onValueChange={(v) => setStatus(v as StatusValue)}
+            searchPlaceholder="Найти статус…"
+          />
+        </PopoverContent>
+      </FilterChip>
+
       <CreatedFilterChip value={created} onChange={setCreated} />
     </>
   );
@@ -419,6 +441,31 @@ export function ModelCardsList() {
       onSearchChange={setSearch}
       filters={filters}
       data={cards}
+      rowActions={(card) => [
+        {
+          label: t.common.edit,
+          icon: <PencilIcon className="size-4" />,
+          disabled: Boolean(card.archived_at),
+          onSelect: () => startEdit(card),
+        },
+        card.archived_at
+          ? {
+              label: t.common.unarchive,
+              icon: <ArchiveRestoreIcon className="size-4" />,
+              onSelect: () => void restore(card),
+            }
+          : {
+              label: t.common.archive,
+              icon: <ArchiveIcon className="size-4" />,
+              onSelect: () => setArchiveTarget(card),
+            },
+        {
+          label: t.common.delete,
+          icon: <Trash2Icon className="size-4" />,
+          destructive: true,
+          onSelect: () => setDeleteTarget(card),
+        },
+      ]}
       loading={loading}
       onRowClick={(c) => startEdit(c)}
       getRowId={(c) => c.id}
@@ -452,16 +499,6 @@ export function ModelCardsList() {
         closeDisabled={saveAction.loading}
         footer={
           <>
-            {editingId && (
-              <Button
-                variant="danger-ghost"
-                onClick={askDelete}
-                disabled={saveAction.loading}
-                className="mr-auto"
-              >
-                {t.common.delete}
-              </Button>
-            )}
             <Button variant="ghost" onClick={closeDialog} disabled={saveAction.loading}>
               {t.common.cancel}
             </Button>
@@ -653,19 +690,38 @@ export function ModelCardsList() {
         </form>
       </Modal>
 
-      <ConfirmDialog
-        open={deleteOpen}
-        title="Удалить карточку модели?"
+      <DangerDialog
+        open={archiveTarget !== null}
+        operation="archive"
+        target={archiveTarget ? { kind: "model_card", id: archiveTarget.id } : null}
+        ifMatch={archiveTarget ? modelCardRevision(archiveTarget) : undefined}
+        title="Отправить карточку модели в архив?"
         message={
-          deleteTarget
-            ? `Карточка «${deleteTarget.name}» будет удалена. Действие нельзя отменить.`
-            : "Действие нельзя отменить."
+          archiveTarget
+            ? `Карточка «${archiveTarget.model_id}» перестанет выбираться для новых агентов.`
+            : undefined
         }
-        confirmLabel={t.common.delete}
-        destructive
-        busy={deleting}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setDeleteOpen(false)}
+        confirmLabel={t.common.archive}
+        run={(options) => actions.archive({ id: archiveTarget!.id, ifMatch: options.ifMatch })}
+        onDone={() => {
+          setArchiveTarget(null);
+          load();
+        }}
+        onClose={() => setArchiveTarget(null)}
+      />
+      <DangerDialog
+        open={deleteTarget !== null}
+        operation="delete"
+        target={deleteTarget ? { kind: "model_card", id: deleteTarget.id } : null}
+        ifMatch={deleteTarget ? modelCardRevision(deleteTarget) : undefined}
+        title="Удалить карточку модели?"
+        message={deleteTarget ? `Карточка «${deleteTarget.model_id}» будет удалена.` : undefined}
+        run={(options) => actions.remove({ id: deleteTarget!.id, ifMatch: options.ifMatch })}
+        onDone={() => {
+          setDeleteTarget(null);
+          load();
+        }}
+        onClose={() => setDeleteTarget(null)}
       />
     </DataTable>
   );

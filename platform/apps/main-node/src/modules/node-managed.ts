@@ -54,6 +54,8 @@ import { SqlTunnelStore } from "@open-managed-agents/tunnel-store-sql";
 import { SqlUserProfileStore } from "@open-managed-agents/user-profile-store-sql";
 import { SqlEnvironmentWorkStore, type EnvironmentWorkSecretCipher } from "@open-managed-agents/environment-work-store-sql";
 import { SqlDeploymentAgentSource, SqlDeploymentVaultSource, SqlEnvironmentPersistence, SqlFileMetadataPersistence, SqlMemoryStoreSource, SqlManagedSessionsComposition, SqlPersistedSessionEventStream, SqlReplicatedSessionEventStream, SqlSessionEnvironmentSource, SqlSessionSource, SqlSessionRuntimeProjectionPersistence } from "@open-managed-agents/managed-agents-adapters-sql";
+// CRUD (docs/plans/crud.md, A15): the dependency check reads the session rows.
+import { SqlSessionPersistence } from "@open-managed-agents/managed-agents-adapters-sql";
 import { createSqlSessionRuntimeReaders, ensureSessionExecutionClaimLockSchema, SqlSessionExecutionCoordinator } from "@open-managed-agents/session-runtime-sql";
 import { MemorySessionRealtimeHub } from "@open-managed-agents/session-realtime-memory";
 import { AnthropicMessagesDreamCurator, ApplicationDreamMemoryWorkspace, ModelCardCatalogSource, CronDeploymentSchedulePlanner, EnvironmentAwareSessionEventDispatchRouter, EnvironmentAwareSessionEventStreamRouter, EnvironmentAwareSessionLifecycleRouter, TimerEnvironmentWorkAvailabilityWaiter, McpOAuthCredentialValidationProbe, inProcessDreamExecutionSchedulerModule, LocalTunnelProvisioner, SealedEnvironmentWorkSessionCredentialIssuer, StandardWebhookEnvironmentWorkWakeup, DeduplicatingDreamCurator, WebCryptoTunnelCertificateAuthority, WebCryptoTunnelTokenManager, WebCryptoMemoryContentDescriptor, ZipSkillPackageCompiler, synchronizeManagedSessionMemoryWorkspaces } from "@open-managed-agents/managed-agents-adapters-runtime";
@@ -78,6 +80,7 @@ import { NodeManagedConfirmedToolExecutor } from "../lib/node-managed-confirmed-
 import { NodeManagedOutcomeEvaluator } from "../lib/node-managed-outcome-evaluator.js";
 import { ApplicationBackedNodeManagedSessionRuntimeEngine, DefaultNodeManagedSessionRuntimeDriver, NodeManagedSessionRuntimeAdapter } from "../lib/node-managed-session-runtime.js";
 import { DefaultNodeManagedSessionRunner } from "../lib/node-managed-session-runner.js";
+import { createSandboxImageSpec } from "../lib/sandbox-environment-image.js";
 import {
   buildNodeManagedSkillReminders,
   resolveNodeManagedSkillMounts,
@@ -477,7 +480,13 @@ export async function createManagedNodeRuntime(
         session.id,
         join(config.paths.sandboxWorkdir, session.id),
         environment.config.type === "cloud"
-          ? { packages: environment.config.packages, networking: environment.config.networking }
+          ? {
+            packages: environment.config.packages,
+            networking: environment.config.networking,
+            // `config.image` boots the VM from the sandbox image catalog
+            // (docs/plans/environments.md, 1.5); without it the server image.
+            ...await createSandboxImageSpec(config.sandbox.environment)(environment.config.image),
+          }
           : undefined,
       ),
     ...(sharedSessionOutputs === undefined ? {} : {
@@ -1196,6 +1205,14 @@ export async function createManagedNodeRuntime(
       tunnels: new SqlTunnelStore(sql),
       userProfiles: new SqlUserProfileStore(sql),
       vaults: new SqlVaultStore(sql),
+      // CRUD (docs/plans/crud.md, A15): archive and delete look for live
+      // sessions. Sessions are written by managedSessionsComposition; this
+      // store only reads, so its sealer refuses to write.
+      sessions: new SqlSessionPersistence(sql, {
+        seal: async () => {
+          throw new Error("The managed platform reads sessions only");
+        },
+      }),
       ...components.stores,
     },
     fileContent: () => new BlobFileContentStore(filesBlob),

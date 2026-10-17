@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import {
   useAssistantApi,
+  type DangerOperation,
   type PreviewOperation,
   type PreviewResult,
 } from "../../lib/assistant/api";
@@ -15,6 +16,7 @@ import { revertAgentVersion, useProposal, type ProposalController } from "../../
 import { appliedLines, type ThreadItem } from "../../lib/assistant/events";
 import { YamlBlock, YamlDiffView } from "./YamlDiffView";
 import { Label } from "@/components/ui/label";
+import { DependencyList } from "../DependencyList";
 
 /**
  * Карточка одного предложения ассистента (раздел 1.4 плана): создание или
@@ -39,7 +41,30 @@ const NOUN_ACC: Record<string, string> = {
   model_card: "карточку модели",
   harness_card: "карточку harness",
   outcome: "результат",
+  skill_version: "версию навыка",
+  session_resource: "ресурс сессии",
 };
+
+/** Вид объекта в заголовке архива и удаления: деплоймент без «на паузе». */
+const DANGER_NOUN_ACC: Record<string, string> = {
+  deployment: "деплоймент",
+};
+
+const DANGER_VERB: Record<DangerOperation, string> = {
+  archive: "Архивировать",
+  unarchive: "Вернуть из архива",
+  delete: "Удалить",
+};
+
+/** Подпись кнопки опасного инструмента. Те же слова, что в окнах архива и удаления. */
+const DANGER_CONFIRM: Record<string, string> = {
+  archive_object: "В архив",
+  unarchive_object: "Вернуть из архива",
+  delete_object: "Удалить",
+};
+
+export const IRREVERSIBLE_NOTE = "Это нельзя отменить";
+export const ARCHIVE_NOTE = "Объект можно вернуть из архива";
 
 const CREATE_NOUN: Record<string, string> = {
   create_agent: "агента",
@@ -54,6 +79,7 @@ const CREATE_NOUN: Record<string, string> = {
 const CLASS_LABEL: Record<string, string> = {
   create: "Создание",
   edit: "Правка",
+  danger: "Опасное",
   out_of_v1: "Вне первой версии",
 };
 
@@ -65,8 +91,19 @@ export function operationAction(op: PreviewOperation): "create" | "update" {
   return op.class === "edit" ? "update" : "create";
 }
 
+/** Архив или удаление: карточка красная (crud.md, 3.4). Возврат из архива это правка. */
+export function isDangerOperation(op: PreviewOperation | undefined): boolean {
+  if (!op) return false;
+  return op.class === "danger" || op.operation === "archive" || op.operation === "delete";
+}
+
 /** «Создать навык «…»» или «Изменить агента «…», версия 3 станет 4». */
 export function operationTitle(op: PreviewOperation): string {
+  if (op.operation) {
+    const what = op.name ? `«${op.name}»` : (op.targetId ?? "");
+    const noun = DANGER_NOUN_ACC[op.kind] ?? nounAcc(op.kind);
+    return `${DANGER_VERB[op.operation]} ${noun} ${what}`.trim();
+  }
   const verb = operationAction(op) === "create" ? "Создать" : "Изменить";
   const name = op.name ? ` «${op.name}»` : "";
   const versions =
@@ -87,6 +124,7 @@ export function proposalTitle(preview: PreviewResult | null, tool: string): stri
 /** Подпись главной кнопки по инструменту и классам операций. */
 export function confirmLabelFor(tool: string, preview: PreviewResult | null): string {
   if (tool === "send_message") return "Отправить";
+  if (DANGER_CONFIRM[tool]) return DANGER_CONFIRM[tool];
   if (tool === "apply_changes") {
     const ops = preview?.operations ?? [];
     return ops.length > 0 && ops.every((o) => o.class === "create") ? "Создать" : "Применить";
@@ -106,7 +144,8 @@ const DEPLOYMENT_PAUSE_NOTE = "Деплоймент создаётся на па
 
 /** Предупреждения, доступ, YAML или разница и пояснения по виду объекта. */
 export function OperationBody({ op }: { op: PreviewOperation }) {
-  const isEdit = operationAction(op) === "update";
+  if (op.operation === "archive" || op.operation === "delete") return <DangerBody op={op} />;
+  const isEdit = operationAction(op) === "update" || op.operation === "unarchive";
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {op.warnings.length > 0 ? (
@@ -169,6 +208,37 @@ export function OperationBody({ op }: { op: PreviewOperation }) {
   );
 }
 
+/** Архив или удаление: строка про последствия, списки «Мешает» и «Затронет», объект сейчас. */
+function DangerBody({ op }: { op: PreviewOperation }) {
+  const irreversible = op.irreversible || op.operation === "delete";
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <p className="text-xs font-semibold text-ddc-tone-danger-fg" role="note">
+        {irreversible ? IRREVERSIBLE_NOTE : ARCHIVE_NOTE}
+      </p>
+      {op.warnings.length > 0 ? (
+        <ul className="flex flex-col gap-1" aria-label="Предупреждения">
+          {op.warnings.map((w, i) => (
+            <li key={i} className="flex items-start gap-1.5 text-xs text-ddc-warning-text">
+              <AlertTriangleIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              <span>{w}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {op.dependencies ? <DependencyList report={op.dependencies} /> : null}
+      {op.operation === "archive" ? (
+        <YamlDiffView before={op.beforeYaml} after={op.afterYaml} />
+      ) : op.beforeYaml ? (
+        <div>
+          <p className="mb-1 text-xs font-medium text-ddc-label">Что будет удалено</p>
+          <YamlBlock yaml={op.beforeYaml} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /* ---------- Каркас ---------- */
 
 type EffectivePhase = "pending" | "sent" | "denied" | "applied" | "failed";
@@ -222,14 +292,22 @@ export function ProposalShell({
   const canDecide = preview ? preview.canConfirm : true;
   const applyDisabled = busy || !preview || !preview.digest || block !== null || state.phase === "error";
   const label = confirmLabel ? confirmLabel(preview) : confirmLabelFor(item.tool, preview);
-  const classLabel =
-    preview && preview.operations.length === 1 ? CLASS_LABEL[preview.operations[0].class] : undefined;
+  const single = preview && preview.operations.length === 1 ? preview.operations[0] : undefined;
+  const classLabel = single ? CLASS_LABEL[single.class] : undefined;
+  const danger = isDangerOperation(single);
+  // При блокирующих зависимостях кнопки подтверждения нет, есть причина (crud.md, 3.4).
+  const blockedByDependencies = (single?.dependencies?.blocking.length ?? 0) > 0;
 
   return (
     <article
-      className="assistant-card flex min-w-0 flex-col gap-2 rounded-xl border border-ddc-border bg-ddc-surface p-3"
+      className={
+        danger
+          ? "assistant-card flex min-w-0 flex-col gap-2 rounded-xl border-2 border-ddc-tone-danger-ring bg-ddc-tone-danger-bg p-3"
+          : "assistant-card flex min-w-0 flex-col gap-2 rounded-xl border border-ddc-border bg-ddc-surface p-3"
+      }
       data-phase={phase}
       data-tool={item.tool}
+      data-danger={danger ? "true" : undefined}
       aria-label={heading}
     >
       <header className="flex items-start gap-2">
@@ -306,9 +384,17 @@ export function ProposalShell({
               </div>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" disabled={applyDisabled} onClick={controller.allow}>
-                  {label}
-                </Button>
+                {blockedByDependencies ? null : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={danger ? "destructive" : undefined}
+                    disabled={applyDisabled}
+                    onClick={controller.allow}
+                  >
+                    {label}
+                  </Button>
+                )}
                 <Button type="button" size="sm" variant="outline" disabled={state.phase === "confirming"} onClick={() => controller.deny()}>
                   Отклонить
                 </Button>

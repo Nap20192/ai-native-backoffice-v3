@@ -39,7 +39,7 @@ it.skipIf(!process.env.OMA_TEST_POSTGRES_URL)("runs scoped harness CRUD, paginat
     expect(ids).toHaveLength(5); expect(new Set(ids).size).toBe(5);
     expect((await (await app.request("/cards?q=%25_")).json()).data).toHaveLength(1);
     expect((await (await app.request("/cards?q=LOCAL")).json()).data).toHaveLength(1);
-    expect((await app.request(`/cards/${card.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/cards/${card.id}/archive`, { method: "POST" })).status).toBe(200);
     expect(await store.findByHarnessId(workspace, input.harness_id)).toMatchObject({ archived_at: expect.any(String) });
     expect(await store.listActive(workspace)).toHaveLength(4);
     expect((await (await app.request("/cards")).json()).data).toHaveLength(4);

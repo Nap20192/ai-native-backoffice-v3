@@ -1,4 +1,5 @@
 import type { Agent, AgentModel } from "../domain/agent";
+import type { DependencyConflict } from "../ports/dependencies";
 import type {
   AgentMcpServerInput,
   AgentModelInput,
@@ -62,6 +63,18 @@ export interface UpdateAgentCommand {
 
 export interface ArchiveAgentCommand {
   agentId: string;
+  /** The current version from ETag (`If-Match`). Another version gives precondition_failed. */
+  expectedVersion?: number;
+}
+
+export interface UnarchiveAgentCommand {
+  agentId: string;
+  expectedVersion?: number;
+}
+
+export interface DeleteAgentCommand {
+  agentId: string;
+  expectedVersion?: number;
 }
 
 export interface ListAgentsQuery {
@@ -96,6 +109,21 @@ export type UpdateAgentResult =
 
 export type ArchiveAgentResult =
   | { type: "archived"; agent: AgentView }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
+  | { type: "not_found" };
+
+/** Restore keeps the version. An agent out of the archive stays as it is. */
+export type UnarchiveAgentResult =
+  | { type: "unarchived"; agent: AgentView }
+  | { type: "precondition_failed"; message: string }
+  | { type: "not_found" };
+
+/** Delete removes the agent and all its versions. Sessions keep their snapshot. */
+export type DeleteAgentResult =
+  | { type: "deleted"; agentId: string }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export interface ListAgentsPage {
@@ -117,6 +145,8 @@ export interface AgentsApplicationPort {
   retrieveAgent(query: RetrieveAgentQuery): Promise<RetrieveAgentResult>;
   updateAgent(command: UpdateAgentCommand): Promise<UpdateAgentResult>;
   archiveAgent(command: ArchiveAgentCommand): Promise<ArchiveAgentResult>;
+  unarchiveAgent(command: UnarchiveAgentCommand): Promise<UnarchiveAgentResult>;
+  deleteAgent(command: DeleteAgentCommand): Promise<DeleteAgentResult>;
   listAgents(query: ListAgentsQuery): Promise<ListAgentsResult>;
   listAgentVersions(query: ListAgentVersionsQuery): Promise<ListAgentVersionsResult>;
 }

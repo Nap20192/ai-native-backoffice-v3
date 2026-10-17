@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import { useNavigate, useParams } from "react-router";
 import {
   ArchiveIcon,
+  ArchiveRestoreIcon,
   FileTextIcon,
   FolderIcon,
   PlusIcon,
@@ -24,6 +25,7 @@ import type {
   BetaManagedAgentsMemoryVersion,
 } from "@anthropic-ai/sdk/resources/beta/memory-stores/memory-versions";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Modal } from "../components/Modal";
@@ -88,29 +90,17 @@ export function MemoryStoreDetail() {
 
   // «В архив» и «Удалить» живут здесь: строки списка не несут действий над
   // самим хранилищем, как и в шапке AgentDetail.
-  const archive = async () => {
+  // Архив и удаление идут через DangerDialog: он читает зависимости, берёт
+  // ETag хранилища для If-Match и показывает список при ответе 409.
+  const unarchive = async () => {
     if (!storeId) return;
     setBusy(true);
     try {
-      await managedApi.memoryStores.archive(storeId);
-      nav("/memory");
+      await managedApi.memoryStores.unarchive(storeId);
+      void queryClient.invalidateQueries({ queryKey: [`/v1/memory_stores/${storeId}`] });
+      void queryClient.invalidateQueries({ queryKey: ["/v1/memory_stores"] });
     } catch (e) {
       setError(errMsg(e));
-      setConfirmKind(null);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const del = async () => {
-    if (!storeId) return;
-    setBusy(true);
-    try {
-      await managedApi.memoryStores.delete(storeId);
-      nav("/memory");
-    } catch (e) {
-      setError(errMsg(e));
-      setConfirmKind(null);
     } finally {
       setBusy(false);
     }
@@ -189,7 +179,18 @@ export function MemoryStoreDetail() {
           }
           actions={
             <>
-              {!store.archived_at && (
+              {store.archived_at ? (
+                <Button
+                  variant="outline"
+                  onClick={() => void unarchive()}
+                  disabled={busy}
+                  aria-label={t.common.unarchive}
+                  title={t.common.unarchive}
+                >
+                  <ArchiveRestoreIcon />
+                  <span className="hidden sm:inline">{t.common.unarchive}</span>
+                </Button>
+              ) : (
                 <Button
                   variant="outline"
                   onClick={() => setConfirmKind("archive")}
@@ -266,24 +267,28 @@ export function MemoryStoreDetail() {
         </div>
       </div>
 
-      <ConfirmDialog
+      <DangerDialog
         open={confirmKind === "archive"}
-        title="Архивировать хранилище?"
-        message="Хранилище станет доступным только для чтения, новые сессии не смогут его подключить. Архивация необратима."
+        operation="archive"
+        target={storeId ? { kind: "memory_store", id: storeId } : null}
+        etagPath={storeId ? `/v1/memory_stores/${storeId}` : undefined}
+        title="Отправить хранилище памяти в архив?"
+        message="Хранилище станет доступным только для чтения, новые сессии не смогут его подключить."
         confirmLabel={t.common.archive}
-        busy={busy}
-        onConfirm={() => void archive()}
-        onCancel={() => setConfirmKind(null)}
+        run={(options) => managedApi.memoryStores.archive(storeId!, options)}
+        onDone={() => nav("/memory")}
+        onClose={() => setConfirmKind(null)}
       />
-      <ConfirmDialog
+      <DangerDialog
         open={confirmKind === "delete"}
+        operation="delete"
+        target={storeId ? { kind: "memory_store", id: storeId } : null}
+        etagPath={storeId ? `/v1/memory_stores/${storeId}` : undefined}
         title="Удалить хранилище?"
-        message="Хранилище, все его записи и история версий будут удалены. Действие нельзя отменить."
-        confirmLabel={t.common.delete}
-        destructive
-        busy={busy}
-        onConfirm={() => void del()}
-        onCancel={() => setConfirmKind(null)}
+        message="Хранилище, все его записи и история версий будут удалены."
+        run={(options) => managedApi.memoryStores.delete(storeId!, options)}
+        onDone={() => nav("/memory")}
+        onClose={() => setConfirmKind(null)}
       />
     </Page>
   );

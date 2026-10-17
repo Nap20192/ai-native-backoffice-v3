@@ -60,6 +60,12 @@ export function makeAgentsPort(
     archiveAgent: async () => {
       throw new Error("unexpected archiveAgent application port call");
     },
+    unarchiveAgent: async () => {
+      throw new Error("unexpected unarchiveAgent application port call");
+    },
+    deleteAgent: async () => {
+      throw new Error("unexpected deleteAgent application port call");
+    },
     listAgents: async () => {
       throw new Error("unexpected listAgents application port call");
     },

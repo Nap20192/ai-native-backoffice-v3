@@ -1,4 +1,4 @@
-import type { SqlClient } from "@open-managed-agents/sql-client";
+import { containsLikePattern, type SqlClient } from "@open-managed-agents/sql-client";
 import type {
   FindCurrentSessionRecord,
   ArchiveSessionRecord,
@@ -338,6 +338,18 @@ export class SqlSessionStore implements SessionStore {
       conditions.push("deployment_id = ?");
       parameters.push(input.deploymentId);
     }
+    if (input.environmentId !== undefined) {
+      conditions.push("environment_id = ?");
+      parameters.push(input.environmentId);
+    }
+    // File and vault live only in the document: LIKE narrows the rows, the
+    // exact check runs on the parsed session, and the limit applies after it.
+    const documentNeedles = [input.fileId, input.vaultId]
+      .filter((value): value is string => value !== undefined);
+    for (const needle of documentNeedles) {
+      conditions.push("document LIKE ? ESCAPE '!'");
+      parameters.push(containsLikePattern(needle));
+    }
     if (input.statuses !== undefined) {
       conditions.push(`status IN (${input.statuses.map(() => "?").join(", ")})`);
       parameters.push(...input.statuses);
@@ -375,17 +387,27 @@ export class SqlSessionStore implements SessionStore {
           ? "DESC"
           : "ASC"
         : requestedDirection;
-    parameters.push(input.limit);
+    const exact = documentNeedles.length > 0;
+    if (!exact) parameters.push(input.limit);
     const rows = await this.client
       .prepare(
         `SELECT id, document, revision, created_at, updated_at, archived_at
            FROM managed_sessions
           WHERE ${conditions.join(" AND ")}
           ORDER BY created_at ${queryDirection}, id ${queryDirection}
-          LIMIT ?`,
+          ${exact ? "" : "LIMIT ?"}`,
       )
       .bind(...parameters)
       .all<SessionRow>();
-    return (rows.results ?? []).map(toStoredSession);
+    const records = (rows.results ?? []).map(toStoredSession);
+    if (!exact) return records;
+    return records
+      .filter(({ session }) =>
+        (input.fileId === undefined
+          || session.resources.some(
+            (resource) => resource.type === "file" && resource.fileId === input.fileId,
+          ))
+        && (input.vaultId === undefined || session.vaultIds.includes(input.vaultId)))
+      .slice(0, input.limit);
   }
 }

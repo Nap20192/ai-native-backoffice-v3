@@ -240,10 +240,13 @@ export function createActorTokenGuard(options: ActorTokenGuardOptions): Middlewa
     if (rule === null) return forbidden("Route is not available to the assistant");
     let body: unknown = null;
     if (rule.bodyCheck !== null) {
-      try {
-        body = JSON.parse(new TextDecoder().decode(raw));
-      } catch {
-        return forbidden("Body is not JSON");
+      // A DELETE has no body; its rule checks only the headers.
+      if (raw.length > 0) {
+        try {
+          body = JSON.parse(new TextDecoder().decode(raw));
+        } catch {
+          return forbidden("Body is not JSON");
+        }
       }
     }
     const checked = options.allowlist.checkBody(rule, body, {

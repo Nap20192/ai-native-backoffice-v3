@@ -1,12 +1,22 @@
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArchiveIcon, PencilIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  HistoryIcon,
+  PencilIcon,
+  RocketIcon,
+  SparklesIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useApi } from "../lib/api";
 import { useApiQuery, useQueryClient } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
 import { useOptionalAssistant } from "../components/assistant/AssistantProvider";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { EmptyState } from "../components/EmptyState";
 import { Page } from "../components/Page";
 import { PageHeader } from "../components/PageHeader";
@@ -20,6 +30,7 @@ import type { AgentRecord as Agent } from "../types/agent";
 import { findHarness, findModel, harnessIdOf, isAcpHarness } from "./agents/agent-harness";
 import { AgentFormDialog } from "./agents/AgentFormDialog";
 import { formatDateTime, speedLabel, toolLabel } from "./agents/format";
+import { restoreVersionBody } from "./agents/restore-version";
 import { HARNESS_LABELS, harnessLabel } from "./agents/harness-text";
 import { effortLabel, effortOf, sourceLabel } from "./agents/model-format";
 import { useCrumbName } from "../lib/crumb-names";
@@ -36,7 +47,9 @@ export function AgentDetail() {
 
   const [showEdit, setShowEdit] = useState(false);
   const [askArchive, setAskArchive] = useState(false);
-  const [archiving, setArchiving] = useState(false);
+  const [askDelete, setAskDelete] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState<Agent | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [customSkills, setCustomSkills] = useState<
     Array<{ id: string; name: string; description: string }>
@@ -120,19 +133,32 @@ export function AgentDetail() {
     void queryClient.invalidateQueries({ queryKey: ["/v1/agents"] });
   };
 
-  // Архивация необратима, поэтому спрашиваем через ConfirmDialog (правило 11
-  // DDC), а не через window.confirm. Пока идёт запрос, окно не закрывается.
-  const archive = async () => {
-    if (!id) return;
-    setArchiving(true);
+  // Архив и удаление идут через DangerDialog со списком зависимостей. Версия
+  // агента служит значением If-Match (docs/plans/crud.md, 1.4).
+  const unarchive = async () => {
+    if (!id || !agent) return;
     try {
-      await managedApi.agents.archive(id);
-      setAskArchive(false);
-      nav("/agents");
+      await managedApi.agents.unarchive(id, { ifMatch: `"${agent.version}"` });
+      refreshAgent();
+    } catch {
+      // Сообщение об ошибке уже показал useApi.
+    }
+  };
+
+  const restoreVersion = async () => {
+    if (!id || !agent || !restoringVersion) return;
+    setRestoreBusy(true);
+    try {
+      await managedApi.agents.update(
+        id,
+        restoreVersionBody(restoringVersion as unknown as Record<string, unknown>, agent.version),
+      );
+      setRestoringVersion(null);
+      refreshAgent();
     } catch {
       // Сообщение об ошибке уже показал useApi, окно остаётся для новой попытки.
     } finally {
-      setArchiving(false);
+      setRestoreBusy(false);
     }
   };
 
@@ -184,9 +210,26 @@ export function AgentDetail() {
                   {t.common.edit}
                 </Button>
               )}
-              <Button variant="outline" onClick={() => setAskArchive(true)} disabled={archived}>
-                <ArchiveIcon />
-                {t.common.archive}
+              {!archived && (
+                <Button variant="outline" onClick={() => nav(`/deployments/new?agent=${agent.id}`)}>
+                  <RocketIcon />
+                  Создать деплоймент
+                </Button>
+              )}
+              {archived ? (
+                <Button variant="outline" onClick={() => void unarchive()}>
+                  <ArchiveRestoreIcon />
+                  {t.common.unarchive}
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={() => setAskArchive(true)}>
+                  <ArchiveIcon />
+                  {t.common.archive}
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setAskDelete(true)}>
+                <Trash2Icon />
+                {t.common.delete}
               </Button>
             </>
           }
@@ -262,6 +305,7 @@ export function AgentDetail() {
                     <TableHead>Версия</TableHead>
                     <TableHead>Модель</TableHead>
                     <TableHead className="hidden md:table-cell">Системный промпт</TableHead>
+                    {!archived && <TableHead className="w-px"><span className="sr-only">Действия</span></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -282,6 +326,21 @@ export function AgentDetail() {
                       >
                         {v.system || <span className="text-ddc-placeholder">Не задан</span>}
                       </TableCell>
+                      {!archived && (
+                        <TableCell className="text-right">
+                          {v.version !== agent.version && (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              aria-label={`Восстановить версию ${v.version}`}
+                              onClick={() => setRestoringVersion(v)}
+                            >
+                              <HistoryIcon />
+                              Восстановить эту версию
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -304,15 +363,43 @@ export function AgentDetail() {
         modelCards={modelCards}
       />
 
-      <ConfirmDialog
+      <DangerDialog
         open={askArchive}
+        operation="archive"
+        target={{ kind: "agent", id: agent.id }}
+        ifMatch={`"${agent.version}"`}
         title="Отправить агента в архив?"
-        message={`Агент станет доступен только для чтения, новые сессии с ним создать нельзя. ${t.agents.confirmDelete}`}
+        message="Агент станет доступен только для чтения, новые сессии с ним создать нельзя."
         confirmLabel={t.common.archive}
-        destructive
-        busy={archiving}
-        onConfirm={() => void archive()}
-        onCancel={() => setAskArchive(false)}
+        run={(options) => managedApi.agents.archive(agent.id, options)}
+        onDone={() => {
+          setAskArchive(false);
+          nav("/agents");
+        }}
+        onClose={() => setAskArchive(false)}
+      />
+      <DangerDialog
+        open={askDelete}
+        operation="delete"
+        target={{ kind: "agent", id: agent.id }}
+        ifMatch={`"${agent.version}"`}
+        title="Удалить агента?"
+        message="Агент и все его версии будут удалены. Сессии сохранят снимок агента."
+        run={(options) => managedApi.agents.delete(agent.id, options)}
+        onDone={() => {
+          setAskDelete(false);
+          nav("/agents");
+        }}
+        onClose={() => setAskDelete(false)}
+      />
+      <ConfirmDialog
+        open={restoringVersion !== null}
+        title={`Восстановить версию ${restoringVersion?.version ?? ""}?`}
+        message="Содержимое этой версии станет новой текущей версией. Старые версии останутся в истории."
+        confirmLabel="Восстановить"
+        busy={restoreBusy}
+        onConfirm={() => void restoreVersion()}
+        onCancel={() => setRestoringVersion(null)}
       />
     </Page>
   );

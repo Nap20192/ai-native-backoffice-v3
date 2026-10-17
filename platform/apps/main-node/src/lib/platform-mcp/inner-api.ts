@@ -31,6 +31,8 @@ export interface InnerApi {
   get(path: string): Promise<InnerResponse>;
   post(path: string, body: unknown, options?: InnerRequestOptions): Promise<InnerResponse>;
   postForm(path: string, form: FormData, options?: InnerRequestOptions): Promise<InnerResponse>;
+  /** DELETE without a body; the token carries the hash of the empty body. */
+  delete(path: string, options?: InnerRequestOptions): Promise<InnerResponse>;
 }
 
 export function sha256Hex(data: Uint8Array | string): string {
@@ -45,7 +47,7 @@ export function createInnerApi(
   const issuer = options.issuer ?? "handler";
 
   async function send(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     body: Uint8Array | null,
     contentType: string | null,
@@ -88,6 +90,7 @@ export function createInnerApi(
 
   return {
     get: (path) => send("GET", path, null, null, undefined),
+    delete: (path, opts) => send("DELETE", path, null, null, opts?.headers),
     post: (path, body, opts) =>
       send("POST", path, new TextEncoder().encode(JSON.stringify(body)), "application/json", opts?.headers),
     async postForm(path, form, opts) {

@@ -127,6 +127,16 @@ export type RedactMemoryVersionRecordResult =
   | { type: "not_found" }
   | { type: "revision_conflict"; actualRevision: number };
 
+export interface DeleteMemoryStoreContents {
+  workspaceId: string;
+  memoryStoreId: string;
+}
+
+export interface DeletedMemoryStoreContents {
+  deletedMemories: number;
+  deletedVersions: number;
+}
+
 export interface MemoryDocumentStore {
   create(input: CreateMemoryRecord): Promise<CreateMemoryRecordResult>;
   findCurrent(input: MemoryLocation): Promise<StoredMemory | null>;
@@ -142,4 +152,8 @@ export interface MemoryDocumentStore {
   redactVersion(
     input: RedactMemoryVersionRecord,
   ): Promise<RedactMemoryVersionRecordResult>;
+  /** Deletes every memory and memory version of one memory store. */
+  deleteAllInStore(
+    input: DeleteMemoryStoreContents,
+  ): Promise<DeletedMemoryStoreContents>;
 }

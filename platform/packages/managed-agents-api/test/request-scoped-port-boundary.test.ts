@@ -11,6 +11,7 @@ describe("Managed Agents HTTP application-port boundary", () => {
     expect(Object.keys(routeSources).sort()).toEqual([
       "../src/routes/agents.ts",
       "../src/routes/credentials.ts",
+      "../src/routes/dependencies.ts",
       "../src/routes/deployment-runs.ts",
       "../src/routes/deployments.ts",
       "../src/routes/dreams.ts",

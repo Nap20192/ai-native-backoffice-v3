@@ -13,6 +13,7 @@ import {
 import {
   apiError,
   conflict,
+  dependencyConflict,
   invalidRequest,
   notFound,
   preconditionFailed,
@@ -174,12 +175,17 @@ export function buildSkillVersionRoutes(
   });
 
   app.delete("/:skillId/versions/:version", async (c) => {
-    const result = await resolveApplicationPort(source, c).deleteSkillVersion(
-      toDeleteSkillVersionCommand(
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).deleteSkillVersion({
+      ...toDeleteSkillVersionCommand(
         c.req.param("skillId"),
         c.req.param("version"),
       ),
-    );
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(
         notFound(`Skill version ${c.req.param("version")} was not found`),
@@ -189,6 +195,13 @@ export function buildSkillVersionRoutes(
     if (result.type === "version_conflict") {
       return c.json(conflict(result.message), 409);
     }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
+    }
+    setRevisionETag(c, result.skillRevision);
     const response = deletedSkillVersionResponseSchema.safeParse({
       id: result.version,
       type: "skill_version_deleted",

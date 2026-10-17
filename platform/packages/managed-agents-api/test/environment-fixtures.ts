@@ -22,6 +22,9 @@ export function makeEnvironmentsPort(
     archiveEnvironment: async () => {
       throw new Error("unexpected archiveEnvironment application port call");
     },
+    unarchiveEnvironment: async () => {
+      throw new Error("unexpected unarchiveEnvironment application port call");
+    },
     ...overrides,
   };
 }

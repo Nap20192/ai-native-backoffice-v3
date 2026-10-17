@@ -21,6 +21,9 @@ describe("Agents application module", () => {
       archiveCurrent: async () => ({ type: "not_found" as const }),
       listCurrent: async () => [],
       listVersions: async () => [],
+      unarchiveCurrent: async () => ({ type: "not_found" as const }),
+      deleteCurrent: async () => ({ type: "not_found" as const }),
+      listReferencing: async () => [],
     } satisfies AgentStore;
     const app = createApp({
       modules: [

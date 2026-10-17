@@ -170,9 +170,69 @@ export class ModelCardService {
     return await this.repo.setDefault(opts.tenantId, opts.cardId, this.clock.nowMs());
   }
 
-  async delete(opts: { tenantId: string; cardId: string }): Promise<void> {
-    await this.requireCard(opts);
+  /**
+   * Hard delete. `expectedUpdatedAt` is the revision from ETag; another
+   * stored revision throws {@link ModelCardPreconditionFailedError}.
+   */
+  async delete(opts: {
+    tenantId: string;
+    cardId: string;
+    expectedUpdatedAt?: string;
+  }): Promise<void> {
+    const current = await this.requireCard(opts);
+    this.checkRevision(current, opts.expectedUpdatedAt);
     await this.repo.delete(opts.tenantId, opts.cardId);
+  }
+
+  /**
+   * Archive (docs/plans/crud.md, 2.8). The card leaves the model catalog and
+   * stops being the default, so a later restore never makes two defaults.
+   */
+  async archive(opts: {
+    tenantId: string;
+    cardId: string;
+    expectedUpdatedAt?: string;
+  }): Promise<ModelCardRow> {
+    return this.setArchived(opts, true);
+  }
+
+  /** Restore from the archive. A card out of the archive stays as it is. */
+  async unarchive(opts: {
+    tenantId: string;
+    cardId: string;
+    expectedUpdatedAt?: string;
+  }): Promise<ModelCardRow> {
+    return this.setArchived(opts, false);
+  }
+
+  private async setArchived(
+    opts: { tenantId: string; cardId: string; expectedUpdatedAt?: string },
+    archived: boolean,
+  ): Promise<ModelCardRow> {
+    const current = await this.requireCard(opts);
+    const expected = this.checkRevision(current, opts.expectedUpdatedAt);
+    if ((current.archived_at !== null) === archived) return current;
+    const currentRevision = Date.parse(current.updated_at ?? current.created_at);
+    const now = Math.max(this.clock.nowMs(), currentRevision + 1);
+    return await this.repo.update(opts.tenantId, opts.cardId, {
+      updatedAt: now,
+      archivedAt: archived ? now : null,
+      ...(archived && { isDefault: false }),
+      ...(expected !== undefined && { expectedUpdatedAt: expected }),
+    });
+  }
+
+  /** Throws when `expectedUpdatedAt` names another revision; returns it as ms. */
+  private checkRevision(
+    current: ModelCardRow,
+    expectedUpdatedAt: string | undefined,
+  ): number | undefined {
+    if (expectedUpdatedAt === undefined) return undefined;
+    const expected = Date.parse(expectedUpdatedAt);
+    if (expected !== Date.parse(current.updated_at ?? current.created_at)) {
+      throw new ModelCardPreconditionFailedError();
+    }
+    return expected;
   }
 
   // ============================================================

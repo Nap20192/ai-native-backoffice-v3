@@ -4,13 +4,20 @@
 
 import { z } from "zod";
 import { CREATE_TOOLS } from "./create";
-import { createSessionTool } from "./sessions";
-import { UPDATE_TOOLS } from "./update";
+import { DANGER_TOOL_NAMES, unarchiveObjectTool } from "./danger";
+import { addSessionResourceTool, createSessionTool, updateSessionTool } from "./sessions";
+import { runDeploymentTool, UPDATE_TOOLS } from "./update";
 import { formatSchemaError, isRecord, REF_PREFIX, type ToolDef } from "./common";
 
-/** Tools a batch may hold. send_message always goes on its own card. */
+/**
+ * Tools a batch may hold. send_message and run_deployment start an agent and
+ * go on their own card; archive and delete are the danger class, one per card
+ * (crud.md 3.1).
+ */
 export const BATCH_TOOLS: ReadonlyMap<string, ToolDef> = new Map(
-  [...CREATE_TOOLS, createSessionTool, ...UPDATE_TOOLS].map((tool) => [tool.name, tool as ToolDef]),
+  [...CREATE_TOOLS, createSessionTool, updateSessionTool, addSessionResourceTool, unarchiveObjectTool, ...UPDATE_TOOLS]
+    .filter((tool) => tool.name !== runDeploymentTool.name)
+    .map((tool) => [tool.name, tool as ToolDef]),
 );
 
 const batchArgs = z
@@ -66,6 +73,9 @@ export function prepareBatch(args: BatchArgs): { ok: true; ops: PreparedOp[] } |
     if (operation.tool === "send_message") {
       return { ok: false, message: `${label}: send_message в пачку не входит, первое сообщение идёт отдельной карточкой` };
     }
+    if (DANGER_TOOL_NAMES.has(operation.tool)) {
+      return { ok: false, message: `${label}: опасная операция ${operation.tool} идёт отдельной карточкой` };
+    }
     const tool = BATCH_TOOLS.get(operation.tool);
     if (!tool) return { ok: false, message: `${label}: инструмент ${operation.tool} в пачку не входит` };
     const missing: string[] = [];
@@ -109,7 +119,7 @@ export function resolveRefs(value: unknown, created: ReadonlyMap<string, string>
 export const applyChangesTool: ToolDef<BatchArgs> = {
   name: "apply_changes",
   group: "batch",
-  description: "Пачка до 10 операций создания и правки под одной карточкой. {\"$ref\": \"имя\"} ссылается на объект из операции с этим ref. Ждёт подтверждения.",
+  description: "Пачка до 10 операций создания и правки под одной карточкой. Архив, удаление, send_message и run_deployment в пачку не входят. {\"$ref\": \"имя\"} ссылается на объект из операции с этим ref. Ждёт подтверждения.",
   args: batchArgs,
   routes: [...new Map([...BATCH_TOOLS.values()].flatMap((tool) => tool.routes).map((rule) => [`${rule.method} ${rule.pattern}`, rule])).values()],
   precondition: null,

@@ -1,5 +1,8 @@
 import type { MemoryStore } from "@open-managed-agents/domain/memory-stores";
 import type { MemoryStoreStore } from "@open-managed-agents/memory-store-store";
+import type { MemoryDocumentStore } from "@open-managed-agents/memory-document-store";
+import type { DependenciesApplicationPort } from "../ports/dependencies";
+import { dependencyConflictOf } from "../dependencies/application";
 import type {
   ArchiveMemoryStoreCommand,
   ArchiveMemoryStoreResult,
@@ -12,6 +15,8 @@ import type {
   MemoryStoresApplicationPort,
   RetrieveMemoryStoreQuery,
   RetrieveMemoryStoreResult,
+  UnarchiveMemoryStoreCommand,
+  UnarchiveMemoryStoreResult,
   UpdateMemoryStoreCommand,
   UpdateMemoryStoreResult,
 } from "../ports/memory-stores";
@@ -111,8 +116,24 @@ function patchMetadata(
 export interface MemoryStoresApplicationServiceDependencies {
   workspaceId: string;
   store: MemoryStoreStore;
+  /** Delete removes the memories and their versions with it. */
+  memories?: MemoryDocumentStore;
   clock: { now(): Date };
   ids: { nextMemoryStoreId(): string };
+  /** Archive and delete check dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
+}
+
+function staleMemoryStoreRevision(
+  memoryStoreId: string,
+  expectedRevision: number | undefined,
+  revision: number,
+): { type: "precondition_failed"; message: string } | null {
+  if (expectedRevision === undefined || expectedRevision === revision) return null;
+  return {
+    type: "precondition_failed",
+    message: `Memory store ${memoryStoreId} is at revision ${revision}, not ${expectedRevision}`,
+  };
 }
 
 export class MemoryStoresApplicationService
@@ -295,9 +316,31 @@ export class MemoryStoresApplicationService
     };
   }
 
+  /** Deletes the memories and versions first: a retry finds an empty store. */
   async deleteMemoryStore(
     command: DeleteMemoryStoreCommand,
   ): Promise<DeleteMemoryStoreResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      memoryStoreId: command.memoryStoreId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleMemoryStoreRevision(
+      command.memoryStoreId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "memory_store",
+      id: command.memoryStoreId,
+      operation: "delete",
+    });
+    if (conflict !== null) return conflict;
+    await this.dependencies.memories?.deleteAllInStore({
+      workspaceId: this.dependencies.workspaceId,
+      memoryStoreId: command.memoryStoreId,
+    });
     const result = await this.dependencies.store.delete({
       workspaceId: this.dependencies.workspaceId,
       memoryStoreId: command.memoryStoreId,
@@ -310,6 +353,23 @@ export class MemoryStoresApplicationService
   async archiveMemoryStore(
     command: ArchiveMemoryStoreCommand,
   ): Promise<ArchiveMemoryStoreResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      memoryStoreId: command.memoryStoreId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleMemoryStoreRevision(
+      command.memoryStoreId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "memory_store",
+      id: command.memoryStoreId,
+      operation: "archive",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.archive({
       workspaceId: this.dependencies.workspaceId,
       memoryStoreId: command.memoryStoreId,
@@ -317,6 +377,55 @@ export class MemoryStoresApplicationService
     });
     return result.type === "not_found"
       ? { type: "not_found" }
-      : { type: "archived", memoryStore: result.record.memoryStore };
+      : {
+          type: "archived",
+          memoryStore: result.record.memoryStore,
+          revision: result.record.revision,
+        };
+  }
+
+  async unarchiveMemoryStore(
+    command: UnarchiveMemoryStoreCommand,
+  ): Promise<UnarchiveMemoryStoreResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      memoryStoreId: command.memoryStoreId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleMemoryStoreRevision(
+      command.memoryStoreId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
+    if (current.memoryStore.archivedAt === null) {
+      return {
+        type: "unarchived",
+        memoryStore: current.memoryStore,
+        revision: current.revision,
+      };
+    }
+    const replaced = await this.dependencies.store.replace({
+      workspaceId: this.dependencies.workspaceId,
+      memoryStoreId: command.memoryStoreId,
+      expectedRevision: current.revision,
+      next: {
+        ...current.memoryStore,
+        archivedAt: null,
+        updatedAt: this.dependencies.clock.now().toISOString(),
+      },
+    });
+    if (replaced.type === "not_found") return { type: "not_found" };
+    if (replaced.type === "revision_conflict") {
+      return {
+        type: "precondition_failed",
+        message: `Memory store ${command.memoryStoreId} changed concurrently at revision ${replaced.actualRevision}`,
+      };
+    }
+    return {
+      type: "unarchived",
+      memoryStore: replaced.record.memoryStore,
+      revision: replaced.record.revision,
+    };
   }
 }

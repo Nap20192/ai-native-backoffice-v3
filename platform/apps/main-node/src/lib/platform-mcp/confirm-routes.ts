@@ -10,7 +10,7 @@ import { createInnerApi } from "./inner-api";
 import type { ActorClaims, ConfirmationRow, PlatformMcpDeps } from "./ports";
 import { buildPreview, previewJson } from "./preview";
 import { TOOL_TABLE } from "./tool-table";
-import { isRecord, type ToolDef } from "./tools/common";
+import { isRecord, targetKindOf, type ToolDef } from "./tools/common";
 import { readAllEvents } from "./tools/read";
 
 export interface ConsoleVariables {
@@ -134,7 +134,7 @@ export function buildConfirmRoutes(deps: PlatformMcpDeps): Hono<ConsoleVariables
           args: loaded.input,
           result: "denied",
           errorMessage: denyMessage ?? null,
-          targetKind: loaded.tool.op?.targetKind ?? null,
+          targetKind: preview?.ops[0] ? targetKindOf(loaded.tool, preview.ops[0].op.args) : loaded.tool.op?.targetKind ?? null,
           targetId: preview?.ops[0]?.plan.targetId ?? null,
           startedAt: deps.now?.() ?? new Date(),
         });

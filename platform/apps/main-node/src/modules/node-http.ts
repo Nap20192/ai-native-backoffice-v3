@@ -74,6 +74,12 @@ import { buildNodeHttpInferenceProxyRoutes } from "../lib/http-inference-proxy.j
 import { agentConfigGuard } from "../lib/agent-config-guard.js";
 import { buildHarnessCatalogRoutes, buildModelOptionsRoutes } from "../lib/catalog-routes.js";
 import { agentForGuard, buildHarnessCardRoutesFor, createModelsHarnessWiring } from "../lib/models-harness-wiring.js";
+import { dependenciesPort } from "@open-managed-agents/app/modules/dependencies";
+import {
+  buildCrudDependencyRoutes,
+  harnessCardDependencyCheck,
+  modelCardDependencyCheck,
+} from "../lib/crud-dependencies.js";
 import { resolveSandboxInferenceBearer, sandboxInferenceCipher } from "../lib/sandbox-inference-token.js";
 import { buildNodeHttpMcpProxyRoutes } from "../lib/http-mcp-proxy.js";
 import { createNodeAccessLossRuntime } from "../lib/mcp-access-loss.js";
@@ -359,7 +365,18 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   const modelsHarness = createModelsHarnessWiring({ config, sql, dialect, modelCards: modelCardsService });
   v1.route("/oma/model_options", buildModelOptionsRoutes(modelsHarness.catalog));
   v1.route("/oma/harnesses", buildHarnessCatalogRoutes(modelsHarness.catalog));
-  v1.route("/oma/harness_cards", buildHarnessCardRoutesFor(modelsHarness));
+  // Archive and delete check dependencies (docs/plans/crud.md, 1.2 and 1.3).
+  const crudDependenciesFor = (workspaceId: string) =>
+    managedPlatform.app({ workspaceId }).port(dependenciesPort);
+  v1.route("/oma/dependencies", buildCrudDependencyRoutes({
+    dependenciesFor: crudDependenciesFor,
+    modelCards: modelCardsService,
+    harnessCards: modelsHarness.cardStore,
+  }));
+  v1.route("/oma/harness_cards", buildHarnessCardRoutesFor(
+    modelsHarness,
+    harnessCardDependencyCheck(crudDependenciesFor),
+  ));
   v1.use("/agents/*", agentConfigGuard({
     catalog: modelsHarness.catalog.catalog,
     loadAgent: async (workspaceId, agentId) => {
@@ -647,7 +664,10 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     sessions: sessionsService,
   }));
   v1.route("/files", managedFilesRoutes);
-  v1.route("/oma/model_cards", buildModelCardRoutes({ modelCards: modelCardsService }));
+  v1.route("/oma/model_cards", buildModelCardRoutes({
+    modelCards: modelCardsService,
+    dependencies: modelCardDependencyCheck(crudDependenciesFor),
+  }));
   v1.route("/oma/models", buildOmaModelsHttpRoutes({
     fetch: (input, init) => fetch(input, init),
   }));

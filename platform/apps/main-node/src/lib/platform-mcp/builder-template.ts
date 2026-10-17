@@ -7,6 +7,12 @@ import type { AgentCreateBody } from "@open-managed-agents/managed-agents-api";
 export const PLATFORM_MCP_SERVER_NAME = "platform";
 export const BUILDER_ROLE = "builder";
 
+/**
+ * Версия шаблона. 2: архив, восстановление, удаление и get_dependencies в always_allow
+ * (docs/plans/crud.md, B8). Ассистент со старой версией спрашивает и про get_dependencies.
+ */
+export const BUILDER_TEMPLATE_VERSION = 2;
+
 /** Инструменты чтения и черновика из 2.3. Только у них политика always_allow. */
 export const BUILDER_ALWAYS_ALLOW_TOOLS = [
   "help",
@@ -18,6 +24,7 @@ export const BUILDER_ALWAYS_ALLOW_TOOLS = [
   "get_session_events",
   "get_trajectory",
   "request_secret",
+  "get_dependencies",
   "preview_change",
 ] as const;
 
@@ -43,8 +50,17 @@ export const BUILDER_WRITE_TOOLS = [
   "update_model_card",
   "update_harness_card",
   "send_message",
+  "update_session",
+  "add_session_resource",
+  "pause_deployment",
+  "unpause_deployment",
+  "run_deployment",
+  "unarchive_object",
   "apply_changes",
 ] as const;
+
+/** Класс «опасное» (crud.md 3.1): архив и удаление, своя группа в диалоге шаблона. */
+export const BUILDER_DANGER_TOOLS = ["archive_object", "delete_object"] as const;
 
 type AgentTool = NonNullable<AgentCreateBody["tools"]>[number];
 
@@ -118,7 +134,7 @@ export function buildBuilderAgentConfig(options: BuilderAgentOptions): Omit<Agen
     description: "Настраивает платформу и отвечает на вопросы о ней. Любую запись подтверждает пользователь.",
     ...(options.model === undefined ? {} : { model: options.model }),
     system: readBuilderPrompt(),
-    metadata: { oma_role: BUILDER_ROLE },
+    metadata: { oma_role: BUILDER_ROLE, oma_template_version: String(BUILDER_TEMPLATE_VERSION) },
     mcp_servers: [{ type: "url", name: PLATFORM_MCP_SERVER_NAME, url: options.platformMcpUrl }],
     tools: buildBuilderTools(),
   };

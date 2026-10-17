@@ -10,6 +10,7 @@ import { environmentCreateBodySchema } from "../../../packages/managed-agents-ap
 import {
   BUILDER_ALWAYS_ALLOW_TOOLS,
   BUILDER_DRAFT_TOOLS,
+  BUILDER_TEMPLATE_VERSION,
   PLATFORM_MCP_SERVER_NAME,
   assistantDir,
   buildBuilderAgentConfig,
@@ -22,16 +23,19 @@ import { buildBuilderBundleRoutes } from "../src/lib/platform-mcp/builder-bundle
 const MCP_URL = "http://127.0.0.1:8788/v1/oma/platform-mcp";
 
 // Список 2.3 плана. Когда BS1 положит tool-table.ts, тест сверяет шаблон с таблицей.
-const READ_TOOLS = ["help", "search_docs", "search_config", "list", "get", "read_content", "get_session_events", "get_trajectory", "request_secret"];
+const READ_TOOLS = ["help", "search_docs", "search_config", "list", "get", "read_content", "get_session_events", "get_trajectory", "request_secret", "get_dependencies"];
 const DRAFT_TOOLS = ["preview_change"];
 const WRITE_TOOLS = [
   "create_agent", "create_environment", "create_skill", "upload_file", "create_memory_store", "create_deployment", "create_session",
   "write_memory",
   "update_agent", "restore_agent_version", "update_environment", "create_skill_version", "update_memory_store", "update_deployment",
   "update_model_card", "update_harness_card", "send_message",
+  "update_session", "add_session_resource", "pause_deployment", "unpause_deployment", "run_deployment", "unarchive_object",
   "apply_changes",
 ];
-const ALL_TOOLS = [...READ_TOOLS, ...DRAFT_TOOLS, ...WRITE_TOOLS];
+// Класс «опасное» из crud.md 3.1: своя группа в диалоге шаблона.
+const DANGER_TOOLS = ["archive_object", "delete_object"];
+const ALL_TOOLS = [...READ_TOOLS, ...DRAFT_TOOLS, ...WRITE_TOOLS, ...DANGER_TOOLS];
 
 const DOCS = ["platform-builder.md", "writing-skills.md", "system-prompts.md", "outcomes-and-evals.md", "session-review.md", "platform-reference.md"];
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -41,7 +45,8 @@ describe("шаблон ассистента", () => {
     const agent = buildBuilderAgentConfig({ model: "qwen3.6-35b", platformMcpUrl: MCP_URL });
     expect(agentCreateBodySchema.safeParse(agent).success).toBe(true);
     expect(agent.model).toBe("qwen3.6-35b");
-    expect(agent.metadata).toEqual({ oma_role: "builder" });
+    expect(agent.metadata).toEqual({ oma_role: "builder", oma_template_version: String(BUILDER_TEMPLATE_VERSION) });
+    expect(BUILDER_TEMPLATE_VERSION).toBe(2);
     expect(agent.system).toBe(readBuilderPrompt());
     expect(agent.mcp_servers).toEqual([{ type: "url", name: PLATFORM_MCP_SERVER_NAME, url: MCP_URL }]);
     expect(agent).not.toHaveProperty("skills");
@@ -56,15 +61,15 @@ describe("шаблон ассистента", () => {
     });
   });
 
-  it("разрешает без вопроса ровно 10 инструментов чтения и черновика", () => {
-    expect(ALL_TOOLS).toHaveLength(28);
-    expect(new Set(ALL_TOOLS).size).toBe(28);
+  it("разрешает без вопроса ровно 11 инструментов чтения и черновика", () => {
+    expect(ALL_TOOLS).toHaveLength(37);
+    expect(new Set(ALL_TOOLS).size).toBe(37);
     expect([...BUILDER_ALWAYS_ALLOW_TOOLS].sort()).toEqual([...READ_TOOLS, ...DRAFT_TOOLS].sort());
     const agent = buildBuilderAgentConfig({ model: "m", platformMcpUrl: MCP_URL });
     const config = { tools: agent.tools } as Parameters<typeof getToolPermission>[0];
     const allowed = ALL_TOOLS.filter((name) => getToolPermission(config, `mcp__platform__${name}`) === "always_allow");
     expect(allowed.sort()).toEqual([...READ_TOOLS, ...DRAFT_TOOLS].sort());
-    for (const name of WRITE_TOOLS) expect(getToolPermission(config, `mcp__platform__${name}`)).toBe("always_ask");
+    for (const name of [...WRITE_TOOLS, ...DANGER_TOOLS]) expect(getToolPermission(config, `mcp__platform__${name}`)).toBe("always_ask");
     expect(getToolPermission(config, "mcp__platform__future_tool")).toBe("always_ask");
   });
 
@@ -111,7 +116,9 @@ describe("GET /v1/oma/platform-mcp/builder-bundle", () => {
     expect(body.agent).toEqual(buildBuilderAgentConfig({ model: "qwen3.6-35b", platformMcpUrl: MCP_URL }));
     expect(body.needs_model).toBe(false);
     expect(body.draft_tools).toEqual(buildBuilderDraftTools());
-    expect(body.tool_groups.map((g: { id: string }) => g.id)).toEqual(["read", "draft", "write"]);
+    expect(body.template_version).toBe(BUILDER_TEMPLATE_VERSION);
+    expect(body.tool_groups.map((g: { id: string }) => g.id)).toEqual(["read", "draft", "write", "danger"]);
+    expect(body.tool_groups.at(-1)).toMatchObject({ title: "Архив и удаление", confirm: true, tools: DANGER_TOOLS });
     const grouped = body.tool_groups.flatMap((g: { tools: string[] }) => g.tools).sort();
     expect(grouped).toEqual([...ALL_TOOLS].sort());
   });
@@ -159,7 +166,7 @@ describe("тексты ассистента K/", () => {
       expect((text.match(/^## /gm) ?? []).length, doc).toBeGreaterThanOrEqual(3);
       expect(text, doc).not.toMatch(/\boma (agents|sessions|envs|models|keys|skills)\b/);
       expect(text, doc).not.toMatch(/claude-(opus|sonnet|haiku)/);
-      expect(text, doc).not.toMatch(/run_deployment|resume_deployment|archive_|delete_/);
+      expect(text, doc).not.toMatch(/resume_deployment|archive_vault|delete_vault|interrupt_session/);
     }
     const builder = readFileSync(`${docsDir}/platform-builder.md`, "utf8");
     for (const name of ["create_session", "send_message", "apply_changes"]) expect(builder).toContain(name);

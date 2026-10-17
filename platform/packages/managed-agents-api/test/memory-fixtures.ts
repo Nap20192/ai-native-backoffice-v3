@@ -66,6 +66,9 @@ export function makeMemoryStoresPort(
     archiveMemoryStore: async () => {
       throw new Error("unexpected archiveMemoryStore application port call");
     },
+    unarchiveMemoryStore: async () => {
+      throw new Error("unexpected unarchiveMemoryStore application port call");
+    },
     ...overrides,
   };
 }

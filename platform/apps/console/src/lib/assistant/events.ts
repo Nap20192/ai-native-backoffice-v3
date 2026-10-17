@@ -20,8 +20,11 @@ export interface AppliedInfo {
   id: string | null;
   name: string | null;
   version: number | null;
-  action: "create" | "update";
+  action: AppliedAction;
 }
+
+/** Архив, возврат из архива и удаление делают опасные инструменты (crud.md, 3.2). */
+export type AppliedAction = "create" | "update" | "archive" | "unarchive" | "delete";
 
 export type ProposalPhase = "pending" | "sent" | "denied" | "applied" | "failed";
 export type ReadStatus = "running" | "done" | "error";
@@ -215,7 +218,7 @@ function consoleLink(result: unknown, text: string): string | undefined {
 
 /* ---------- Итог записи ---------- */
 
-const TOOL_KIND: Record<string, { kind: string; action: "create" | "update" }> = {
+const TOOL_KIND: Record<string, { kind: string; action: "create" | "update"; idField?: string }> = {
   create_agent: { kind: "agent", action: "create" },
   create_environment: { kind: "environment", action: "create" },
   create_skill: { kind: "skill", action: "create" },
@@ -233,6 +236,19 @@ const TOOL_KIND: Record<string, { kind: string; action: "create" | "update" }> =
   update_model_card: { kind: "model_card", action: "update" },
   update_harness_card: { kind: "harness_card", action: "update" },
   send_message: { kind: "message", action: "create" },
+  update_session: { kind: "session", action: "update", idField: "session_id" },
+  add_session_resource: { kind: "session", action: "update", idField: "session_id" },
+  update_session_resource: { kind: "session", action: "update", idField: "session_id" },
+  pause_deployment: { kind: "deployment", action: "update", idField: "deployment_id" },
+  unpause_deployment: { kind: "deployment", action: "update", idField: "deployment_id" },
+  run_deployment: { kind: "deployment", action: "update", idField: "deployment_id" },
+};
+
+/** Опасные инструменты: вид объекта и его id лежат во входе вызова. */
+const DANGER_ACTION: Record<string, "archive" | "unarchive" | "delete"> = {
+  archive_object: "archive",
+  unarchive_object: "unarchive",
+  delete_object: "delete",
 };
 
 function nameFromInput(tool: string, input: Record<string, unknown>): string | null {
@@ -248,12 +264,18 @@ function nameFromInput(tool: string, input: Record<string, unknown>): string | n
 }
 
 function appliedFromInput(tool: string, input: Record<string, unknown>): AppliedInfo | null {
+  const danger = DANGER_ACTION[tool];
+  if (danger) {
+    const kind = s(input.kind);
+    if (!kind) return null;
+    return { tool, kind, id: s(input.id) || null, name: null, version: null, action: danger };
+  }
   const meta = TOOL_KIND[tool];
   if (!meta) return null;
   return {
     tool,
     kind: meta.kind,
-    id: null,
+    id: meta.idField ? s(input[meta.idField]) || null : null,
     name: nameFromInput(tool, input),
     version: null,
     action: meta.action,
@@ -265,7 +287,8 @@ function appliedFromResultRow(row: Record<string, unknown>, fallbackTool: string
   const meta = TOOL_KIND[tool];
   const kind = s(row.kind) || meta?.kind;
   if (!kind) return null;
-  const action = row.action === "update" || row.action === "create" ? row.action : (meta?.action ?? "create");
+  const action: AppliedAction =
+    row.action === "update" || row.action === "create" ? row.action : (DANGER_ACTION[tool] ?? meta?.action ?? "create");
   return {
     tool,
     kind,
@@ -329,6 +352,20 @@ const PAST: Record<"create" | "update", Record<"m" | "f" | "n", string>> = {
   update: { m: "Изменён", f: "Изменена", n: "Изменено" },
 };
 
+const DANGER_VERB: Record<"archive" | "unarchive" | "delete", string> = {
+  archive: "Отправлено в архив",
+  unarchive: "Возвращено из архива",
+  delete: "Удалено",
+};
+
+/** Вид объекта в строке итога опасной записи. */
+const DANGER_NOUN: Record<string, string> = {
+  agent: "агент",
+  deployment: "деплоймент",
+  skill_version: "версия навыка",
+  session_resource: "ресурс сессии",
+};
+
 export interface AppliedLine {
   text: string;
   href: string | null;
@@ -347,6 +384,12 @@ export function appliedLines(items: readonly AppliedInfo[]): AppliedLine[] {
     }
     const meta = APPLIED_NOUN[it.kind];
     const noun = meta?.noun ?? it.kind;
+    if (it.action === "archive" || it.action === "unarchive" || it.action === "delete") {
+      // Безличная строка: имя объекта ассистент передаёт не всегда, только id.
+      const what = `${DANGER_NOUN[it.kind] ?? noun} ${it.name ?? it.id ?? ""}`.trim();
+      const href = it.action === "delete" ? null : (meta?.href?.(it.id) ?? null);
+      return { text: `${DANGER_VERB[it.action]}: ${what}`, href };
+    }
     const verb = PAST[it.action][meta?.gender ?? "m"];
     const name = it.name ? ` «${it.name}»` : "";
     const version = it.version !== null ? `, версия ${it.version}` : "";
@@ -397,9 +440,10 @@ export function buildThread(events: readonly Event[]): ThreadItem[] {
         const conf = confirmations.get(id);
         let phase: ProposalPhase = "pending";
         if (res) phase = failed ? "failed" : "applied";
-        else if (conf?.result === "deny") phase = "denied";
         else if (conf?.result === "allow") phase = "sent";
-        if (conf?.result === "deny" && !res) phase = "denied";
+        // Отказ пользователя: сервер пишет результат is_error «Denied», карточка
+        // остаётся «Отклонено», а не «Не применено».
+        if (conf?.result === "deny") phase = "denied";
         const item: Extract<ThreadItem, { kind: "proposal" }> = { kind: "proposal", id, tool, input, phase };
         if (conf?.result === "deny" && typeof conf.deny_message === "string") item.denyMessage = conf.deny_message;
         if (res && failed) item.resultText = text;

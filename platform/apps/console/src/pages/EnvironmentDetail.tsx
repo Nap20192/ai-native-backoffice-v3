@@ -1,16 +1,21 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { AlertTriangleIcon, GlobeIcon, PlusIcon, TrashIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  GlobeIcon,
+  PlusIcon,
+  TrashIcon,
+} from "lucide-react";
 import type {
-  BetaEnvironment,
   BetaLimitedNetworkParams,
   BetaPackages,
   BetaPackagesParams,
   BetaUnrestrictedNetwork,
-  EnvironmentUpdateParams,
 } from "@anthropic-ai/sdk/resources/beta/environments/environments";
 import { useApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
@@ -21,30 +26,50 @@ import { toast } from "sonner";
 import { Page } from "../components/Page";
 import { PageHeader } from "../components/PageHeader";
 import { useCrumbName } from "../lib/crumb-names";
+import { DangerDialog } from "../components/DangerDialog";
 import { Field } from "../components/Field";
 import { Skeleton } from "../components/Skeleton";
+import { templateLabel } from "../lib/environment-templates";
+import {
+  isPlatformMetadataKey,
+  type OmaCloudConfigParams,
+  type OmaEnvironment,
+  type OmaEnvironmentUpdateParams,
+  type OmaLimitedNetworkParams,
+} from "../lib/environment-oma";
+import { useSandboxCatalog } from "../lib/sandbox-catalog";
+import { ImageSection } from "./environments/ImageSection";
+import { SectionCard } from "./environments/SectionCard";
 
 // =================================================================
 // Types
 // =================================================================
 
 /** Менеджеры пакетов в выпадающем списке.
- *  `gem` есть в схеме, но намеренно не показан: в sandbox-base пока нет
- *  ruby. Если в окружении уже есть gem-пакеты, при сохранении они
- *  возвращаются как есть, чтобы не потерять данные пользователя. */
+ *  `gem` есть в схеме, но намеренно не показан, потому что ни в прежнем образе
+ *  `node:22-bookworm`, ни в образах каталога, например `workplace`, нет ruby.
+ *  Если в окружении уже есть gem-пакеты, при сохранении они возвращаются как
+ *  есть, чтобы не потерять данные пользователя. */
 const MANAGERS = ["apt", "cargo", "go", "npm", "pip"] as const;
 type Manager = (typeof MANAGERS)[number];
 const ALL_MANAGERS = [...MANAGERS, "gem"] as const;
 type AnyManager = (typeof ALL_MANAGERS)[number];
+
+/** Образы каталога не содержат cargo и go, и сервер с каталогом отклоняет
+ *  такие пакеты ответом 400. Список их не предлагает. Строка, где они уже
+ *  есть, остаётся, чтобы пользователь мог её поправить. */
+const OUTSIDE_CATALOG_IMAGES: readonly Manager[] = ["cargo", "go"];
 
 interface NetworkingConfig {
   type: "unrestricted" | "limited";
   allowed_hosts?: string[];
   allow_mcp_servers?: boolean;
   allow_package_managers?: boolean;
+  /** Поле сервера. Формы для него нет: значение возвращается при сохранении как пришло. */
+  allow_web_search?: boolean;
 }
 
-type Env = BetaEnvironment;
+type Env = OmaEnvironment;
 
 // Строки редактора: пакеты и метаданные хранятся упорядоченными массивами,
 // чтобы строки не перепрыгивали при правке, даже если порядок ключей
@@ -72,12 +97,15 @@ export function EnvironmentDetail() {
   useCrumbName(id, env?.name);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Архив и удаление идут через DangerDialog со списком зависимостей.
+  const [dangerDialog, setDangerDialog] = useState<"archive" | "delete" | null>(null);
 
   // Состояние формы хранится отдельно от `env`: так «Отмена» откатывает
   // правки без повторной загрузки, а позже можно сравнить значения и
   // предупредить о несохранённых изменениях.
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [image, setImage] = useState<string | null>(null);
   const [networking, setNetworking] = useState<NetworkingConfig>({
     type: "unrestricted",
     allow_mcp_servers: false,
@@ -87,6 +115,9 @@ export function EnvironmentDetail() {
   const [allowedHostsText, setAllowedHostsText] = useState("");
   const [packageRows, setPackageRows] = useState<PackageRow[]>([]);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
+  // Каталог образов сервера. Без каталога раздела «Образ» нет, а менеджеры
+  // пакетов и шаблоны остаются как были.
+  const sandboxCatalog = useSandboxCatalog();
   // Первая загрузка через TQ. Страница перерисовывается, когда кэш
   // заполнен, а эффект ниже один раз на ответ переносит данные в форму
   // (смена id между рендерами заново заполняет форму).
@@ -113,38 +144,34 @@ export function EnvironmentDetail() {
     setDescription(e.description ?? "");
 
     const cloud = e.config.type === "cloud" ? e.config : null;
-    const net = cloud?.networking ?? { type: "unrestricted" as const };
-    setNetworking({
-      type: net.type,
-      allow_mcp_servers:
-        net.type === "limited" ? net.allow_mcp_servers : false,
-      allow_package_managers:
-        net.type === "limited" ? net.allow_package_managers : false,
-      allowed_hosts: net.type === "limited" ? net.allowed_hosts : [],
-    });
-    setAllowedHostsText(
-      net.type === "limited" ? net.allowed_hosts.join(", ") : "",
-    );
+    const saved = networkingFromEnv(e);
+    setNetworking(saved.networking);
+    setAllowedHostsText(saved.hostsText);
+    setImage(cloud?.image ?? null);
 
     setPackageRows(packagesToRows(cloud?.packages));
 
     setMetadataRows(metadataToRows(e.metadata));
   }
 
+  const hasReservedKey = metadataRows.some((row) => isPlatformMetadataKey(row.key.trim()));
+
   async function save() {
     if (!id || !env) return;
     setSaving(true);
     try {
-      const config: EnvironmentUpdateParams["config"] =
+      const config: OmaEnvironmentUpdateParams["config"] =
         env.config.type === "cloud"
-          ? {
+          ? ({
               type: "cloud",
+              // Поле сервера: пишем его, только если сервер его отдал.
+              ...("image" in env.config ? { image } : {}),
               packages: rowsToPackagesPatch(env.config.packages, packageRows),
               networking: buildNetworking(networking, allowedHostsText),
-            }
+            } satisfies OmaCloudConfigParams)
           : { type: "self_hosted" };
 
-      const body: EnvironmentUpdateParams = {
+      const body: OmaEnvironmentUpdateParams = {
         name: name.trim(),
         description: description.trim() || null,
         config,
@@ -152,7 +179,7 @@ export function EnvironmentDetail() {
       };
 
       const updated = await managedApi.environments.update(id, body);
-      applyEnv(updated);
+      applyEnv(updated as Env);
       toast.success("Окружение сохранено");
     } catch (err) {
       // useApi уже показывает ошибку тостом, второй не нужен.
@@ -164,6 +191,17 @@ export function EnvironmentDetail() {
 
   function cancel() {
     nav("/environments");
+  }
+
+  async function restore() {
+    if (!id) return;
+    try {
+      const restored = await managedApi.environments.unarchive(id);
+      applyEnv(restored as Env);
+      toast.success("Окружение возвращено из архива");
+    } catch {
+      // useApi уже показывает ошибку тостом.
+    }
   }
 
   if (loadError) {
@@ -190,10 +228,17 @@ export function EnvironmentDetail() {
     return <EnvironmentDetailSkeleton />;
   }
 
+  const isCloud = env.config.type === "cloud";
+  const templateId = env.metadata?.oma_template;
+  const savedNetworking = networkingFromEnv(env);
+  const networkChanged =
+    JSON.stringify(buildNetworking(networking, allowedHostsText)) !==
+    JSON.stringify(buildNetworking(savedNetworking.networking, savedNetworking.hostsText));
+
   return (
     <Page>
       <div className="console-settings-layout" data-testid="settings-layout">
-        {/* Шапка: название, тип размещения */}
+        {/* Шапка: название, тип размещения, шаблон */}
         <PageHeader
           className="mb-0"
           title={
@@ -201,11 +246,22 @@ export function EnvironmentDetail() {
               <span className="min-w-0">{env.name || "Окружение"}</span>
               <span className="chip tone-neutral flex-none">
                 <GlobeIcon aria-hidden="true" />
-                {env.config.type === "cloud" ? "Облако" : "Свой сервер"}
+                {isCloud ? "Облако" : "Свой сервер"}
               </span>
+              {templateId && (
+                <span className="chip tone-neutral flex-none">
+                  Шаблон «{templateLabel(templateId, sandboxCatalog.catalog)}»
+                </span>
+              )}
             </>
           }
-          description="Название, сеть, пакеты и метаданные окружения."
+          description={
+            !isCloud
+              ? "Название и метаданные окружения."
+              : sandboxCatalog.catalog
+                ? "Название, образ, сеть, пакеты и метаданные окружения."
+                : "Название, сеть, пакеты и метаданные окружения."
+          }
         />
 
         {/* Статус-чип и баннер build_error убраны: окружение без состояния
@@ -235,129 +291,156 @@ export function EnvironmentDetail() {
           </Field>
         </div>
 
+        {/* Образ. У «Своего сервера» образа нет. */}
+        {isCloud && (
+          <ImageSection
+            catalog={sandboxCatalog.catalog}
+            loading={sandboxCatalog.isLoading}
+            value={image}
+            onChange={setImage}
+            networking={networking}
+            disabled={saving}
+          />
+        )}
+
         {/* Сеть */}
-        <SectionCard
-          title="Сеть"
-          subtitle="Правила сетевого доступа для песочниц, собранных из этого окружения."
-        >
-          <div className="space-y-4">
-            <Field label="Тип доступа">
-              <Select
-                className="w-full sm:w-64"
-                value={networking.type}
-                onValueChange={(v) =>
-                  setNetworking({
-                    ...networking,
-                    type: v as NetworkingConfig["type"],
-                  })
-                }
-              >
-                <SelectOption value="unrestricted">Без ограничений</SelectOption>
-                <SelectOption value="limited">Ограниченный</SelectOption>
-              </Select>
-            </Field>
-
-            <Toggle
-              label="Разрешить сетевой доступ MCP-серверам"
-              checked={!!networking.allow_mcp_servers}
-              onChange={(v) =>
-                setNetworking({ ...networking, allow_mcp_servers: v })
-              }
-            />
-            <Toggle
-              label="Разрешить сетевой доступ менеджерам пакетов"
-              checked={!!networking.allow_package_managers}
-              onChange={(v) =>
-                setNetworking({ ...networking, allow_package_managers: v })
-              }
-            />
-
-            {networking.type === "limited" && (
-              <Field
-                label="Разрешённые хосты"
-                hint="Имена хостов через запятую, например: www.example1.com, api.example2.com"
-              >
-                <Textarea
-                  value={allowedHostsText}
-                  onChange={(e) => setAllowedHostsText(e.target.value)}
-                  rows={2}
-                  placeholder="www.example1.com, www.example2.com"
-                  className="resize-y"
-                />
+        {isCloud && (
+          <SectionCard
+            title="Сеть"
+            subtitle="Правила сетевого доступа для песочниц, собранных из этого окружения."
+          >
+            <div className="space-y-4">
+              <Field label="Тип доступа">
+                <Select
+                  className="w-full sm:w-64"
+                  value={networking.type}
+                  onValueChange={(v) =>
+                    setNetworking({
+                      ...networking,
+                      type: v as NetworkingConfig["type"],
+                    })
+                  }
+                >
+                  <SelectOption value="unrestricted">Без ограничений</SelectOption>
+                  <SelectOption value="limited">Ограниченный</SelectOption>
+                </Select>
               </Field>
-            )}
-          </div>
-        </SectionCard>
+
+              <Toggle
+                label="Разрешить сетевой доступ MCP-серверам"
+                checked={!!networking.allow_mcp_servers}
+                onChange={(v) =>
+                  setNetworking({ ...networking, allow_mcp_servers: v })
+                }
+              />
+              <Toggle
+                label="Разрешить сетевой доступ менеджерам пакетов"
+                hint={PACKAGE_MANAGERS_HINT}
+                checked={!!networking.allow_package_managers}
+                onChange={(v) =>
+                  setNetworking({ ...networking, allow_package_managers: v })
+                }
+              />
+
+              {networking.type === "limited" && (
+                <Field
+                  label="Разрешённые хосты"
+                  hint="Имена хостов через запятую, например: www.example1.com, api.example2.com"
+                >
+                  <Textarea
+                    value={allowedHostsText}
+                    onChange={(e) => setAllowedHostsText(e.target.value)}
+                    rows={2}
+                    placeholder="www.example1.com, www.example2.com"
+                    className="resize-y"
+                  />
+                </Field>
+              )}
+
+              {networkChanged && (
+                <div role="status" className="callout-warning">
+                  <AlertTriangleIcon aria-hidden="true" className="mt-0.5 size-4 flex-none" />
+                  <p className="prose-wrap min-w-0">
+                    Сеть изменена. Активные сессии этого окружения пересоздадут песочницу на
+                    следующем ходе. Файлы вне /mnt/session/outputs пропадут.
+                  </p>
+                </div>
+              )}
+            </div>
+          </SectionCard>
+        )}
 
         {/* Пакеты */}
-        <SectionCard
-          title="Пакеты"
-          subtitle="Пакеты и версии, которые ставятся при сборке песочниц."
-        >
-          <div className="space-y-4">
-            {packageRows.length === 0 ? (
-              <p className="text-sm text-ddc-text-muted">Пакеты не заданы.</p>
-            ) : (
-              <div className="space-y-3">
-                {packageRows.map((row, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <Select
-                      className="w-24 flex-none"
-                      placeholder="Менеджер пакетов"
-                      value={row.manager}
-                      onValueChange={(v) =>
-                        setPackageRows((rows) =>
-                          rows.map((r, j) =>
-                            j === i ? { ...r, manager: v as Manager } : r,
-                          ),
-                        )
-                      }
-                    >
-                      {MANAGERS.map((m) => (
-                        <SelectOption key={m} value={m}>{m}</SelectOption>
-                      ))}
-                    </Select>
-                    <Input
-                      value={row.packages}
-                      onChange={(e) =>
-                        setPackageRows((rows) =>
-                          rows.map((r, j) =>
-                            j === i ? { ...r, packages: e.target.value } : r,
-                          ),
-                        )
-                      }
-                      aria-label="Пакеты и версии"
-                      placeholder="pandas numpy==2.0.0"
-                      className="min-w-0 flex-1 font-mono"
-                    />
-                    <RemoveRowButton
-                      label="Удалить строку пакетов"
-                      onClick={() =>
-                        setPackageRows((rows) => rows.filter((_, j) => j !== i))
-                      }
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                setPackageRows((rows) => [...rows, { manager: "pip", packages: "" }])
-              }
-            >
-              <PlusIcon aria-hidden="true" />
-              Добавить пакет
-            </Button>
-            {env.config.type === "cloud" && env.config.packages.gem.length > 0 && (
-              <p className="border-t border-ddc-divider pt-4 text-sm text-ddc-text-muted">
-                Сохранено устаревших gem-пакетов: {env.config.packages.gem.length}. Их нельзя
-                изменить: Ruby пока нет в базовом образе песочницы.
-              </p>
-            )}
-          </div>
-        </SectionCard>
+        {isCloud && (
+          <SectionCard
+            title="Пакеты"
+            subtitle="Пакеты и версии, которые ставятся при сборке песочниц."
+          >
+            <div className="space-y-4">
+              {packageRows.length === 0 ? (
+                <p className="text-sm text-ddc-text-muted">Только то, что есть в образе.</p>
+              ) : (
+                <div className="space-y-3">
+                  {packageRows.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Select
+                        className="w-24 flex-none"
+                        placeholder="Менеджер пакетов"
+                        value={row.manager}
+                        onValueChange={(v) =>
+                          setPackageRows((rows) =>
+                            rows.map((r, j) =>
+                              j === i ? { ...r, manager: v as Manager } : r,
+                            ),
+                          )
+                        }
+                      >
+                        {selectableManagers(sandboxCatalog.catalog !== null, row.manager).map((m) => (
+                          <SelectOption key={m} value={m}>{m}</SelectOption>
+                        ))}
+                      </Select>
+                      <Input
+                        value={row.packages}
+                        onChange={(e) =>
+                          setPackageRows((rows) =>
+                            rows.map((r, j) =>
+                              j === i ? { ...r, packages: e.target.value } : r,
+                            ),
+                          )
+                        }
+                        aria-label="Пакеты и версии"
+                        placeholder="pandas numpy==2.0.0"
+                        className="min-w-0 flex-1 font-mono"
+                      />
+                      <RemoveRowButton
+                        label="Удалить строку пакетов"
+                        onClick={() =>
+                          setPackageRows((rows) => rows.filter((_, j) => j !== i))
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  setPackageRows((rows) => [...rows, { manager: "pip", packages: "" }])
+                }
+              >
+                <PlusIcon aria-hidden="true" />
+                Добавить пакет
+              </Button>
+              {env.config.type === "cloud" && env.config.packages.gem.length > 0 && (
+                <p className="border-t border-ddc-divider pt-4 text-sm text-ddc-text-muted">
+                  Сохранено устаревших gem-пакетов: {env.config.packages.gem.length}. Их нельзя
+                  изменить, потому что в образах песочницы нет Ruby.
+                </p>
+              )}
+            </div>
+          </SectionCard>
+        )}
 
         {/* Метаданные */}
         <SectionCard
@@ -381,6 +464,7 @@ export function EnvironmentDetail() {
                         )
                       }
                       aria-label="Ключ"
+                      aria-invalid={isPlatformMetadataKey(row.key.trim()) || undefined}
                       placeholder="Ключ"
                       className="min-w-0 flex-1 font-mono"
                     />
@@ -407,6 +491,11 @@ export function EnvironmentDetail() {
                 ))}
               </div>
             )}
+            {hasReservedKey && (
+              <p role="alert" className="text-xs leading-4 text-ddc-danger-text">
+                Платформа зарезервировала ключи, которые начинаются с «oma_». Выберите другой ключ.
+              </p>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -422,11 +511,31 @@ export function EnvironmentDetail() {
 
         {/* Действия */}
         <div className="console-settings-actions flex-wrap" data-testid="settings-actions">
-          <Button onClick={save} loading={saving} disabled={!name.trim()}>
+          <Button onClick={save} loading={saving} disabled={!name.trim() || hasReservedKey}>
             Сохранить изменения
           </Button>
           <Button variant="ghost" onClick={cancel} disabled={saving}>
             Отмена
+          </Button>
+          {env.archived_at ? (
+            <Button variant="outline" onClick={() => void restore()} disabled={saving}>
+              <ArchiveRestoreIcon aria-hidden="true" />
+              Вернуть из архива
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={() => setDangerDialog("archive")} disabled={saving}>
+              <ArchiveIcon aria-hidden="true" />
+              В архив
+            </Button>
+          )}
+          <Button
+            variant="danger-ghost"
+            aria-label="Удалить окружение"
+            onClick={() => setDangerDialog("delete")}
+            disabled={saving}
+          >
+            <TrashIcon aria-hidden="true" />
+            Удалить
           </Button>
           <span
             title={env.id}
@@ -436,6 +545,30 @@ export function EnvironmentDetail() {
           </span>
         </div>
       </div>
+
+      <DangerDialog
+        open={dangerDialog === "archive"}
+        operation="archive"
+        target={id ? { kind: "environment", id } : null}
+        etagPath={id ? `/v1/environments/${id}` : undefined}
+        title="Отправить окружение в архив?"
+        message="Окружение перестанет выбираться для новых сессий."
+        confirmLabel="В архив"
+        run={(options) => managedApi.environments.archive(id!, options)}
+        onDone={() => nav("/environments")}
+        onClose={() => setDangerDialog(null)}
+      />
+      <DangerDialog
+        open={dangerDialog === "delete"}
+        operation="delete"
+        target={id ? { kind: "environment", id } : null}
+        etagPath={id ? `/v1/environments/${id}` : undefined}
+        title="Удалить окружение?"
+        message="Окружение будет удалено вместе с настройками."
+        run={(options) => managedApi.environments.delete(id!, options)}
+        onDone={() => nav("/environments")}
+        onClose={() => setDangerDialog(null)}
+      />
     </Page>
   );
 }
@@ -478,58 +611,53 @@ function EnvironmentDetailSkeleton() {
 }
 
 // =================================================================
-// Section / form primitives
+// Form primitives
 // =================================================================
 
-function SectionCard({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="console-settings-section" data-testid="settings-section">
-      <header className="console-settings-section-header">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-ddc-heading">{title}</h2>
-          {subtitle && (
-            <p className="mt-0.5 text-sm text-ddc-text-muted">{subtitle}</p>
-          )}
-        </div>
-      </header>
-      <div className="console-settings-section-body">{children}</div>
-    </section>
-  );
-}
+/** Подпись под флажком менеджеров пакетов (раздел 2.2 плана environments.md).
+ *  Реестры с учётными записями дают код в песочнице канал для вывода данных,
+ *  поэтому цена флажка названа прямо. */
+const PACKAGE_MANAGERS_HINT =
+  "Агент сможет сам ставить пакеты из реестров. Код пакетов увидит файлы сессии. " +
+  "Через PyPI и npm такой код может вывести данные, например опубликовать их как пакет.";
 
 /** Переключатель DDC: `button.switch` с `role="switch"`, клик по подписи
- *  тоже переключает. Кольцо фокуса общее, своё не задаём. */
+ *  тоже переключает. Кольцо фокуса общее, своё не задаём. Пояснение под
+ *  флажком связано с ним через `aria-describedby`. */
 function Toggle({
   label,
+  hint,
   checked,
   onChange,
 }: {
   label: string;
+  hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
+  const hintId = useId();
   return (
-    <Label className="min-h-10 cursor-pointer justify-between gap-4 text-sm leading-5 font-normal text-ddc-text">
-      <span className="min-w-0">{label}</span>
-      <PlainButton
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={label}
-        onClick={() => onChange(!checked)}
-        className="switch"
-      >
-        <span className="switch-knob" />
-      </PlainButton>
-    </Label>
+    <div>
+      <Label className="min-h-10 cursor-pointer justify-between gap-4 text-sm leading-5 font-normal text-ddc-text">
+        <span className="min-w-0">{label}</span>
+        <PlainButton
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={label}
+          aria-describedby={hint ? hintId : undefined}
+          onClick={() => onChange(!checked)}
+          className="switch"
+        >
+          <span className="switch-knob" />
+        </PlainButton>
+      </Label>
+      {hint && (
+        <p id={hintId} className="text-xs leading-4 text-ddc-text-muted">
+          {hint}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -556,6 +684,39 @@ function RemoveRowButton({ label, onClick }: { label: string; onClick: () => voi
 // React. Они переводят схему окружения в строки редактора и обратно для
 // пакетов и метаданных.
 // =================================================================
+
+/** Менеджеры в списке строки. С каталогом образов cargo и go скрыты, кроме
+ *  менеджера, который в строке уже выбран. */
+function selectableManagers(catalogEnabled: boolean, current: Manager): readonly Manager[] {
+  if (!catalogEnabled) return MANAGERS;
+  return MANAGERS.filter((m) => !OUTSIDE_CATALOG_IMAGES.includes(m) || m === current);
+}
+
+function networkingFromEnv(e: Env): { networking: NetworkingConfig; hostsText: string } {
+  const cloud = e.config.type === "cloud" ? e.config : null;
+  const net = cloud?.networking ?? { type: "unrestricted" as const };
+  if (net.type !== "limited") {
+    return {
+      networking: {
+        type: net.type,
+        allow_mcp_servers: false,
+        allow_package_managers: false,
+        allowed_hosts: [],
+      },
+      hostsText: "",
+    };
+  }
+  return {
+    networking: {
+      type: net.type,
+      allow_mcp_servers: net.allow_mcp_servers,
+      allow_package_managers: net.allow_package_managers,
+      allowed_hosts: net.allowed_hosts,
+      ...(net.allow_web_search !== undefined && { allow_web_search: net.allow_web_search }),
+    },
+    hostsText: net.allowed_hosts.join(", "),
+  };
+}
 
 function packagesToRows(packages: BetaPackages | undefined): PackageRow[] {
   if (!packages) return [];
@@ -593,16 +754,23 @@ function rowsToPackagesPatch(
   return out;
 }
 
+/** Редактор метаданных не показывает метки платформы (`oma_template` и другие
+ *  с префиксом `oma_`): их ставит сервер, правит человек не их. */
 function metadataToRows(
   metadata: Record<string, string> | undefined,
 ): MetadataRow[] {
   if (!metadata) return [];
-  return Object.entries(metadata).map(([key, value]) => ({
-    key,
-    value,
-  }));
+  return Object.entries(metadata)
+    .filter(([key]) => !isPlatformMetadataKey(key))
+    .map(([key, value]) => ({
+      key,
+      value,
+    }));
 }
 
+/** Метки платформы в правку не попадают: ни как значения, ни как удаление.
+ *  Метаданные при правке идут патчем, поэтому ключ, которого нет в
+ *  запросе, остаётся нетронутым. */
 function rowsToMetadataPatch(
   original: Record<string, string>,
   rows: MetadataRow[],
@@ -610,10 +778,11 @@ function rowsToMetadataPatch(
   const out: Record<string, string | null> = {};
   for (const row of rows) {
     const k = row.key.trim();
-    if (!k) continue;
+    if (!k || isPlatformMetadataKey(k)) continue;
     out[k] = row.value;
   }
   for (const key of Object.keys(original)) {
+    if (isPlatformMetadataKey(key)) continue;
     if (!(key in out)) out[key] = null;
   }
   return out;
@@ -622,7 +791,7 @@ function rowsToMetadataPatch(
 function buildNetworking(
   net: NetworkingConfig,
   allowedHostsText: string,
-): BetaUnrestrictedNetwork | BetaLimitedNetworkParams {
+): BetaUnrestrictedNetwork | OmaLimitedNetworkParams {
   const hosts = allowedHostsText
     .split(",")
     .map((s) => s.trim())
@@ -630,10 +799,13 @@ function buildNetworking(
   if (net.type === "unrestricted") {
     return { type: "unrestricted" };
   }
-  return {
+  const limited: BetaLimitedNetworkParams & { allow_web_search?: boolean } = {
     type: "limited",
     allow_mcp_servers: !!net.allow_mcp_servers,
     allow_package_managers: !!net.allow_package_managers,
     allowed_hosts: hosts,
   };
+  // Поле сервера: возвращаем то, что пришло, а не сбрасываем его при правке сети.
+  if (net.allow_web_search !== undefined) limited.allow_web_search = net.allow_web_search;
+  return limited;
 }

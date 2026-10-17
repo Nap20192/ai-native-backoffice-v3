@@ -157,4 +157,9 @@ export interface DeploymentsApplicationPort {
   pauseDeployment(command: DeploymentCommand): Promise<ChangeDeploymentStateResult>;
   runDeployment(command: DeploymentCommand): Promise<RunDeploymentResult>;
   unpauseDeployment(command: DeploymentCommand): Promise<ChangeDeploymentStateResult>;
+  /**
+   * Restore from the archive. The deployment comes back paused, even when it
+   * was active before. A deployment out of the archive stays as it is.
+   */
+  unarchiveDeployment(command: DeploymentCommand): Promise<ChangeDeploymentStateResult>;
 }

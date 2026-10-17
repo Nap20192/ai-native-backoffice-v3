@@ -21,7 +21,12 @@ export type { VaultRoutesDeps } from "./vaults";
 
 export { buildModelCardRoutes } from "./model-cards";
 export { modelCardProbeUrl } from "./model-cards";
-export type { ModelCardRoutesDeps } from "./model-cards";
+export type {
+  ModelCardDependencyCheck,
+  ModelCardDependencyReport,
+  ModelCardRoutesDeps,
+} from "./model-cards";
+export { modelCardDependencies } from "./model-cards";
 
 export { buildEnvironmentRoutes } from "./environments";
 export type { EnvironmentRoutesDeps } from "./environments";

@@ -3,7 +3,8 @@
 // or `precondition.content_sha256`. The route compares it atomically.
 
 import { z } from "zod";
-import { classifyDeploymentEdit, classifyEdit, classifyWriteMemory } from "../classify";
+import { classifyDeploymentEdit, classifyDeploymentState, classifyEdit, classifyWriteMemory } from "../classify";
+import { routeErrorMessage } from "../inner-api";
 import { ROUTES } from "../route-rules";
 import { cleanObject } from "../response-shape";
 import {
@@ -326,7 +327,7 @@ function deploymentPatch(changes: z.infer<typeof deploymentChanges>): Record<str
 export const updateDeploymentTool: ToolDef<z.infer<typeof updateDeploymentArgs>> = {
   name: "update_deployment",
   group: "write",
-  description: "Изменить деплоймент на паузе. Работающий деплоймент меняет человек в консоли. Ждёт подтверждения.",
+  description: "Изменить деплоймент. У работающего деплоймента новую конфигурацию возьмёт следующий запуск. Ждёт подтверждения.",
   args: updateDeploymentArgs,
   routes: [ROUTES.deploymentUpdate],
   precondition: "if_match",
@@ -338,7 +339,7 @@ export const updateDeploymentTool: ToolDef<z.infer<typeof updateDeploymentArgs>>
       if (!found) return notFoundPlan("Деплоймент не найден");
       const cls = classifyDeploymentEdit(found.raw ?? {});
       const patch = deploymentPatch(args.changes);
-      const warnings: string[] = [];
+      const warnings: string[] = cls.warning ? [cls.warning] : [];
       if (args.changes.vault_ids?.length) warnings.push(`Деплоймент получит доступ к хранилищам секретов: ${args.changes.vault_ids.join(", ")}`);
       return {
         ...emptyPlan(cls.cls),
@@ -353,16 +354,95 @@ export const updateDeploymentTool: ToolDef<z.infer<typeof updateDeploymentArgs>>
         argsStale: args.expected_revision !== undefined && args.expected_revision !== found.revision,
       };
     },
-    async write(ctx, args, _plan, revision) {
+    async write(ctx, args, plan, revision) {
       const response = await ctx.api.post(`/v1/deployments/${encodeId(args.deployment_id)}`, deploymentPatch(args.changes), ifMatch(revision));
-      return writeOutcome(ctx, response, () => ({
+      return writeOutcome(ctx, response, (json) => ({
         targetId: args.deployment_id,
         revision: response.headers.get("etag"),
-        summary: "Деплоймент изменён, он остаётся на паузе",
+        summary: (json?.status ?? plan.state.status) === "paused" ? "Деплоймент изменён, он остаётся на паузе" : "Деплоймент изменён. Следующий запуск возьмёт новую конфигурацию",
       }));
     },
   },
 };
+
+// ---------- deployment state (crud.md 3.1, 3.2) ----------
+
+const deploymentStateArgs = z
+  .object({ deployment_id: z.string().min(1), expected_revision: z.string().min(1).optional() })
+  .strict();
+
+type DeploymentAction = "pause" | "unpause" | "run";
+
+export const RUN_WARNING = "Запуск создаст сессию, агент сразу начнёт работу";
+export const UNPAUSE_WARNING = "Деплоймент начнёт запуски по расписанию";
+
+const DEPLOYMENT_ACTION: Record<DeploymentAction, { summary: (id: string, json: any) => string; warning: string | null }> = {
+  pause: { summary: (id) => `Деплоймент ${id} на паузе`, warning: null },
+  unpause: { summary: (id) => `Деплоймент ${id} снят с паузы`, warning: UNPAUSE_WARNING },
+  run: {
+    summary: (id, json) => `Деплоймент ${id} запущен, прогон ${json?.id ?? ""}, сессия ${json?.session_id ?? ""}. Читай ход через get_session_events`,
+    warning: RUN_WARNING,
+  },
+};
+
+function deploymentStateTool(action: DeploymentAction, name: string, description: string): ToolDef<z.infer<typeof deploymentStateArgs>> {
+  const route = action === "pause" ? ROUTES.deploymentPause : action === "unpause" ? ROUTES.deploymentUnpause : ROUTES.deploymentStart;
+  const meta = DEPLOYMENT_ACTION[action];
+  return {
+    name,
+    group: "write",
+    description,
+    args: deploymentStateArgs,
+    routes: [ROUTES.deployment, route],
+    // A run takes no revision: it makes a new run and a new session.
+    precondition: action === "run" ? "new_object" : "if_match",
+    op: {
+      targetKind: "deployment",
+      targetKey: (args) => `deployment:${args.deployment_id}`,
+      async plan(ctx, args) {
+        const found = await readObject(ctx, "deployment", `/v1/deployments/${encodeId(args.deployment_id)}`);
+        if (!found) return notFoundPlan("Деплоймент не найден");
+        const cls = classifyDeploymentState(found.raw ?? {});
+        const status = found.raw?.status ?? null;
+        return {
+          ...emptyPlan(cls.cls),
+          reason: cls.reason,
+          targetId: args.deployment_id,
+          revision: found.revision,
+          state: { status, archived: Boolean(found.raw?.archived_at), action },
+          before: found.clean,
+          after: action === "run" ? found.clean : mergeAfter(found.clean, { status: action === "pause" ? "paused" : "active" }),
+          warnings: meta.warning ? [meta.warning] : [],
+          argsStale: args.expected_revision !== undefined && args.expected_revision !== found.revision,
+        };
+      },
+      async write(ctx, args, _plan, revision) {
+        const response = await ctx.api.post(`/v1/deployments/${encodeId(args.deployment_id)}/${action}`, {}, action === "run" ? undefined : ifMatch(revision));
+        // A run answers 409 when the deployment cannot start: the text says why.
+        if (action === "run" && response.status === 409) {
+          return { type: "error", message: ctx.libs.scan(routeErrorMessage(response), ctx.known).text };
+        }
+        return writeOutcome(ctx, response, (json) => ({
+          targetId: args.deployment_id,
+          revision: response.headers.get("etag"),
+          summary: meta.summary(args.deployment_id, json),
+        }));
+      },
+    },
+  };
+}
+
+export const pauseDeploymentTool = deploymentStateTool("pause", "pause_deployment", "Поставить деплоймент на паузу. Ждёт подтверждения.");
+export const unpauseDeploymentTool = deploymentStateTool(
+  "unpause",
+  "unpause_deployment",
+  "Снять деплоймент с паузы, запуски пойдут по расписанию. Ждёт подтверждения.",
+);
+export const runDeploymentTool = deploymentStateTool(
+  "run",
+  "run_deployment",
+  "Запустить деплоймент сейчас. Запуск создаёт сессию, агент сразу начинает работу. Ждёт подтверждения отдельной карточкой.",
+);
 
 // ---------- model card ----------
 
@@ -565,5 +645,8 @@ export const UPDATE_TOOLS = [
   updateDeploymentTool,
   updateModelCardTool,
   updateHarnessCardTool,
+  pauseDeploymentTool,
+  unpauseDeploymentTool,
+  runDeploymentTool,
 ];
 

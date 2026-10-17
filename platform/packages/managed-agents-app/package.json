@@ -10,6 +10,7 @@
     "./managed-agents": "./src/managed-agents.ts",
     "./modules/agents": "./src/modules/agents.ts",
     "./modules/credentials": "./src/modules/credentials.ts",
+    "./modules/dependencies": "./src/modules/dependencies.ts",
     "./modules/deployment-runs": "./src/modules/deployment-runs.ts",
     "./modules/deployments": "./src/modules/deployments.ts",
     "./modules/dreams": "./src/modules/dreams.ts",

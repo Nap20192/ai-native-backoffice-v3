@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BetaManagedAgentsSessionResource } from "@anthropic-ai/sdk/resources/beta/sessions/resources";
-import { ChevronDownIcon, DatabaseIcon, DownloadIcon, FileIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, DatabaseIcon, DownloadIcon, FileIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { PlainButton } from "@/components/ui/plain-button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApi } from "../../../lib/api";
 import { useManagedApi } from "../../../lib/useManagedApi";
+import { ConfirmDialog } from "../../ConfirmDialog";
 import { EmptyState } from "../../EmptyState";
 import { GitHubIcon } from "../../icons";
 import { LoadError } from "../../LoadError";
@@ -40,6 +41,8 @@ interface ResourceRow {
   path: string;
   size: string;
   icon: ReactNode;
+  /** Ресурс сессии: у него есть `id`, и его можно убрать из сессии. */
+  resourceId?: string;
   /** Файл агента: строка открывает просмотр, рядом кнопка «Скачать». */
   output?: OutputFile;
 }
@@ -71,6 +74,10 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
   const [query, setQuery] = useState("");
   const [retrying, setRetrying] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Ресурс держим и после закрытия окна, чтобы текст не пропал, пока оно уходит.
+  const [removing, setRemoving] = useState<ResourceRow | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState(false);
   const generation = useRef(0);
 
   const load = useCallback(async () => {
@@ -108,6 +115,7 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
         path: resourcePath(resource),
         size: EMPTY_VALUE,
         icon: resourceIcon(resource),
+        resourceId: "id" in resource && typeof resource.id === "string" ? resource.id : undefined,
       })),
       ...state.outputs.map((file) => ({
         key: `output:${file.filename}`,
@@ -133,6 +141,21 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
     }
     toast.success("Файл добавлен");
     await load();
+  };
+
+  const confirmRemove = async () => {
+    if (!removing?.resourceId) return;
+    setRemoveBusy(true);
+    try {
+      await managedApi.sessions.resources.delete(removing.resourceId, { session_id: sessionId });
+      toast.success("Ресурс удалён");
+      setRemoveOpen(false);
+      await load();
+    } catch {
+      toast.error("Не удалось удалить ресурс");
+    } finally {
+      setRemoveBusy(false);
+    }
   };
 
   if (state.phase === "error") {
@@ -251,9 +274,26 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
                         </Button>
                       </>
                     ) : (
-                      <span className="min-w-0 truncate font-mono" title={row.path}>
-                        {row.path}
-                      </span>
+                      <>
+                        <span className="min-w-0 flex-1 truncate font-mono" title={row.path}>
+                          {row.path}
+                        </span>
+                        {row.resourceId ? (
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Удалить ресурс ${row.path}`}
+                            title="Удалить ресурс"
+                            className="relative z-10 size-6 flex-none text-ddc-icon-muted hover:text-ddc-danger-text"
+                            onClick={() => {
+                              setRemoving(row);
+                              setRemoveOpen(true);
+                            }}
+                          >
+                            <Trash2Icon aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                      </>
                     )}
                   </span>
                 </TableCell>
@@ -265,6 +305,20 @@ export function ResourcesTab({ sessionId }: ResourcesTabProps) {
           </TableBody>
         </Table>
       )}
+      <ConfirmDialog
+        open={removeOpen}
+        title="Убрать ресурс из сессии?"
+        message={
+          removing
+            ? `Ресурс ${removing.path} отключится от сессии. Сам файл или хранилище останутся.`
+            : undefined
+        }
+        confirmLabel="Удалить"
+        destructive
+        busy={removeBusy}
+        onConfirm={() => void confirmRemove()}
+        onCancel={() => setRemoveOpen(false)}
+      />
       {viewer.dialog}
     </div>
   );

@@ -10,8 +10,18 @@ import {
   skillPageResponseSchema,
   skillResponseSchema,
 } from "../contracts/skills";
-import { apiError, invalidRequest, notFound } from "../errors";
-import { setRevisionETag } from "../if-match";
+import {
+  apiError,
+  dependencyConflict,
+  invalidRequest,
+  notFound,
+  preconditionFailed,
+} from "../errors";
+import {
+  expectedRevisionOf,
+  readRevisionIfMatch,
+  setRevisionETag,
+} from "../if-match";
 import {
   toCreateSkillCommand,
   toDeleteSkillCommand,
@@ -115,11 +125,22 @@ export function buildSkillRoutes(
   });
 
   app.delete("/:skillId", async (c) => {
-    const result = await resolveApplicationPort(source, c).deleteSkill(
-      toDeleteSkillCommand(c.req.param("skillId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).deleteSkill({
+      ...toDeleteSkillCommand(c.req.param("skillId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(notFound(`Skill ${c.req.param("skillId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
+    }
+    if (result.type === "dependency_conflict") {
+      return c.json(dependencyConflict(result), 409);
     }
     const response = deletedSkillResponseSchema.safeParse({
       id: result.skillId,

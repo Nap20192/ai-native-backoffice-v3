@@ -249,6 +249,28 @@ function json(body: unknown): RequestInit {
   return { method: "POST", body: JSON.stringify(body) };
 }
 
+/** Условие записи для архива и удаления (docs/plans/crud.md, 1.4): значение
+ * `If-Match` берётся из последнего `ETag` объекта. Без него запрос уходит как
+ * раньше. */
+export interface MatchOptions {
+  ifMatch?: string;
+}
+
+function guarded(init: RequestInit, options?: MatchOptions): RequestInit {
+  return options?.ifMatch
+    ? { ...init, headers: { "If-Match": options.ifMatch } }
+    : init;
+}
+
+/** Восстановление из архива: `POST …/unarchive` без тела (docs/plans/crud.md, 1.1). */
+function unarchivePost(options?: MatchOptions): RequestInit {
+  return guarded({ method: "POST" }, options);
+}
+
+function deleteRequest(options?: MatchOptions): RequestInit {
+  return guarded({ method: "DELETE" }, options);
+}
+
 function multipart(
   files: readonly unknown[],
   fields: Record<string, string | null | undefined> = {},
@@ -322,10 +344,20 @@ export function createManagedApiClient(
           `/v1/agents/${id(agentId)}`,
           json(params),
         ),
-      archive: (agentId: string) =>
+      archive: (agentId: string, options?: MatchOptions) =>
         request<BetaManagedAgentsAgent>(
           `/v1/agents/${id(agentId)}/archive`,
-          json({}),
+          guarded(json({}), options),
+        ),
+      unarchive: (agentId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsAgent>(
+          `/v1/agents/${id(agentId)}/unarchive`,
+          unarchivePost(options),
+        ),
+      delete: (agentId: string, options?: MatchOptions) =>
+        request<{ id: string; type: string }>(
+          `/v1/agents/${id(agentId)}`,
+          deleteRequest(options),
         ),
       versions: {
         list: (
@@ -368,10 +400,16 @@ export function createManagedApiClient(
       archive: (
         deploymentId: string,
         _params: WithoutBetas<DeploymentArchiveParams> = {},
+        options?: MatchOptions,
       ) =>
         request<BetaManagedAgentsDeployment>(
           `/v1/deployments/${id(deploymentId)}/archive`,
-          json({}),
+          guarded(json({}), options),
+        ),
+      unarchive: (deploymentId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsDeployment>(
+          `/v1/deployments/${id(deploymentId)}/unarchive`,
+          unarchivePost(options),
         ),
       pause: (
         deploymentId: string,
@@ -458,15 +496,20 @@ export function createManagedApiClient(
           `/v1/environments/${id(environmentId)}`,
           json(params),
         ),
-      delete: (environmentId: string) =>
+      delete: (environmentId: string, options?: MatchOptions) =>
         request<BetaEnvironmentDeleteResponse>(
           `/v1/environments/${id(environmentId)}`,
-          { method: "DELETE" },
+          deleteRequest(options),
         ),
-      archive: (environmentId: string) =>
+      archive: (environmentId: string, options?: MatchOptions) =>
         request<BetaEnvironment>(
           `/v1/environments/${id(environmentId)}/archive`,
-          json({}),
+          guarded(json({}), options),
+        ),
+      unarchive: (environmentId: string, options?: MatchOptions) =>
+        request<BetaEnvironment>(
+          `/v1/environments/${id(environmentId)}/unarchive`,
+          unarchivePost(options),
         ),
       work: {
         retrieve: (
@@ -563,14 +606,20 @@ export function createManagedApiClient(
         request<BetaManagedAgentsVault>("/v1/vaults", json(params)),
       update: (vaultId: string, params: WithoutBetas<VaultUpdateParams>) =>
         request<BetaManagedAgentsVault>(`/v1/vaults/${id(vaultId)}`, json(params)),
-      delete: (vaultId: string) =>
-        request<BetaManagedAgentsDeletedVault>(`/v1/vaults/${id(vaultId)}`, {
-          method: "DELETE",
-        }),
-      archive: (vaultId: string) =>
+      delete: (vaultId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsDeletedVault>(
+          `/v1/vaults/${id(vaultId)}`,
+          deleteRequest(options),
+        ),
+      archive: (vaultId: string, options?: MatchOptions) =>
         request<BetaManagedAgentsVault>(
           `/v1/vaults/${id(vaultId)}/archive`,
-          json({}),
+          guarded(json({}), options),
+        ),
+      unarchive: (vaultId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsVault>(
+          `/v1/vaults/${id(vaultId)}/unarchive`,
+          unarchivePost(options),
         ),
       credentials: {
         list: (
@@ -647,15 +696,20 @@ export function createManagedApiClient(
           `/v1/memory_stores/${id(memoryStoreId)}`,
           json(params),
         ),
-      delete: (memoryStoreId: string) =>
+      delete: (memoryStoreId: string, options?: MatchOptions) =>
         request<BetaManagedAgentsDeletedMemoryStore>(
           `/v1/memory_stores/${id(memoryStoreId)}`,
-          { method: "DELETE" },
+          deleteRequest(options),
         ),
-      archive: (memoryStoreId: string) =>
+      archive: (memoryStoreId: string, options?: MatchOptions) =>
         request<BetaManagedAgentsMemoryStore>(
           `/v1/memory_stores/${id(memoryStoreId)}/archive`,
-          json({}),
+          guarded(json({}), options),
+        ),
+      unarchive: (memoryStoreId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsMemoryStore>(
+          `/v1/memory_stores/${id(memoryStoreId)}/unarchive`,
+          unarchivePost(options),
         ),
       memories: {
         list: (
@@ -765,15 +819,21 @@ export function createManagedApiClient(
           `/v1/sessions/${id(sessionId)}`,
           json(params),
         ),
-      archive: (sessionId: string) =>
+      archive: (sessionId: string, options?: MatchOptions) =>
         request<BetaManagedAgentsSession>(
           `/v1/sessions/${id(sessionId)}/archive`,
-          json({}),
+          guarded(json({}), options),
         ),
-      delete: (sessionId: string) =>
-        request<BetaManagedAgentsDeletedSession>(`/v1/sessions/${id(sessionId)}`, {
-          method: "DELETE",
-        }),
+      unarchive: (sessionId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsSession>(
+          `/v1/sessions/${id(sessionId)}/unarchive`,
+          unarchivePost(options),
+        ),
+      delete: (sessionId: string, options?: MatchOptions) =>
+        request<BetaManagedAgentsDeletedSession>(
+          `/v1/sessions/${id(sessionId)}`,
+          deleteRequest(options),
+        ),
       events: {
         list: (
           sessionId: string,
@@ -925,10 +985,11 @@ export function createManagedApiClient(
           "/v1/skills",
           multipart(params.files, { display_title: params.display_title }),
         ),
-      delete: (skillId: string) =>
-        request<SkillDeleteResponse>(`/v1/skills/${id(skillId)}`, {
-          method: "DELETE",
-        }),
+      delete: (skillId: string, options?: MatchOptions) =>
+        request<SkillDeleteResponse>(
+          `/v1/skills/${id(skillId)}`,
+          deleteRequest(options),
+        ),
       versions: {
         list: (
           skillId: string,
@@ -952,10 +1013,14 @@ export function createManagedApiClient(
             `/v1/skills/${id(skillId)}/versions`,
             multipart(params.files),
           ),
-        delete: (version: string, params: { skill_id: string }) =>
+        delete: (
+          version: string,
+          params: { skill_id: string },
+          options?: MatchOptions,
+        ) =>
           request<VersionDeleteResponse>(
             `/v1/skills/${id(params.skill_id)}/versions/${id(version)}`,
-            { method: "DELETE" },
+            deleteRequest(options),
           ),
         download: (
           version: string,

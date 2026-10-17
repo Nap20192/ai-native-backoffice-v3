@@ -1,3 +1,4 @@
+import type { DependencyConflict } from "./dependencies";
 export interface SkillUploadFileInput {
   filename: string;
   mimeType: string;
@@ -35,6 +36,8 @@ export interface SkillsPage {
 
 export interface DeleteSkillCommand {
   skillId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export type CreateSkillResult =
@@ -51,6 +54,8 @@ export type ListSkillsResult =
 
 export type DeleteSkillResult =
   | { type: "deleted"; skillId: string }
+  | { type: "precondition_failed"; message: string }
+  | DependencyConflict
   | { type: "not_found" };
 
 export interface SkillsApplicationPort {

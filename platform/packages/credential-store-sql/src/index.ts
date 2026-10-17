@@ -1,4 +1,5 @@
 import type {
+  DeleteVaultCredentials,
   ArchiveCredentialRecord,
   ArchiveCredentialRecordResult,
   CredentialLocation,
@@ -222,5 +223,18 @@ export class SqlCredentialStore implements CredentialStore {
     return Promise.all(
       (rows.results ?? []).map((row) => this.toStoredCredential(row)),
     );
+  }
+
+  async deleteAllInVault(
+    input: DeleteVaultCredentials,
+  ): Promise<{ deleted: number }> {
+    const result = await this.client
+      .prepare(
+        `DELETE FROM managed_credentials
+          WHERE workspace_id = ? AND vault_id = ?`,
+      )
+      .bind(input.workspaceId, input.vaultId)
+      .run();
+    return { deleted: result.meta.changes };
   }
 }

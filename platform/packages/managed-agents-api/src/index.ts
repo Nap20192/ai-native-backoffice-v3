@@ -51,6 +51,12 @@ export {
 } from "./routes/session-outputs";
 export { buildAgentRoutes } from "./routes/agents";
 export { buildCredentialRoutes } from "./routes/credentials";
+export { buildDependencyRoutes } from "./routes/dependencies";
+export {
+  dependencyReportSchema,
+  DEPENDENCY_TARGET_KINDS,
+  type DependencyReportBody,
+} from "./contracts/dependencies";
 export { buildDeploymentRunRoutes } from "./routes/deployment-runs";
 export { buildDeploymentRoutes } from "./routes/deployments";
 export { buildDreamRoutes } from "./routes/dreams";

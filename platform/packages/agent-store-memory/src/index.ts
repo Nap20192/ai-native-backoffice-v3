@@ -1,15 +1,20 @@
-import type {
-  AgentRecord,
-  AgentStore,
-  ArchiveAgentRecord,
-  ArchiveAgentRecordResult,
-  FindAgentVersionRecord,
-  FindCurrentAgentRecord,
-  InsertAgentRecord,
-  ListAgentRecords,
-  ListAgentVersionRecords,
-  ReplaceAgentRecord,
-  ReplaceAgentRecordResult,
+import {
+  agentReferences,
+  type AgentRecord,
+  type AgentStore,
+  type ArchiveAgentRecord,
+  type ArchiveAgentRecordResult,
+  type DeleteAgentRecordResult,
+  type FindAgentVersionRecord,
+  type FindCurrentAgentRecord,
+  type InsertAgentRecord,
+  type ListAgentRecords,
+  type ListAgentVersionRecords,
+  type ListReferencingAgentRecords,
+  type ReplaceAgentRecord,
+  type ReplaceAgentRecordResult,
+  type UnarchiveAgentRecord,
+  type UnarchiveAgentRecordResult,
 } from "@open-managed-agents/agent-store";
 
 function currentKey(workspaceId: string, agentId: string): string {
@@ -134,6 +139,63 @@ export class MemoryAgentStore implements AgentStore {
         key.startsWith(prefix) && record.version < input.beforeVersion)
       .map(([, record]) => record)
       .sort((left, right) => right.version - left.version)
+      .slice(0, input.limit)
+      .map(clone);
+  }
+
+  async unarchiveCurrent(
+    input: UnarchiveAgentRecord,
+  ): Promise<UnarchiveAgentRecordResult> {
+    const key = currentKey(input.workspaceId, input.agentId);
+    const current = this.current.get(key);
+    if (current === undefined) return { type: "not_found" };
+    const restored = clone({
+      ...current,
+      archivedAt: null,
+      updatedAt: input.updatedAt,
+    });
+    this.current.set(key, restored);
+    return { type: "unarchived", agent: clone(restored) };
+  }
+
+  async deleteCurrent(
+    input: FindCurrentAgentRecord,
+  ): Promise<DeleteAgentRecordResult> {
+    const key = currentKey(input.workspaceId, input.agentId);
+    if (!this.current.delete(key)) return { type: "not_found" };
+    for (const versionKeyValue of [...this.versions.keys()]) {
+      if (versionKeyValue.startsWith(`${key}\u0000`)) {
+        this.versions.delete(versionKeyValue);
+      }
+    }
+    return { type: "deleted" };
+  }
+
+  async listReferencing(
+    input: ListReferencingAgentRecords,
+  ): Promise<AgentRecord[]> {
+    if (!Number.isInteger(input.limit) || input.limit < 1) {
+      throw new Error("Agent list limit must be a positive integer");
+    }
+    const prefix = `${input.workspaceId}\u0000`;
+    const currents = [...this.current.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, record]) => record)
+      .filter((record) => input.includeArchived || record.archivedAt === null);
+    const candidates = input.allVersions
+      ? [
+          ...currents,
+          ...[...this.versions.entries()]
+            .filter(([key, record]) =>
+              key.startsWith(prefix)
+              && currents.some((current) => current.id === record.id))
+            .map(([, record]) => record),
+        ]
+      : currents;
+    return candidates
+      .filter((record) => agentReferences(record, input))
+      .sort((left, right) =>
+        left.id.localeCompare(right.id) || right.version - left.version)
       .slice(0, input.limit)
       .map(clone);
   }

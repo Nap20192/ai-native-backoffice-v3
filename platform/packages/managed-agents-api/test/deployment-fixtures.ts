@@ -87,6 +87,9 @@ export function makeDeploymentsPort(
     archiveDeployment: async () => {
       throw new Error("unexpected archiveDeployment application port call");
     },
+    unarchiveDeployment: async () => {
+      throw new Error("unexpected unarchiveDeployment application port call");
+    },
     pauseDeployment: async () => {
       throw new Error("unexpected pauseDeployment application port call");
     },

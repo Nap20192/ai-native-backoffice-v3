@@ -25,7 +25,8 @@ export type ShapeKind =
   | "model"
   | "model_option"
   | "harness"
-  | "harness_card";
+  | "harness_card"
+  | "session_resource";
 
 /** `true` keeps the value, an object keeps only its keys, `[spec]` is an array of `spec`. */
 type Spec = true | { readonly [key: string]: Spec } | readonly [Spec];
@@ -62,6 +63,7 @@ const RESOURCE: Spec = {
 };
 
 const SPECS: Readonly<Record<ShapeKind, Spec>> = {
+  session_resource: { ...RESOURCE, name: true, description: true },
   agent: {
     id: true,
     type: true,

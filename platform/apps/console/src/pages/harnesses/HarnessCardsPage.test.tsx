@@ -99,6 +99,11 @@ let cards: HarnessCard[];
 let lists: URL[];
 let posts: Array<{ url: string; body: unknown }>;
 let deletes: string[];
+let deleteIfMatch: Array<string | null>;
+let archives: Array<{ id: string; ifMatch: string | null }>;
+let unarchives: Array<{ id: string; ifMatch: string | null }>;
+let dependencyOperations: string[];
+let dependencies: { blocking: unknown[]; affected: unknown[]; truncated: boolean };
 
 beforeEach(() => {
   localStorage.clear();
@@ -106,16 +111,36 @@ beforeEach(() => {
   lists = [];
   posts = [];
   deletes = [];
+  deleteIfMatch = [];
+  archives = [];
+  unarchives = [];
+  dependencyOperations = [];
+  dependencies = { blocking: [], affected: [], truncated: false };
   server.use(
     http.get(`*${HARNESSES_PATH}`, () => HttpResponse.json({ data: CATALOG })),
     http.get(`*${HARNESS_CARDS_PATH}`, ({ request }) => {
       lists.push(new URL(request.url));
       return HttpResponse.json({ data: cards });
     }),
-    http.delete(`*${HARNESS_CARDS_PATH}/:id`, ({ params }) => {
+    http.post(`*${HARNESS_CARDS_PATH}/:id/archive`, ({ params, request }) => {
+      archives.push({ id: String(params.id), ifMatch: request.headers.get("if-match") });
+      const archived = cards.find((item) => item.id === params.id);
+      cards = cards.filter((item) => item.id !== params.id);
+      return HttpResponse.json({ ...archived, archived_at: "2026-10-16T00:00:00.000Z" });
+    }),
+    http.post(`*${HARNESS_CARDS_PATH}/:id/unarchive`, ({ params, request }) => {
+      unarchives.push({ id: String(params.id), ifMatch: request.headers.get("if-match") });
+      return HttpResponse.json(card({ archived_at: null }));
+    }),
+    http.delete(`*${HARNESS_CARDS_PATH}/:id`, ({ params, request }) => {
       deletes.push(String(params.id));
+      deleteIfMatch.push(request.headers.get("if-match"));
       cards = cards.filter((item) => item.id !== params.id);
       return HttpResponse.json({ type: "harness_card_deleted", id: params.id });
+    }),
+    http.get("*/v1/oma/dependencies/harness_card/:id", ({ request }) => {
+      dependencyOperations.push(new URL(request.url).searchParams.get("operation") ?? "");
+      return HttpResponse.json(dependencies);
     }),
   );
 });
@@ -528,7 +553,35 @@ describe("правка и удаление карточки", () => {
     expect(await screen.findByRole("dialog", { name: "Harness «Aider через ACP»" })).toBeInTheDocument();
   });
 
-  it("удаляет карточку после подтверждения: текст предупреждает про агентов", async () => {
+  it("архивирует карточку: окно показывает «Затронет» и шлёт If-Match с updated_at", async () => {
+    dependencies = {
+      blocking: [],
+      affected: [{ kind: "agent", id: "agent_old", name: "Старый бот", status: null, note: "в архиве" }],
+      truncated: false,
+    };
+    renderPage();
+    const table = await ownTable();
+
+    fireEvent.contextMenu(within(table).getByText("Aider через ACP"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Архивировать" }));
+
+    const confirm = await screen.findByRole("dialog", { name: "Отправить harness «Aider через ACP» в архив?" });
+    expect(await within(confirm).findByText("Затронет")).toBeInTheDocument();
+    expect(within(confirm).getByText(/Можно вернуть из архива/)).toBeInTheDocument();
+    expect(dependencyOperations).toEqual(["archive"]);
+
+    await userEvent.click(within(confirm).getByRole("button", { name: "В архив" }));
+
+    await waitFor(() => expect(archives).toEqual([{ id: "hcard_1", ifMatch: "2026-10-16T11:00:00.000Z" }]));
+    expect(await screen.findByText("Своих harness нет")).toBeInTheDocument();
+  });
+
+  it("удаление: блокирующий агент выключает кнопку, текст «Это нельзя отменить»", async () => {
+    dependencies = {
+      blocking: [{ kind: "agent", id: "agent_1", name: "Бот на Aider", status: null, note: null }],
+      affected: [],
+      truncated: false,
+    };
     renderPage();
     const table = await ownTable();
 
@@ -536,15 +589,62 @@ describe("правка и удаление карточки", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Удалить" }));
 
     const confirm = await screen.findByRole("dialog", { name: "Удалить harness «Aider через ACP»?" });
-    expect(confirm).toHaveAccessibleDescription(
-      "Новых агентов на нём создать будет нельзя. Агенты, которые его уже используют, продолжат работать.",
-    );
+    expect(within(confirm).getByText(/Это нельзя отменить/)).toBeInTheDocument();
+    expect(await within(confirm).findByText("Бот на Aider", { exact: false })).toBeInTheDocument();
+    expect(within(confirm).getByText("Мешает")).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Удалить" })).toBeDisabled();
+    expect(dependencyOperations).toEqual(["delete"]);
+  });
+
+  it("удаляет карточку без зависимостей настоящим DELETE с If-Match", async () => {
+    renderPage();
+    const table = await ownTable();
+
+    fireEvent.contextMenu(within(table).getByText("Aider через ACP"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Удалить" }));
+    const confirm = await screen.findByRole("dialog", { name: "Удалить harness «Aider через ACP»?" });
+    await waitFor(() => expect(within(confirm).getByRole("button", { name: "Удалить" })).toBeEnabled());
     expect(deletes).toEqual([]);
 
     await userEvent.click(within(confirm).getByRole("button", { name: "Удалить" }));
 
     await waitFor(() => expect(deletes).toEqual(["hcard_1"]));
+    expect(deleteIfMatch).toEqual(["2026-10-16T11:00:00.000Z"]);
+    expect(archives).toEqual([]);
     expect(await screen.findByText("Своих harness нет")).toBeInTheDocument();
+  });
+
+  it("ответ 409 при удалении показывает список из ответа", async () => {
+    server.use(
+      http.delete(`*${HARNESS_CARDS_PATH}/:id`, () =>
+        HttpResponse.json(
+          {
+            type: "error",
+            error: {
+              type: "dependency_conflict_error",
+              message: "Есть зависимости",
+              dependencies: {
+                blocking: [{ kind: "agent", id: "agent_2", name: "Поздний бот", status: null, note: null }],
+                affected: [],
+                truncated: false,
+              },
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderPage();
+    const table = await ownTable();
+
+    fireEvent.contextMenu(within(table).getByText("Aider через ACP"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Удалить" }));
+    const confirm = await screen.findByRole("dialog", { name: "Удалить harness «Aider через ACP»?" });
+    await waitFor(() => expect(within(confirm).getByRole("button", { name: "Удалить" })).toBeEnabled());
+    await userEvent.click(within(confirm).getByRole("button", { name: "Удалить" }));
+
+    expect(await within(confirm).findByText("Поздний бот", { exact: false })).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Удалить" })).toBeDisabled();
   });
 
   it("отмена подтверждения ничего не удаляет", async () => {
@@ -558,6 +658,31 @@ describe("правка и удаление карточки", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(deletes).toEqual([]);
+  });
+
+  it("у архивной карточки есть «Вернуть из архива» и нет «Архивировать»", async () => {
+    server.use(
+      http.get(`*${HARNESS_CARDS_PATH}`, ({ request }) => {
+        lists.push(new URL(request.url));
+        const withArchived = new URL(request.url).searchParams.get("include_archived") === "true";
+        return HttpResponse.json({
+          data: withArchived ? [card({ archived_at: "2026-10-15T00:00:00.000Z" })] : [],
+        });
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Статус/ }));
+    await userEvent.click(await screen.findByRole("option", { name: "В архиве" }));
+    const table = await ownTable();
+
+    fireEvent.contextMenu(within(table).getByText("Aider через ACP"));
+    expect(screen.queryByRole("menuitem", { name: "Архивировать" })).toBeNull();
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Вернуть из архива" }));
+
+    await waitFor(() =>
+      expect(unarchives).toEqual([{ id: "hcard_1", ifMatch: "2026-10-16T11:00:00.000Z" }]),
+    );
+    expect(lists.some((url) => url.searchParams.get("include_archived") === "true")).toBe(true);
   });
 });
 

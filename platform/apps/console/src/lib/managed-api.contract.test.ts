@@ -359,4 +359,48 @@ describe("Console Managed Agents client", () => {
       ["/v1/sessions/session%2F1/threads/thread%2F1/stream?event_deltas%5B%5D=agent.message", { signal: abort.signal }],
     ]);
   });
+
+  it("restores from the archive with POST and no body", async () => {
+    const client = createManagedApiClient(request);
+    await client.agents.unarchive("agent/1");
+    await client.sessions.unarchive("sesn_1");
+    await client.environments.unarchive("env_1");
+    await client.deployments.unarchive("depl_1");
+    await client.memoryStores.unarchive("memstore_1");
+    await client.vaults.unarchive("vlt_1");
+
+    for (const path of [
+      "/v1/agents/agent%2F1/unarchive",
+      "/v1/sessions/sesn_1/unarchive",
+      "/v1/environments/env_1/unarchive",
+      "/v1/deployments/depl_1/unarchive",
+      "/v1/memory_stores/memstore_1/unarchive",
+      "/v1/vaults/vlt_1/unarchive",
+    ]) {
+      expect(request).toHaveBeenCalledWith(path, { method: "POST" });
+    }
+  });
+
+  it("deletes an agent and sends If-Match on archive and delete when given", async () => {
+    const client = createManagedApiClient(request);
+    await client.agents.delete("agent_1", { ifMatch: '"3"' });
+    await client.environments.archive("env_1", { ifMatch: '"7"' });
+    await client.sessions.delete("sesn_1");
+    await client.skills.versions.delete("2", { skill_id: "skill_1" }, { ifMatch: '"2"' });
+
+    expect(request).toHaveBeenCalledWith("/v1/agents/agent_1", {
+      method: "DELETE",
+      headers: { "If-Match": '"3"' },
+    });
+    expect(request).toHaveBeenCalledWith("/v1/environments/env_1/archive", {
+      method: "POST",
+      body: "{}",
+      headers: { "If-Match": '"7"' },
+    });
+    expect(request).toHaveBeenCalledWith("/v1/sessions/sesn_1", { method: "DELETE" });
+    expect(request).toHaveBeenCalledWith("/v1/skills/skill_1/versions/2", {
+      method: "DELETE",
+      headers: { "If-Match": '"2"' },
+    });
+  });
 });

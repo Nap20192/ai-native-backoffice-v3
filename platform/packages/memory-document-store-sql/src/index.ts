@@ -7,6 +7,8 @@ import type {
   CreateMemoryRecord,
   CreateMemoryRecordResult,
   DeleteMemoryRecord,
+  DeleteMemoryStoreContents,
+  DeletedMemoryStoreContents,
   DeleteMemoryRecordResult,
   ListMemoryRecords,
   ListMemoryVersionRecords,
@@ -523,5 +525,24 @@ export class SqlMemoryDocumentStore implements MemoryDocumentStore {
     const record = await this.findVersion(input);
     if (record === null) throw new Error("Memory Version vanished after redaction");
     return { type: "redacted", record };
+  }
+
+  async deleteAllInStore(
+    input: DeleteMemoryStoreContents,
+  ): Promise<DeletedMemoryStoreContents> {
+    const results = await this.client.batch([
+      this.client.prepare(
+        `DELETE FROM managed_memory_versions
+          WHERE workspace_id = ? AND memory_store_id = ?`,
+      ).bind(input.workspaceId, input.memoryStoreId),
+      this.client.prepare(
+        `DELETE FROM managed_memories
+          WHERE workspace_id = ? AND memory_store_id = ?`,
+      ).bind(input.workspaceId, input.memoryStoreId),
+    ]);
+    return {
+      deletedMemories: results[1]?.meta.changes ?? 0,
+      deletedVersions: results[0]?.meta.changes ?? 0,
+    };
   }
 }

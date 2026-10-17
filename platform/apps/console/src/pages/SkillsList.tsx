@@ -14,7 +14,7 @@ import { useManagedApi } from "../lib/useManagedApi";
 import { extractManagedSkillFiles } from "../lib/skill-upload";
 import { readSkillArchiveFiles } from "../lib/skill-archive";
 import { useI18n } from "../i18n";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { Modal } from "../components/Modal";
 import { Field } from "../components/Field";
 import { Skeleton } from "../components/Skeleton";
@@ -167,7 +167,8 @@ export function SkillsList() {
 
   /* подтверждение удаления: из окна навыка или из меню строки */
   const [deleteTarget, setDeleteTarget] = useState<{ skill: Skill; fromDetail: boolean } | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  /* удаление версии навыка из истории версий */
+  const [deleteVersion, setDeleteVersion] = useState<{ skill: Skill; version: string; label: string } | null>(null);
 
   /* ---- создание ---- */
 
@@ -321,23 +322,9 @@ export function SkillsList() {
 
   /* ---- удаление ---- */
 
-  // Единая точка удаления: подтверждение через ConfirmDialog (правило 11 DDC).
-  // Из окна навыка после удаления окно закрывается, из меню строки закрывать нечего.
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    try {
-      await managedApi.skills.delete(deleteTarget.skill.id);
-      if (deleteTarget.fromDetail) closeDetail();
-      load();
-    } catch {
-      // Ошибку показывает общий обработчик запросов.
-    } finally {
-      setDeleting(false);
-      setDeleteTarget(null);
-    }
-  };
-
+  // Удаление идёт через DangerDialog: он читает зависимости навыка (агенты),
+  // берёт ETag навыка для If-Match и показывает список при ответе 409. Из окна
+  // навыка после удаления окно закрывается, из меню строки закрывать нечего.
   const deleteName = deleteTarget
     ? deleteTarget.skill.display_title || deleteTarget.skill.name || deleteTarget.skill.id
     : "";
@@ -348,6 +335,9 @@ export function SkillsList() {
     const byAge = [...detailVersions].sort((a, b) => a.created_at.localeCompare(b.created_at));
     return new Map(byAge.map((v, index) => [v.version, index + 1]));
   }, [detailVersions]);
+
+  const versionLabel = (version: string) =>
+    versionOrdinals.get(version) ? `v${versionOrdinals.get(version)}` : formatSkillVersion(version);
 
   /* ---- колонки ---- */
 
@@ -578,15 +568,46 @@ export function SkillsList() {
         }}
       />
 
-      <ConfirmDialog
+      <DangerDialog
         open={deleteTarget !== null}
+        operation="delete"
+        target={deleteTarget ? { kind: "skill", id: deleteTarget.skill.id } : null}
+        etagPath={deleteTarget ? `/v1/skills/${deleteTarget.skill.id}` : undefined}
         title={`Удалить навык «${deleteName}»?`}
-        message="Действие нельзя отменить."
-        confirmLabel="Удалить"
-        destructive
-        busy={deleting}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setDeleteTarget(null)}
+        message="Навык и все его версии будут удалены."
+        run={(options) => managedApi.skills.delete(deleteTarget!.skill.id, options)}
+        onDone={() => {
+          if (deleteTarget?.fromDetail) closeDetail();
+          setDeleteTarget(null);
+          load();
+        }}
+        onClose={() => setDeleteTarget(null)}
+      />
+      <DangerDialog
+        open={deleteVersion !== null}
+        operation="delete"
+        target={
+          deleteVersion
+            ? { kind: "skill_version", id: deleteVersion.skill.id, version: deleteVersion.version }
+            : null
+        }
+        etagPath={deleteVersion ? `/v1/skills/${deleteVersion.skill.id}` : undefined}
+        title={`Удалить версию ${deleteVersion?.label ?? ""}?`}
+        message="Навык и остальные версии останутся."
+        run={(options) =>
+          managedApi.skills.versions.delete(
+            deleteVersion!.version,
+            { skill_id: deleteVersion!.skill.id },
+            options,
+          )
+        }
+        onDone={() => {
+          const skill = deleteVersion?.skill;
+          setDeleteVersion(null);
+          load();
+          if (skill) void managedApi.skills.retrieve(skill.id).then(openDetail).catch(() => {});
+        }}
+        onClose={() => setDeleteVersion(null)}
       />
 
       {/* ===== Окно создания ===== */}
@@ -876,15 +897,18 @@ export function SkillsList() {
                         <TableHead className="px-4 py-2 text-left text-xs font-semibold tracking-wider text-ddc-text-muted uppercase">
                           {t.common.created}
                         </TableHead>
+                        {!isPlatformSkill(detail) && (
+                          <TableHead className="w-12 px-2 py-2">
+                            <span className="sr-only">Действия</span>
+                          </TableHead>
+                        )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {detailVersions.map((v) => (
                         <TableRow key={v.version}>
                           <TableCell className="px-4 py-2 text-xs tabular-nums">
-                            {versionOrdinals.get(v.version)
-                              ? `v${versionOrdinals.get(v.version)}`
-                              : formatSkillVersion(v.version)}
+                            {versionLabel(v.version)}
                             {v.version === detail.latest_version && (
                               <span className="chip tone-success ml-2">Последняя</span>
                             )}
@@ -892,6 +916,31 @@ export function SkillsList() {
                           <TableCell className="px-4 py-2 text-xs text-ddc-text-muted tabular-nums">
                             {formatDateTime(v.created_at)}
                           </TableCell>
+                          {!isPlatformSkill(detail) && (
+                            <TableCell className="px-2 py-1 text-right">
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label={`Удалить версию ${versionLabel(v.version)}`}
+                                title={
+                                  detailVersions.length <= 1
+                                    ? "Это последняя версия. Удалите навык целиком."
+                                    : "Удалить версию"
+                                }
+                                disabled={detailVersions.length <= 1}
+                                className="text-ddc-icon-muted hover:text-ddc-danger-text"
+                                onClick={() =>
+                                  setDeleteVersion({
+                                    skill: detail,
+                                    version: v.version,
+                                    label: versionLabel(v.version),
+                                  })
+                                }
+                              >
+                                <TrashIcon aria-hidden="true" />
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>

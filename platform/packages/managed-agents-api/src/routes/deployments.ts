@@ -171,18 +171,24 @@ export function buildDeploymentRoutes(
     return c.json(response.data, 200);
   });
 
+  // Archive, restore, pause and unpause read If-Match
+  // (docs/plans/crud.md, 1.4 and A8).
   const stateChange = (
-    action: "archive" | "pause" | "unpause",
+    action: "archive" | "unarchive" | "pause" | "unpause",
     invoke: (
       port: DeploymentsApplicationPort,
-      deploymentId: string,
+      command: { deploymentId: string; expectedRevision?: number },
     ) => ReturnType<DeploymentsApplicationPort["archiveDeployment"]>,
   ) => {
     app.post(`/:deploymentId/${action}`, async (c) => {
-      const result = await invoke(
-        resolveApplicationPort(source, c),
-        c.req.param("deploymentId"),
-      );
+      const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+      if (precondition.type === "invalid") {
+        return c.json(invalidRequest(precondition.message), 400);
+      }
+      const result = await invoke(resolveApplicationPort(source, c), {
+        deploymentId: c.req.param("deploymentId"),
+        ...expectedRevisionOf(precondition),
+      });
       if (result.type === "not_found") {
         return c.json(
           notFound(`Deployment ${c.req.param("deploymentId")} was not found`),
@@ -204,15 +210,10 @@ export function buildDeploymentRoutes(
     });
   };
 
-  stateChange("archive", (port, deploymentId) =>
-    port.archiveDeployment({ deploymentId }),
-  );
-  stateChange("pause", (port, deploymentId) =>
-    port.pauseDeployment({ deploymentId }),
-  );
-  stateChange("unpause", (port, deploymentId) =>
-    port.unpauseDeployment({ deploymentId }),
-  );
+  stateChange("archive", (port, command) => port.archiveDeployment(command));
+  stateChange("unarchive", (port, command) => port.unarchiveDeployment(command));
+  stateChange("pause", (port, command) => port.pauseDeployment(command));
+  stateChange("unpause", (port, command) => port.unpauseDeployment(command));
 
   app.post("/:deploymentId/run", async (c) => {
     const result = await resolveApplicationPort(source, c).runDeployment({

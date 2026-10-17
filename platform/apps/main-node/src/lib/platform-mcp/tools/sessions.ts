@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { getEnabledBuiltinTools } from "@open-managed-agents/agent/harness/tools";
-import { classifyCreateSession, classifySendMessage, isAssistantAgent } from "../classify";
+import { classifyCreateSession, classifyEdit, classifySendMessage, isAssistantAgent } from "../classify";
 import { ROUTES } from "../route-rules";
 import {
   assistantLabels,
@@ -275,4 +275,139 @@ export const sendMessageTool: ToolDef<z.infer<typeof sendMessageArgs>> = {
   },
 };
 
-export const SESSION_TOOLS = [createSessionTool, sendMessageTool];
+// ---------- title, metadata and resources (crud.md 3.2) ----------
+
+export const OMA_METADATA_INVALID = "Ключи oma_* в метаданных меняет только платформа";
+
+/** The session and whether it is the assistant's own conversation. */
+async function readSession(ctx: OpContext, sessionId: string): Promise<{ session: any; revision: string | null; own: boolean } | null> {
+  const response = await ctx.api.get(`/v1/sessions/${encodeId(sessionId)}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new RouteError(response);
+  const session = response.json;
+  const own = sessionId === ctx.actor.sessionId || isAssistantAgent(session?.agent, ctx.deps.platformMcpUrl);
+  return { session, revision: revisionOf(response), own };
+}
+
+const updateSessionArgs = z
+  .object({
+    session_id: z.string().min(1),
+    title: z.string().max(200).nullable().optional(),
+    metadata: z.record(z.string().min(1).max(64), z.string().max(512).nullable()).optional(),
+    expected_revision: z.string().min(1).optional(),
+  })
+  .strict();
+
+type UpdateSessionArgs = z.infer<typeof updateSessionArgs>;
+
+function sessionPatch(args: UpdateSessionArgs): Record<string, unknown> {
+  return {
+    ...(args.title === undefined ? {} : { title: args.title }),
+    ...(args.metadata === undefined ? {} : { metadata: args.metadata }),
+  };
+}
+
+export const updateSessionTool: ToolDef<UpdateSessionArgs> = {
+  name: "update_session",
+  group: "write",
+  description: "Изменить название и метаданные сессии. null в metadata убирает ключ. Ключи oma_* меняет платформа. Ждёт подтверждения.",
+  args: updateSessionArgs,
+  routes: [ROUTES.session, ROUTES.sessionUpdate],
+  precondition: "if_match",
+  op: {
+    targetKind: "session",
+    targetKey: (args) => `session:${args.session_id}`,
+    async plan(ctx, args) {
+      const found = await readSession(ctx, args.session_id);
+      if (!found) return { ...emptyPlan("update"), notFound: "Сессия не найдена" };
+      const cls = classifyEdit({ archived: Boolean(found.session?.archived_at), ownAssistantTarget: found.own });
+      const patch = sessionPatch(args);
+      const before = { title: found.session?.title ?? null, metadata: found.session?.metadata ?? {} };
+      const metadataAfter = { ...before.metadata } as Record<string, unknown>;
+      for (const [key, value] of Object.entries(args.metadata ?? {})) {
+        if (value === null) delete metadataAfter[key];
+        else metadataAfter[key] = value;
+      }
+      const omaKey = Object.keys(args.metadata ?? {}).some((key) => key.startsWith("oma_"));
+      return {
+        ...emptyPlan(cls.cls),
+        reason: cls.reason,
+        targetId: args.session_id,
+        revision: found.revision,
+        state: { archived: Boolean(found.session?.archived_at), status: found.session?.status ?? null },
+        before,
+        after: { title: "title" in patch ? patch.title : before.title, metadata: metadataAfter },
+        invalid: omaKey ? OMA_METADATA_INVALID : Object.keys(patch).length === 0 ? "Нужен title или metadata" : undefined,
+        argsStale: args.expected_revision !== undefined && args.expected_revision !== found.revision,
+      };
+    },
+    async write(ctx, args, _plan, revision) {
+      // The session route takes If-Match; a change after the gate's check also stops here.
+      const current = await readSession(ctx, args.session_id);
+      if (!current) return { type: "error", message: "Сессия не найдена" };
+      if (revision !== null && current.revision !== null && current.revision !== revision) return { type: "stale", message: STALE_TEXT };
+      const response = await ctx.api.post(
+        `/v1/sessions/${encodeId(args.session_id)}`,
+        sessionPatch(args),
+        revision ? { headers: { "if-match": revision } } : undefined,
+      );
+      return writeOutcome(ctx, response, () => ({
+        targetId: args.session_id,
+        revision: response.headers.get("etag"),
+        summary: `Сессия ${args.session_id} изменена`,
+      }));
+    },
+  },
+};
+
+const addResourceArgs = z
+  .object({
+    session_id: z.string().min(1),
+    file_id: z.string().min(1),
+    mount_path: z.string().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const addSessionResourceTool: ToolDef<z.infer<typeof addResourceArgs>> = {
+  name: "add_session_resource",
+  group: "write",
+  description: "Подключить файл к сессии. Удаляет ресурс delete_object с kind session_resource. Ждёт подтверждения.",
+  args: addResourceArgs,
+  routes: [ROUTES.session, ROUTES.file, ROUTES.sessionResourceAdd],
+  precondition: "new_object",
+  op: {
+    targetKind: "session_resource",
+    targetKey: () => null,
+    async plan(ctx, args) {
+      const found = await readSession(ctx, args.session_id);
+      if (!found) return { ...emptyPlan("create"), notFound: "Сессия не найдена" };
+      if (!isRef(args.file_id)) {
+        const file = await ctx.api.get(`/v1/files/${encodeId(args.file_id)}`);
+        if (file.status === 404) return { ...emptyPlan("create"), notFound: `Файл ${args.file_id} не найден` };
+        if (!file.ok) throw new RouteError(file);
+      }
+      const cls = classifyEdit({ archived: Boolean(found.session?.archived_at), ownAssistantTarget: found.own });
+      return {
+        ...emptyPlan(cls.cls === "update" ? "create" : cls.cls),
+        reason: cls.reason,
+        targetId: args.session_id,
+        state: { archived: Boolean(found.session?.archived_at), session: args.session_id },
+        after: { type: "file", file_id: args.file_id, ...(args.mount_path ? { mount_path: args.mount_path } : {}) },
+      };
+    },
+    async write(ctx, args) {
+      const response = await ctx.api.post(`/v1/sessions/${encodeId(args.session_id)}/resources`, {
+        type: "file",
+        file_id: args.file_id,
+        ...(args.mount_path ? { mount_path: args.mount_path } : {}),
+      });
+      return writeOutcome(ctx, response, (json) => ({
+        targetId: json?.id ?? null,
+        revision: null,
+        summary: `Файл подключён к сессии ${args.session_id}, ресурс ${json?.id}`,
+      }));
+    },
+  },
+};
+
+export const SESSION_TOOLS = [createSessionTool, sendMessageTool, updateSessionTool, addSessionResourceTool];

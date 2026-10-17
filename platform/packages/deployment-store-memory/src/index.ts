@@ -1,11 +1,12 @@
-import type {
-  DeploymentLocation,
-  DeploymentStore,
-  InsertDeploymentRecord,
-  ListDeploymentRecords,
-  ReplaceDeploymentRecord,
-  ReplaceDeploymentRecordResult,
-  StoredDeployment,
+import {
+  deploymentReferences,
+  type DeploymentLocation,
+  type DeploymentStore,
+  type InsertDeploymentRecord,
+  type ListDeploymentRecords,
+  type ReplaceDeploymentRecord,
+  type ReplaceDeploymentRecordResult,
+  type StoredDeployment,
 } from "@open-managed-agents/deployment-store";
 
 function clone<Value>(value: Value): Value {
@@ -86,6 +87,7 @@ export class MemoryDeploymentStore implements DeploymentStore {
         || record.deployment.createdAt <= input.createdAtOrBefore)
       .filter((record) =>
         input.status === undefined || record.deployment.status === input.status)
+      .filter((record) => deploymentReferences(record.deployment, input))
       .filter((record) =>
         input.position === undefined
         || record.deployment.createdAt < input.position.createdAt

@@ -45,6 +45,7 @@ export const en: Messages = {
     dashboard: "Dashboard",
     agents: "Agents",
     sessions: "Sessions",
+    deployments: "Deployments",
     files: "Files",
     evalRuns: "Eval Runs",
     infrastructure: "Infrastructure",

@@ -51,6 +51,11 @@ export interface ListCredentialRecords {
   position?: CredentialListPosition;
 }
 
+export interface DeleteVaultCredentials {
+  workspaceId: string;
+  vaultId: string;
+}
+
 export interface CredentialStore {
   insert(input: InsertCredential): Promise<StoredCredential>;
   find(input: CredentialLocation): Promise<StoredCredential | null>;
@@ -58,4 +63,6 @@ export interface CredentialStore {
   archive(input: ArchiveCredentialRecord): Promise<ArchiveCredentialRecordResult>;
   delete(input: CredentialLocation): Promise<DeleteCredentialRecordResult>;
   list(input: ListCredentialRecords): Promise<StoredCredential[]>;
+  /** Deletes every credential of one vault, archived ones too. */
+  deleteAllInVault(input: DeleteVaultCredentials): Promise<{ deleted: number }>;
 }

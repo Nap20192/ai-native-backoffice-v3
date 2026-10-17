@@ -77,7 +77,7 @@ describe("platform MCP gate", () => {
     const args = { deployment_id: deployment.id, changes: { name: "Утренняя сводка" } };
     const toolUseId = fake.propose("update_deployment", args);
     expect((await fake.confirm(toolUseId)).status).toBe(200);
-    fake.deployment(deployment.id).status = "active";
+    fake.deployment(deployment.id).archived_at = "2026-10-16T11:00:00.000Z";
     const result = await fake.run("update_deployment", args, toolUseId);
     expect(result.text).toBe("Операция стала опаснее, чем на карточке. В первой версии её делает человек в консоли");
     expect(fake.writes().filter((call) => call.path.startsWith("/v1/deployments"))).toHaveLength(0);

@@ -327,3 +327,11 @@ export const agentPageResponseSchema = z
     next_page: z.string().nullable(),
   })
   .strict();
+
+/** OMA: DELETE /v1/agents/:agent_id (docs/plans/crud.md, 2.1). */
+export const deletedAgentResponseSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.literal("agent_deleted"),
+  })
+  .strict();

@@ -19,6 +19,7 @@
     "./harness/acp-sandbox": "./src/harness/acp-sandbox-loop.ts",
     "./harness/acp-agent-state": "./src/harness/acp-agent-state.ts",
     "./harness/platform-guidance": "./src/harness/platform-guidance.ts",
+    "./harness/environment-prompt": "./src/harness/environment-prompt.ts",
     "./harness/assembly/skill-config": "./src/harness/assembly/skill-config.ts",
     "./harness/assembly/reassembly-config": "./src/harness/assembly/reassembly-config.ts",
     "./harness/skills": "./src/harness/skills.ts",

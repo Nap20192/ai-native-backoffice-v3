@@ -20,6 +20,9 @@ function result<T extends { type: string }>(value: T): T {
   if (value.type === "not_found") throw new OpenAIAgentsProtocolError(404, "Resource not found", undefined, "resource_not_found");
   if (value.type === "invalid_request") throw new OpenAIAgentsProtocolError(400, (value as T & { message: string }).message);
   if (value.type === "version_conflict") throw new OpenAIAgentsProtocolError(409, (value as T & { message: string }).message);
+  // Archive and delete answer these since docs/plans/crud.md (1.2, 1.4).
+  if (value.type === "dependency_conflict") throw new OpenAIAgentsProtocolError(409, (value as T & { message: string }).message);
+  if (value.type === "precondition_failed") throw new OpenAIAgentsProtocolError(412, (value as T & { message: string }).message);
   return value;
 }
 

@@ -17,13 +17,18 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 
+import { readOciIndexDigest } from "@open-managed-agents/sandbox/environment";
+
+/** The OCI manifest digest that `index.json` of a layout points to. The
+ *  LiteBox adapter reads it again before it boots a VM from the layout. */
+export { readOciIndexDigest };
+
 export const DEFAULT_SANDBOX_IMAGE_DIR = "./data/sandbox-images";
 export const SERVER_DEFAULT_IMAGE_KEY = "default";
 
 const CATALOG_SETTING = "SANDBOX_IMAGE_CATALOG";
 /** Catalog keys and template ids. The API contract caps `config.image` at 64. */
 const KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const PINNED_REFERENCE = /^[^\s@]+@(sha256:[0-9a-f]{64})$/;
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
@@ -360,19 +365,6 @@ async function readManifest(file: string): Promise<ManifestRead> {
     };
   } catch {
     return { type: "invalid" };
-  }
-}
-
-/** The OCI manifest digest that `index.json` of a layout points to. */
-export async function readOciIndexDigest(dir: string): Promise<string | null> {
-  try {
-    const index: unknown = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
-    if (!isRecord(index) || !Array.isArray(index.manifests)) return null;
-    const first: unknown = index.manifests[0];
-    const digest = isRecord(first) ? first.digest : undefined;
-    return typeof digest === "string" && DIGEST_PATTERN.test(digest) ? digest : null;
-  } catch {
-    return null;
   }
 }
 

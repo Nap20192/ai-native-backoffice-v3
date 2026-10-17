@@ -9,6 +9,7 @@ import { INTERNAL_ROUTES } from "./route-rules";
 import { applyChangesTool } from "./tools/batch";
 import { isRecord, type ToolDef } from "./tools/common";
 import { CREATE_TOOLS } from "./tools/create";
+import { DANGER_TOOLS } from "./tools/danger";
 import { previewChangeTool } from "./tools/draft";
 import { READ_TOOLS } from "./tools/read";
 import { searchConfigTool, searchDocsTool } from "./tools/search";
@@ -20,7 +21,7 @@ const helpArgs = z.object({ topic: z.enum(HELP_TOPICS) }).strict();
 export const helpTool: ToolDef<z.infer<typeof helpArgs>> = {
   name: "help",
   group: "read",
-  description: "Правила и поля объектов по теме: overview, agent, environment, session, skill, deployment, memory, model_card, harness, outcome, limits.",
+  description: "Правила и поля объектов по теме: overview, agent, environment, session, skill, deployment, memory, model_card, harness, outcome, danger, limits.",
   args: helpArgs,
   routes: [],
   precondition: null,
@@ -38,6 +39,7 @@ const ORDERED: ToolDef[] = [
   ...CREATE_TOOLS,
   ...SESSION_TOOLS,
   ...UPDATE_TOOLS,
+  ...DANGER_TOOLS,
   applyChangesTool,
 ] as ToolDef[];
 
@@ -112,6 +114,25 @@ function checkSessionEvent(body: unknown, context: BodyCheckContext): BodyCheckR
   return ok;
 }
 
+const SESSION_UPDATE_ALLOWED = new Set(["title", "metadata"]);
+const SESSION_RESOURCE_TYPES = new Set(["file", "memory_store"]);
+
+/** Title and metadata only: tools, MCP servers, budget and vaults stay with the human (crud.md 3.3). */
+function checkSessionUpdate(body: unknown): BodyCheckResult {
+  if (!isRecord(body) || Object.keys(body).some((key) => !SESSION_UPDATE_ALLOWED.has(key))) return refuse("only title and metadata are allowed");
+  const metadata = body.metadata;
+  if (metadata === undefined || metadata === null) return ok;
+  if (!isRecord(metadata)) return refuse("metadata is not an object");
+  return Object.keys(metadata).some((key) => key.startsWith("oma_")) ? refuse("oma_* metadata is not allowed") : ok;
+}
+
+function checkSessionResource(body: unknown): BodyCheckResult {
+  if (!isRecord(body) || typeof body.type !== "string" || !SESSION_RESOURCE_TYPES.has(body.type)) {
+    return refuse("only file and memory_store resources are allowed");
+  }
+  return "authorization_token" in body ? refuse("authorization_token is not allowed") : ok;
+}
+
 export const routeAllowlist: RouteAllowlist = {
   match(method, path) {
     const upper = method.toUpperCase();
@@ -132,6 +153,12 @@ export const routeAllowlist: RouteAllowlist = {
         return checkSessionCreate(body);
       case "session_event":
         return checkSessionEvent(body, context);
+      case "session_update":
+        return checkSessionUpdate(body);
+      case "if_match_required":
+        return context.headers.get("if-match") ? ok : refuse("If-Match is required");
+      case "session_resource":
+        return checkSessionResource(body);
     }
   },
 };

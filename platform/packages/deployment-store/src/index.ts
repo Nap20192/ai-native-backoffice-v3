@@ -46,6 +46,29 @@ export interface ListDeploymentRecords {
   createdAtOrBefore?: string;
   status?: "active" | "paused";
   position?: DeploymentListPosition;
+  /** Filters for dependency checks (docs/plans/crud.md, 1.3). */
+  environmentId?: string;
+  fileId?: string;
+  memoryStoreId?: string;
+  vaultId?: string;
+}
+
+/** True when the deployment matches the reference filters of a list. */
+export function deploymentReferences(
+  deployment: Deployment,
+  filter: Pick<ListDeploymentRecords, "environmentId" | "fileId" | "memoryStoreId" | "vaultId">,
+): boolean {
+  return (filter.environmentId === undefined
+      || deployment.environmentId === filter.environmentId)
+    && (filter.fileId === undefined
+      || deployment.resources.some((resource) =>
+        resource.kind === "file" && resource.fileId === filter.fileId))
+    && (filter.memoryStoreId === undefined
+      || deployment.resources.some((resource) =>
+        resource.kind === "memory_store"
+        && resource.memoryStoreId === filter.memoryStoreId))
+    && (filter.vaultId === undefined
+      || deployment.vaultIds.includes(filter.vaultId));
 }
 
 export interface DeploymentStore {

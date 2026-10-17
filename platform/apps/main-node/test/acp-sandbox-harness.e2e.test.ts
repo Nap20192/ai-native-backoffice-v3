@@ -179,12 +179,19 @@ describe("ACP sandbox harness", () => {
       await harness.run(first);
       await harness.run(createContext(agent, runtime, "second"));
 
-      await expect(sandbox.readFile("/workspace/AGENTS.md")).resolves.toBe(
-        "Always answer from the sandbox ACP process.\n",
-      );
+      // An unknown client gets the system prompt in front of the first
+      // prompt of its process (docs/plans/environments.md, 4.4), not a file.
+      await expect(sandbox.readFile("/workspace/AGENTS.md")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       expect(events.filter((event) => event.type === "agent.message")).toEqual([
         expect.objectContaining({
-          content: [{ type: "text", text: "sandbox-acp:1:first" }],
+          content: [{
+            type: "text",
+            text: "sandbox-acp:1:<openma-platform-instructions>\n"
+              + "Always answer from the sandbox ACP process.\n"
+              + "</openma-platform-instructions>\n\nfirst",
+          }],
         }),
         expect.objectContaining({
           content: [{ type: "text", text: "sandbox-acp:2:second" }],
@@ -315,7 +322,12 @@ describe("ACP sandbox harness", () => {
 
     expect(events.filter((event) => event.type === "agent.message")).toEqual([
       expect.objectContaining({
-        content: [{ type: "text", text: "e2b-acp:1:first" }],
+        content: [{
+          type: "text",
+          text: "e2b-acp:1:<openma-platform-instructions>\n"
+            + "Keep the ACP process alive across E2B turns.\n"
+            + "</openma-platform-instructions>\n\nfirst",
+        }],
       }),
       expect.objectContaining({
         content: [{ type: "text", text: "e2b-acp:2:second" }],

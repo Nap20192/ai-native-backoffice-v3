@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { CheckIcon, CopyIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  CheckIcon,
+  CopyIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -13,10 +21,13 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PopoverContent } from "@/components/ui/popover";
 
-import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { DangerDialog } from "../../components/DangerDialog";
 import { DataTable, type ColumnDef } from "../../components/DataTable";
 import { EmptyState } from "../../components/EmptyState";
+import { FacetedFilter } from "../../components/FacetedFilter";
+import { FilterChip } from "../../components/FilterChip";
 import { LoadError } from "../../components/LoadError";
 import { Page } from "../../components/Page";
 import { PageHeader } from "../../components/PageHeader";
@@ -25,13 +36,28 @@ import { HARNESS_CARD_DRAFT_STATE_KEY } from "../../lib/assistant/drafts";
 import { useHarnesses, type HarnessEntry } from "../../lib/catalog-api";
 import {
   isHarnessCardsUnsupported,
+  useArchiveHarnessCard,
   useDeleteHarnessCard,
+  useUnarchiveHarnessCard,
   useHarnessCards,
   type HarnessCard,
 } from "../../lib/harness-cards-api";
 import { formatDate, formatDateTime } from "../agents/format";
 import { harnessLabel, protocolLabel, statusLabel } from "../agents/harness-text";
 import { HarnessCardDialog } from "./HarnessCardDialog";
+
+type StatusValue = "active" | "archived" | "any";
+
+const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
+  { value: "active", label: "Активные" },
+  { value: "archived", label: "В архиве" },
+  { value: "any", label: "Все" },
+];
+
+/** Ревизия карточки для `If-Match`: `updated_at` (docs/plans/crud.md, 1.4). */
+function cardRevision(card: HarnessCard): string {
+  return card.updated_at ?? card.created_at;
+}
 
 const DESCRIPTION =
   "Программа, которая ведёт ход агента. Встроенные варианты есть всегда, свой harness запускается в VM окружения по протоколу ACP.";
@@ -190,13 +216,21 @@ function PackageChips({ install }: { install: HarnessCard["install"] }) {
 /**
  * Страница «Harness» (раздел 6.7 контракта docs/plans/models-harness.md).
  * Сверху встроенные записи каталога только для чтения, ниже свои карточки в
- * таблице с созданием, правкой и удалением. Агенты, которые уже используют
- * удалённую карточку, продолжают работать, поэтому удаление только скрывает её.
+ * таблице с созданием, правкой, архивом и удалением. Архив обратим, удаление
+ * нет. Окна показывают, какие агенты мешают или будут затронуты.
  */
 export function HarnessCardsPage() {
   const [search, setSearch] = useState("");
-  const cards = useHarnessCards({ q: search });
+  const [status, setStatus] = useState<StatusValue>("active");
+  const cards = useHarnessCards({ q: search, include_archived: status !== "active" });
+  const archive = useArchiveHarnessCard();
+  const unarchive = useUnarchiveHarnessCard();
   const remove = useDeleteHarnessCard();
+  const visibleCards = useMemo(
+    () =>
+      status === "archived" ? cards.items.filter((card) => card.archived_at) : cards.items,
+    [cards.items, status],
+  );
   const unsupported = isHarnessCardsUnsupported(cards.error);
 
   // Цель окна не сбрасываем при закрытии: текст окна не должен пропасть, пока
@@ -218,23 +252,17 @@ export function HarnessCardsPage() {
     setDialog({ open: true, card: null, draft: raw });
     navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
   }, [location.state, location.pathname, location.search, navigate]);
+  const [archiveTarget, setArchiveTarget] = useState<HarnessCard | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<HarnessCard | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const openCreate = () => setDialog({ open: true, card: null, draft: undefined });
   const openEdit = (card: HarnessCard) => setDialog({ open: true, card });
-  const askDelete = (card: HarnessCard) => {
-    setDeleteTarget(card);
-    setDeleteOpen(true);
-  };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
+  const restore = async (card: HarnessCard) => {
     try {
-      await remove.mutateAsync(deleteTarget.id);
-      setDeleteOpen(false);
+      await unarchive.mutateAsync({ id: card.id, ifMatch: cardRevision(card) });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось удалить harness");
+      toast.error(error instanceof Error ? error.message : "Не удалось вернуть harness из архива");
     }
   };
 
@@ -294,7 +322,12 @@ export function HarnessCardsPage() {
         accessorKey: "status",
         header: "Статус",
         size: 140,
-        cell: () => <Badge variant="neutral">{statusLabel("unverified")}</Badge>,
+        cell: ({ row }) =>
+          row.original.archived_at ? (
+            <Badge variant="neutral">В архиве</Badge>
+          ) : (
+            <Badge variant="neutral">{statusLabel("unverified")}</Badge>
+          ),
       },
       {
         id: "updated",
@@ -370,7 +403,28 @@ export function HarnessCardsPage() {
             <div className="[&_.console-list-page]:h-auto [&_.console-list-page]:min-h-0 [&_.console-list-page]:p-0">
               <DataTable<HarnessCard>
                 columns={columns}
-                data={cards.items}
+                data={visibleCards}
+                filters={
+                  <FilterChip
+                    label="Статус"
+                    active={status !== "active"}
+                    display={
+                      status === "active"
+                        ? undefined
+                        : STATUS_OPTIONS.find((option) => option.value === status)?.label
+                    }
+                    onClear={() => setStatus("active")}
+                  >
+                    <PopoverContent align="start" sideOffset={4} collisionPadding={8} className="w-48 p-0">
+                      <FacetedFilter
+                        options={STATUS_OPTIONS}
+                        value={status}
+                        onValueChange={(value) => setStatus(value as StatusValue)}
+                        searchPlaceholder="Найти статус…"
+                      />
+                    </PopoverContent>
+                  </FilterChip>
+                }
                 getRowId={(card) => card.id}
                 loading={cards.isLoading}
                 defaultHiddenColumns={["created"]}
@@ -379,18 +433,34 @@ export function HarnessCardsPage() {
                 onSearchChange={setSearch}
                 onRowClick={openEdit}
                 rowActions={(card) => [
-                  { label: "Изменить", icon: <PencilIcon />, onSelect: () => openEdit(card) },
+                  {
+                    label: "Изменить",
+                    icon: <PencilIcon />,
+                    disabled: Boolean(card.archived_at),
+                    onSelect: () => openEdit(card),
+                  },
+                  card.archived_at
+                    ? {
+                        label: "Вернуть из архива",
+                        icon: <ArchiveRestoreIcon />,
+                        onSelect: () => void restore(card),
+                      }
+                    : {
+                        label: "Архивировать",
+                        icon: <ArchiveIcon />,
+                        onSelect: () => setArchiveTarget(card),
+                      },
                   {
                     label: "Удалить",
                     icon: <Trash2Icon />,
                     destructive: true,
-                    onSelect: () => askDelete(card),
+                    onSelect: () => setDeleteTarget(card),
                   },
                 ]}
                 hasMore={cards.hasMore}
                 loadingMore={cards.isLoadingMore}
                 onLoadMore={cards.loadMore}
-                emptyTitle={search ? "Harness не найдены" : "Своих harness нет"}
+                emptyTitle={search ? "Harness не найдены" : status === "archived" ? "В архиве пусто" : "Своих harness нет"}
                 emptySubtitle={
                   search
                     ? "Измените поисковый запрос."
@@ -417,15 +487,33 @@ export function HarnessCardsPage() {
         onClose={() => setDialog((current) => ({ ...current, open: false }))}
       />
 
-      <ConfirmDialog
-        open={deleteOpen}
+      <DangerDialog
+        open={archiveTarget !== null}
+        operation="archive"
+        target={archiveTarget ? { kind: "harness_card", id: archiveTarget.id } : null}
+        ifMatch={archiveTarget ? cardRevision(archiveTarget) : undefined}
+        title={
+          archiveTarget
+            ? `Отправить harness «${archiveTarget.name}» в архив?`
+            : "Отправить harness в архив?"
+        }
+        message="Новых агентов на нём создать будет нельзя."
+        confirmLabel="В архив"
+        run={(options) => archive.mutateAsync({ id: archiveTarget!.id, ifMatch: options.ifMatch })}
+        onDone={() => setArchiveTarget(null)}
+        onClose={() => setArchiveTarget(null)}
+      />
+
+      <DangerDialog
+        open={deleteTarget !== null}
+        operation="delete"
+        target={deleteTarget ? { kind: "harness_card", id: deleteTarget.id } : null}
+        ifMatch={deleteTarget ? cardRevision(deleteTarget) : undefined}
         title={deleteTarget ? `Удалить harness «${deleteTarget.name}»?` : "Удалить harness?"}
-        message="Новых агентов на нём создать будет нельзя. Агенты, которые его уже используют, продолжат работать."
-        confirmLabel="Удалить"
-        destructive
-        busy={remove.isPending}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setDeleteOpen(false)}
+        message="Любой агент с этим harness, в том числе в архиве и в старых версиях, мешает удалению."
+        run={(options) => remove.mutateAsync({ id: deleteTarget!.id, ifMatch: options.ifMatch })}
+        onDone={() => setDeleteTarget(null)}
+        onClose={() => setDeleteTarget(null)}
       />
     </Page>
   );

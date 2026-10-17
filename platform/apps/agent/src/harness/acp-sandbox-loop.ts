@@ -33,6 +33,7 @@ import {
   buildAcpSemanticRecoveryPrompt,
   type AcpSemanticRecoveryReason,
 } from "./acp-recovery";
+import { prepareAcpInstructions } from "./acp-instructions";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_TURN_TIMEOUT_MS = 5 * 60_000;
@@ -57,12 +58,9 @@ export class AcpSandboxHarness implements HarnessInterface {
   #preparation: AcpSandboxAgentPreparation | null = null;
   #semanticRecoveryReason: AcpSemanticRecoveryReason | null = null;
 
-  async onSessionInit(ctx: HarnessContext, runtime: HarnessRuntime): Promise<void> {
-    const prompt = ctx.systemPrompt.trimEnd();
-    if (prompt) {
-      await runtime.sandbox.writeFile("/workspace/AGENTS.md", `${prompt}\n`);
-    }
-  }
+  // No onSessionInit: run() hands ctx.systemPrompt to every process it
+  // starts, through the client's own channel (acp-instructions.ts). main-node
+  // never calls onSessionInit, and Claude Code does not read AGENTS.md.
 
   shouldCompact(): boolean {
     return false;
@@ -145,6 +143,8 @@ export class AcpSandboxHarness implements HarnessInterface {
       model: typeof ctx.agent.model === "string" ? ctx.agent.model : ctx.agent.model.id,
     });
     try {
+      // Set only for a process started in this run (a new process).
+      let instructionsPrefix = "";
       if (!this.#session) {
         const acpRuntime = createAcpRuntime({
           type: "sandbox",
@@ -197,6 +197,15 @@ export class AcpSandboxHarness implements HarnessInterface {
           }),
           servers: ctx.agent.mcp_servers ?? [],
         });
+        // Before the process starts: the client reads its file at startup,
+        // and _meta goes with session/new, session/resume and session/load.
+        const instructions = await prepareAcpInstructions({
+          sandbox: runtime.sandbox,
+          agent: config.agent,
+          cwd: preparation.launch.cwd,
+          systemPrompt: ctx.systemPrompt,
+        });
+        instructionsPrefix = instructions.promptPrefix;
         this.#session = await acpRuntime.start({
           agent: {
             ...preparation.launch,
@@ -216,6 +225,9 @@ export class AcpSandboxHarness implements HarnessInterface {
             ? { resumeAcpSessionId: this.#resumeAcpSessionId }
             : {}),
           ...(mcpServers.length === 0 ? {} : { mcpServers }),
+          ...(instructions.sessionRequestMeta === undefined
+            ? {}
+            : { sessionRequestMeta: instructions.sessionRequestMeta }),
         });
         this.#configKey = configKey;
         this.#launchEnvKey = launchEnvKey;
@@ -231,13 +243,13 @@ export class AcpSandboxHarness implements HarnessInterface {
 
       const session = this.#session;
       const recoveryReason = this.#semanticRecoveryReason;
-      const promptText = recoveryReason
+      const promptText = instructionsPrefix + (recoveryReason
         ? buildAcpSemanticRecoveryPrompt(
             runtime.history.getEvents(),
             ctx.userMessage,
             { reason: recoveryReason },
           )
-        : text;
+        : text);
       if (recoveryReason) {
         runtime.broadcast({
           type: "session.warning",

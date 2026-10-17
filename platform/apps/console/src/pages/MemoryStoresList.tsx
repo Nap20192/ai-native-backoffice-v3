@@ -1,12 +1,12 @@
 import { Input } from "@/components/ui/input";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { ArchiveIcon, SearchXIcon, TrashIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, SearchXIcon, TrashIcon, PlusIcon } from "lucide-react";
 import type { BetaManagedAgentsMemoryStore as MemoryStore } from "@anthropic-ai/sdk/resources/beta/memory-stores/memory-stores";
 
 import { useInfiniteApiQuery } from "../lib/useApiQuery";
 import { useManagedApi } from "../lib/useManagedApi";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DangerDialog } from "../components/DangerDialog";
 import { DataTable, type ColumnDef } from "../components/DataTable";
 import { Field } from "../components/Field";
 import { FacetedFilter } from "../components/FacetedFilter";
@@ -46,9 +46,10 @@ export function MemoryStoresList() {
   const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  // Удаление через ConfirmDialog (правило 11 DDC): window.confirm запрещён.
+  // Архив и удаление идут через DangerDialog со списком зависимостей. Цель
+  // не сбрасываем при закрытии: текст окна не должен пропасть, пока оно уходит.
+  const [archiveTarget, setArchiveTarget] = useState<MemoryStore | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MemoryStore | null>(null);
-  const [deleting, setDeleting] = useState(false);
 
   const storesParams = useMemo(
     () => ({
@@ -108,17 +109,12 @@ export function MemoryStoresList() {
     }
   };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
+  const restoreStore = async (store: MemoryStore) => {
     try {
-      await managedApi.memoryStores.delete(deleteTarget.id);
+      await managedApi.memoryStores.unarchive(store.id);
       refreshStores();
     } catch {
       // Ошибку показывает общий обработчик запросов.
-    } finally {
-      setDeleting(false);
-      setDeleteTarget(null);
     }
   };
 
@@ -236,19 +232,17 @@ export function MemoryStoresList() {
       getRowId={(s) => s.id}
       onRowClick={(s) => nav(`/memory/${s.id}`)}
       rowActions={(store) => [
-        {
-          label: t.common.archive,
-          icon: <ArchiveIcon className="size-4" />,
-          disabled: Boolean(store.archived_at),
-          onSelect: async () => {
-            try {
-              await managedApi.memoryStores.archive(store.id);
-              refreshStores();
-            } catch {
-              // Ошибку показывает общий обработчик запросов.
+        store.archived_at
+          ? {
+              label: t.common.unarchive,
+              icon: <ArchiveRestoreIcon className="size-4" />,
+              onSelect: () => void restoreStore(store),
             }
-          },
-        },
+          : {
+              label: t.common.archive,
+              icon: <ArchiveIcon className="size-4" />,
+              onSelect: () => setArchiveTarget(store),
+            },
         {
           label: t.common.delete,
           icon: <TrashIcon className="size-4" />,
@@ -280,15 +274,34 @@ export function MemoryStoresList() {
       }
       columns={columns}
     >
-      <ConfirmDialog
+      <DangerDialog
+        open={archiveTarget !== null}
+        operation="archive"
+        target={archiveTarget ? { kind: "memory_store", id: archiveTarget.id } : null}
+        etagPath={archiveTarget ? `/v1/memory_stores/${archiveTarget.id}` : undefined}
+        title="Отправить хранилище памяти в архив?"
+        message={archiveTarget ? `Хранилище «${archiveTarget.name}» станет доступно только для чтения.` : undefined}
+        confirmLabel={t.common.archive}
+        run={(options) => managedApi.memoryStores.archive(archiveTarget!.id, options)}
+        onDone={() => {
+          setArchiveTarget(null);
+          refreshStores();
+        }}
+        onClose={() => setArchiveTarget(null)}
+      />
+      <DangerDialog
         open={deleteTarget !== null}
+        operation="delete"
+        target={deleteTarget ? { kind: "memory_store", id: deleteTarget.id } : null}
+        etagPath={deleteTarget ? `/v1/memory_stores/${deleteTarget.id}` : undefined}
         title={`Удалить хранилище «${deleteTarget?.name ?? ""}»?`}
-        message="Действие нельзя отменить."
-        confirmLabel="Удалить"
-        destructive
-        busy={deleting}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setDeleteTarget(null)}
+        message="Записи и их версии удалятся вместе с хранилищем."
+        run={(options) => managedApi.memoryStores.delete(deleteTarget!.id, options)}
+        onDone={() => {
+          setDeleteTarget(null);
+          refreshStores();
+        }}
+        onClose={() => setDeleteTarget(null)}
       />
 
       <Modal

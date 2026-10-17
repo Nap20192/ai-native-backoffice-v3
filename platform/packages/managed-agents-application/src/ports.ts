@@ -29,6 +29,7 @@ import type { VaultsApplicationPort } from "./ports/vaults";
 export * from "./ports/agents";
 export * from "./ports/common";
 export * from "./ports/credentials";
+export * from "./ports/dependencies";
 export * from "./ports/deployment-runs";
 export * from "./ports/deployments";
 export * from "./ports/dreams";

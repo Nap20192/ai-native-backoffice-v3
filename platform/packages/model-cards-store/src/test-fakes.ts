@@ -199,6 +199,7 @@ export class InMemoryModelCardRepo implements ModelCardRepo {
     if (update.apiKeyCipher !== undefined) row.api_key_cipher = update.apiKeyCipher;
     if (update.apiKeyPreview !== undefined) row.api_key_preview = update.apiKeyPreview;
     if (update.isDefault !== undefined) row.is_default = update.isDefault;
+    if (update.archivedAt !== undefined) row.archived_at = update.archivedAt;
     row.updated_at = update.updatedAt;
 
     // Final partial-UNIQUE assertion — should never fire on the service path.

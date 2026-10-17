@@ -10,6 +10,17 @@ interface StoredCredential {
 class InMemoryCredentialPersistence {
   readonly records = new Map<string, StoredCredential>();
 
+  async deleteAllInVault(input: { workspaceId: string; vaultId: string }) {
+    let deleted = 0;
+    for (const [key, record] of this.records) {
+      if (key.startsWith(`${input.workspaceId}:`) && record.credential.vaultId === input.vaultId) {
+        this.records.delete(key);
+        deleted += 1;
+      }
+    }
+    return { deleted };
+  }
+
   async insert(input: { workspaceId: string; credential: Credential }) {
     const record = { credential: structuredClone(input.credential), revision: 1 };
     this.records.set(

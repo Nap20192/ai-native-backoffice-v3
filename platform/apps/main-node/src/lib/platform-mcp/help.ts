@@ -17,6 +17,7 @@ export const HELP_TOPICS = [
   "model_card",
   "harness",
   "outcome",
+  "danger",
   "limits",
 ] as const;
 
@@ -38,8 +39,8 @@ const RULES: Record<Topic, { text: string; tools: string[]; schema?: SchemaKind 
     schema: "environment",
   },
   session: {
-    text: "create_session создаёт пустую сессию в покое. Первое сообщение отправляет send_message отдельной карточкой в следующем ходе. Второе сообщение, прерывание и архив делает человек в консоли.",
-    tools: ["create_session", "send_message", "get_session_events", "get_trajectory"],
+    text: "create_session создаёт пустую сессию в покое. Первое сообщение отправляет send_message отдельной карточкой в следующем ходе. update_session меняет название и метаданные, ключи oma_* меняет платформа. add_session_resource подключает файл, delete_object с kind session_resource убирает ресурс. Архив и удаление сессии идут через archive_object и delete_object, ход в работе сервер остановит. Второе сообщение и прерывание делает человек в консоли. Свою сессию ассистент не меняет.",
+    tools: ["create_session", "send_message", "update_session", "add_session_resource", "get_session_events", "get_trajectory"],
     schema: "session",
   },
   skill: {
@@ -47,8 +48,8 @@ const RULES: Record<Topic, { text: string; tools: string[]; schema?: SchemaKind 
     tools: ["create_skill", "create_skill_version", "read_content"],
   },
   deployment: {
-    text: "Деплоймент создаётся сразу на паузе. Запускает и снимает с паузы человек в консоли. Правка возможна только у деплоймента на паузе.",
-    tools: ["create_deployment", "update_deployment"],
+    text: "Деплоймент создаётся сразу на паузе. pause_deployment ставит на паузу, unpause_deployment снимает с паузы, run_deployment запускает сейчас отдельной карточкой: запуск создаёт сессию, агент сразу начинает работу. Правка работающего деплоймента идёт с предупреждением: новую конфигурацию возьмёт следующий запуск. Архив деплоймента идёт через archive_object, из архива он возвращается на паузе. Удаления деплоймента нет.",
+    tools: ["create_deployment", "update_deployment", "pause_deployment", "unpause_deployment", "run_deployment", "archive_object", "unarchive_object"],
     schema: "deployment",
   },
   memory: {
@@ -69,8 +70,12 @@ const RULES: Record<Topic, { text: string; tools: string[]; schema?: SchemaKind 
     tools: ["preview_change"],
     schema: "outcome",
   },
+  danger: {
+    text: "Архив и удаление это опасные операции. Перед карточкой вызови get_dependencies: blocking мешает операции, affected она затронет. Пока blocking не пуст, операция вне первой версии: предложи пользователю сначала убрать эти зависимости. Одна опасная операция идёт одной карточкой, в apply_changes она не входит. Удаление нельзя отменить, объект из архива возвращает unarchive_object. Свой агент, своё окружение и свой разговор ассистент не трогает. Хранилища секретов, учётные данные, ключи API и участников меняет человек в консоли.",
+    tools: ["get_dependencies", "archive_object", "unarchive_object", "delete_object"],
+  },
   limits: {
-    text: "Ответ до 8 КБ, длинный список приходит с truncated и готовым следующим вызовом. Секреты в ответах заменены на [скрыто]. Короткий секрет скрывает те же знаки во всех ответах, поэтому секреты держи только в хранилище секретов. Вне первой версии: прерывание, архив, удаление, outcome, запуск деплойментов, второе сообщение в сессию.",
+    text: "Ответ до 8 КБ, длинный список приходит с truncated и готовым следующим вызовом. Секреты в ответах заменены на [скрыто]. Короткий секрет скрывает те же знаки во всех ответах, поэтому секреты держи только в хранилище секретов. Вне первой версии: прерывание хода, второе сообщение в сессию, outcome, удаление деплоймента, хранилища секретов и учётные данные. Архив, удаление и запуск деплоймента теперь есть, они ждут подтверждения.",
     tools: [],
   },
 };

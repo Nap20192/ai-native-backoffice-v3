@@ -6,11 +6,14 @@
 import { createHash } from "node:crypto";
 import { maxOpClass, type OpClass } from "./ports";
 import {
+  dependencyDigest,
   dumpYaml,
   formatSchemaError,
   hasKnownSecret,
   isRecord,
+  targetKindOf,
   type CallContext,
+  type DependencyReport,
   type OpContext,
   type OpPlan,
   type ToolDef,
@@ -42,6 +45,10 @@ export interface PreviewOpView {
   /** Agent edit: the version now and the version the write makes. */
   version_from: number | null;
   version_to: number | null;
+  /** Archive and delete: what blocks the operation and what it changes (crud.md 3.4). */
+  dependencies: DependencyReport | null;
+  /** Delete: the card says «Это нельзя отменить». */
+  irreversible: boolean;
 }
 
 export interface PreviewOp {
@@ -105,7 +112,7 @@ function objectName(op: PreparedOp, plan: OpPlan): string | null {
 /** An agent edit makes the next version: the card says «версия 3 станет 4». */
 function agentVersions(op: PreparedOp, plan: OpPlan): { version_from: number | null; version_to: number | null } {
   const from = plan.revision === null ? Number.NaN : Number(plan.revision);
-  if (op.tool.op?.targetKind !== "agent" || plan.cls !== "update" || !Number.isInteger(from)) {
+  if (targetKindOf(op.tool, op.args) !== "agent" || op.tool.op?.kindOf || plan.cls !== "update" || !Number.isInteger(from)) {
     return { version_from: null, version_to: null };
   }
   return { version_from: from, version_to: from + 1 };
@@ -115,9 +122,11 @@ function view(ctx: CallContext, op: PreparedOp, plan: OpPlan, audience: PreviewA
   const beforeYaml = plan.before === null || plan.before === undefined ? null : dumpYaml(plan.before);
   let afterYaml = dumpYaml(plan.after);
   let details = plan.details ?? null;
+  let dependencies = plan.dependencies ?? null;
   if (audience === "console") {
     afterYaml = ctx.libs.scan(afterYaml, ctx.known).text;
     if (details) details = JSON.parse(ctx.libs.scan(JSON.stringify(details), ctx.known).text);
+    if (dependencies) dependencies = JSON.parse(ctx.libs.scan(JSON.stringify(dependencies), ctx.known).text);
   } else if (details && "card" in details) {
     // The card block repeats the arguments for the console; the model has them.
     const { card: _card, ...rest } = details;
@@ -126,7 +135,7 @@ function view(ctx: CallContext, op: PreparedOp, plan: OpPlan, audience: PreviewA
   return {
     op_index: op.opIndex,
     tool: op.tool.name,
-    target_kind: op.tool.op?.targetKind ?? "",
+    target_kind: targetKindOf(op.tool, op.args) ?? "",
     target_id: plan.targetId,
     class: plan.cls,
     reason: plan.reason,
@@ -141,6 +150,8 @@ function view(ctx: CallContext, op: PreparedOp, plan: OpPlan, audience: PreviewA
     args_stale: plan.argsStale === true,
     name: objectName(op, plan),
     ...agentVersions(op, plan),
+    dependencies,
+    irreversible: plan.irreversible === true,
   };
 }
 
@@ -184,7 +195,7 @@ export async function buildPreview(
       op_index: op.opIndex,
       tool: op.tool.name,
       args: op.args,
-      target_kind: op.tool.op?.targetKind ?? null,
+      target_kind: targetKindOf(op.tool, op.args),
       target_id: plan.targetId,
       revision: plan.revision,
       class: plan.cls,
@@ -195,6 +206,9 @@ export async function buildPreview(
       not_found: plan.notFound ?? null,
       invalid: plan.invalid ?? null,
       args_stale: plan.argsStale === true,
+      // A new dependency after the card changes the digest (crud.md 3.4).
+      dependencies: dependencyDigest(plan.dependencies),
+      irreversible: plan.irreversible === true,
     })),
     secret_in_args: secretInArgs,
   });
@@ -234,6 +248,8 @@ export function previewJson(preview: Preview): Record<string, unknown> {
     after_yaml: single?.after_yaml ?? null,
     diff: single?.diff ?? null,
     warnings: single?.warnings ?? [],
+    dependencies: single?.dependencies ?? null,
+    irreversible: single?.irreversible ?? false,
     operations: preview.views,
     session: card("create_session"),
     message: card("send_message"),

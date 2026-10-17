@@ -1,16 +1,21 @@
-import type { SqlClient } from "@open-managed-agents/sql-client";
-import type {
-  AgentStore,
-  AgentRecord,
-  ArchiveAgentRecord,
-  ArchiveAgentRecordResult,
-  FindAgentVersionRecord,
-  FindCurrentAgentRecord,
-  InsertAgentRecord,
-  ListAgentRecords,
-  ListAgentVersionRecords,
-  ReplaceAgentRecord,
-  ReplaceAgentRecordResult,
+import { containsLikePattern, type SqlClient } from "@open-managed-agents/sql-client";
+import {
+  agentReferences,
+  type AgentStore,
+  type AgentRecord,
+  type ArchiveAgentRecord,
+  type ArchiveAgentRecordResult,
+  type DeleteAgentRecordResult,
+  type FindAgentVersionRecord,
+  type FindCurrentAgentRecord,
+  type InsertAgentRecord,
+  type ListAgentRecords,
+  type ListAgentVersionRecords,
+  type ListReferencingAgentRecords,
+  type ReplaceAgentRecord,
+  type ReplaceAgentRecordResult,
+  type UnarchiveAgentRecord,
+  type UnarchiveAgentRecordResult,
 } from "@open-managed-agents/agent-store";
 
 interface AgentRow {
@@ -264,5 +269,111 @@ export class SqlAgentStore implements AgentStore {
     return (result.results ?? []).map(
       (row) => JSON.parse(row.snapshot) as AgentRecord,
     );
+  }
+
+  async unarchiveCurrent(
+    input: UnarchiveAgentRecord,
+  ): Promise<UnarchiveAgentRecordResult> {
+    const updatedAt = timestamp(input.updatedAt);
+    const result = await this.client
+      .prepare(
+        `UPDATE managed_agents
+            SET archived_at = NULL, updated_at = ?
+          WHERE workspace_id = ? AND id = ?`,
+      )
+      .bind(updatedAt, input.workspaceId, input.agentId)
+      .run();
+    if (result.meta.changes === 0) return { type: "not_found" };
+    const restored = await this.findCurrent({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+    });
+    if (restored === null) throw new Error("Agent vanished after unarchive");
+    return { type: "unarchived", agent: restored };
+  }
+
+  async deleteCurrent(
+    input: FindCurrentAgentRecord,
+  ): Promise<DeleteAgentRecordResult> {
+    const results = await this.client.batch([
+      this.client
+        .prepare(
+          `DELETE FROM managed_agent_versions
+            WHERE workspace_id = ? AND agent_id = ?`,
+        )
+        .bind(input.workspaceId, input.agentId),
+      this.client
+        .prepare(
+          `DELETE FROM managed_agents
+            WHERE workspace_id = ? AND id = ?`,
+        )
+        .bind(input.workspaceId, input.agentId),
+    ]);
+    const changes = results[1]?.meta.changes;
+    if (changes === 0) return { type: "not_found" };
+    if (changes !== 1) {
+      throw new Error(`Agent deletion affected ${changes ?? "missing"} rows`);
+    }
+    return { type: "deleted" };
+  }
+
+  /**
+   * LIKE on the stored document narrows the rows, then the exact filter runs
+   * on the parsed agent. The limit applies after the exact filter.
+   */
+  async listReferencing(
+    input: ListReferencingAgentRecords,
+  ): Promise<AgentRecord[]> {
+    if (!Number.isInteger(input.limit) || input.limit < 1) {
+      throw new Error("Agent list limit must be a positive integer");
+    }
+    const needles = [input.skillId, input.skillVersion, input.model, input.harness]
+      .filter((value): value is string => value !== undefined);
+    const conditions = ["workspace_id = ?"];
+    const parameters: Array<string | number> = [input.workspaceId];
+    if (!input.includeArchived) conditions.push("archived_at IS NULL");
+    for (const needle of needles) {
+      conditions.push("document LIKE ? ESCAPE '!'");
+      parameters.push(containsLikePattern(needle));
+    }
+    const currentRows = await this.client
+      .prepare(
+        `SELECT id, document AS config, version, created_at, updated_at, archived_at
+           FROM managed_agents
+          WHERE ${conditions.join(" AND ")}`,
+      )
+      .bind(...parameters)
+      .all<AgentRow>();
+    const candidates = (currentRows.results ?? []).map(toAgent);
+    if (input.allVersions) {
+      const versionConditions = ["versions.workspace_id = ?"];
+      const versionParameters: Array<string | number> = [input.workspaceId];
+      if (!input.includeArchived) versionConditions.push("agents.archived_at IS NULL");
+      for (const needle of needles) {
+        versionConditions.push("versions.document LIKE ? ESCAPE '!'");
+        versionParameters.push(containsLikePattern(needle));
+      }
+      const versionRows = await this.client
+        .prepare(
+          `SELECT versions.document AS snapshot
+             FROM managed_agent_versions AS versions
+             JOIN managed_agents AS agents
+               ON agents.workspace_id = versions.workspace_id
+              AND agents.id = versions.agent_id
+            WHERE ${versionConditions.join(" AND ")}`,
+        )
+        .bind(...versionParameters)
+        .all<AgentVersionRow>();
+      candidates.push(
+        ...(versionRows.results ?? []).map(
+          (row) => JSON.parse(row.snapshot) as AgentRecord,
+        ),
+      );
+    }
+    return candidates
+      .filter((agent) => agentReferences(agent, input))
+      .sort((left, right) =>
+        left.id.localeCompare(right.id) || right.version - left.version)
+      .slice(0, input.limit);
   }
 }

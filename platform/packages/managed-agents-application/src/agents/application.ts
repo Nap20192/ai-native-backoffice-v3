@@ -5,6 +5,10 @@ import type {
   AgentView,
   ArchiveAgentCommand,
   ArchiveAgentResult,
+  DeleteAgentCommand,
+  DeleteAgentResult,
+  UnarchiveAgentCommand,
+  UnarchiveAgentResult,
   CreateAgentCommand,
   CreateAgentResult,
   ListAgentsPage,
@@ -32,6 +36,8 @@ import {
   resolveAgentSkills,
   resolveAgentTools,
 } from "./definition-resolution";
+import { dependencyConflictOf } from "../dependencies/application";
+import type { DependenciesApplicationPort } from "../ports/dependencies";
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -467,6 +473,20 @@ export interface AgentsApplicationServiceDependencies {
   store: AgentStore;
   clock: { now(): Date };
   ids: { nextAgentId(): string };
+  /** Archive and delete check dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
+}
+
+function staleAgentVersion(
+  agentId: string,
+  expectedVersion: number | undefined,
+  version: number,
+): { type: "precondition_failed"; message: string } | null {
+  if (expectedVersion === undefined || expectedVersion === version) return null;
+  return {
+    type: "precondition_failed",
+    message: `Agent ${agentId} is at version ${version}, not ${expectedVersion}`,
+  };
 }
 
 export class AgentsApplicationService implements AgentsApplicationPort {
@@ -672,6 +692,19 @@ export class AgentsApplicationService implements AgentsApplicationPort {
   }
 
   async archiveAgent(command: ArchiveAgentCommand): Promise<ArchiveAgentResult> {
+    const current = await this.dependencies.store.findCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      agentId: command.agentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleAgentVersion(command.agentId, command.expectedVersion, current.version);
+    if (stale !== null) return stale;
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "agent",
+      id: command.agentId,
+      operation: "archive",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.archiveCurrent({
       workspaceId: this.dependencies.workspaceId,
       agentId: command.agentId,
@@ -679,6 +712,48 @@ export class AgentsApplicationService implements AgentsApplicationPort {
     });
     if (result.type === "not_found") return { type: "not_found" };
     return { type: "archived", agent: result.agent };
+  }
+
+  async unarchiveAgent(command: UnarchiveAgentCommand): Promise<UnarchiveAgentResult> {
+    const current = await this.dependencies.store.findCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      agentId: command.agentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleAgentVersion(command.agentId, command.expectedVersion, current.version);
+    if (stale !== null) return stale;
+    if (current.archivedAt === null) return { type: "unarchived", agent: current };
+    const result = await this.dependencies.store.unarchiveCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      agentId: command.agentId,
+      updatedAt: this.dependencies.clock.now().toISOString(),
+    });
+    return result.type === "not_found"
+      ? { type: "not_found" }
+      : { type: "unarchived", agent: result.agent };
+  }
+
+  async deleteAgent(command: DeleteAgentCommand): Promise<DeleteAgentResult> {
+    const current = await this.dependencies.store.findCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      agentId: command.agentId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleAgentVersion(command.agentId, command.expectedVersion, current.version);
+    if (stale !== null) return stale;
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "agent",
+      id: command.agentId,
+      operation: "delete",
+    });
+    if (conflict !== null) return conflict;
+    const result = await this.dependencies.store.deleteCurrent({
+      workspaceId: this.dependencies.workspaceId,
+      agentId: command.agentId,
+    });
+    return result.type === "not_found"
+      ? { type: "not_found" }
+      : { type: "deleted", agentId: command.agentId };
   }
 
   async listAgents(query: ListAgentsQuery): Promise<ListAgentsResult> {

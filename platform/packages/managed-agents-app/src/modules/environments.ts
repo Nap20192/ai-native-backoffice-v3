@@ -13,6 +13,8 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { dependenciesPort } from "./dependency-port";
+
 
 export const environmentStorePort = createPortToken<EnvironmentStore>(
   "managed-agents.store.environments",
@@ -28,7 +30,8 @@ export function environmentsModule(): AppModule {
       idGeneratorPort,
       environmentStorePort,
     ],
-    setup({ port }) {
+    optional: [dependenciesPort],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const clock = port(clockPort);
       const ids = port(idGeneratorPort);
@@ -42,6 +45,7 @@ export function environmentsModule(): AppModule {
             ids: {
               nextEnvironmentId: () => ids.next("environment"),
             },
+            dependencyCheck: optionalPort(dependenciesPort),
           }),
         )],
       };

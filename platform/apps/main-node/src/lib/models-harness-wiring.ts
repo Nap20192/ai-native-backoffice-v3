@@ -30,7 +30,12 @@ import {
   type HarnessReadiness,
 } from "./harness-catalog.js";
 import { MODEL_KEY_ENV_NAMES } from "./acp-env-policy.js";
-import { buildHarnessCardRoutes, createHarnessCardStore, type HarnessCardStore } from "./harness-cards/index.js";
+import {
+  buildHarnessCardRoutes,
+  createHarnessCardStore,
+  type HarnessCardDependencyCheck,
+  type HarnessCardStore,
+} from "./harness-cards/index.js";
 import type { ModelOptionCard } from "./model-options.js";
 import {
   buildSandboxHostedInference,
@@ -99,8 +104,17 @@ export function sandboxProviderId(environment: Readonly<Record<string, string | 
   }
 }
 
-export function buildHarnessCardRoutesFor(wiring: Pick<ModelsHarnessWiring, "cardStore">): Hono {
-  if (wiring.cardStore !== null) return buildHarnessCardRoutes({ store: wiring.cardStore }) as unknown as Hono;
+/** `dependencies` blocks archive and delete of a card that agents use (crud.md, 2.8). */
+export function buildHarnessCardRoutesFor(
+  wiring: Pick<ModelsHarnessWiring, "cardStore">,
+  dependencies?: HarnessCardDependencyCheck,
+): Hono {
+  if (wiring.cardStore !== null) {
+    return buildHarnessCardRoutes({
+      store: wiring.cardStore,
+      ...(dependencies === undefined ? {} : { dependencies }),
+    }) as unknown as Hono;
+  }
   const unsupported = new Hono();
   unsupported.all("*", (c) => c.json({ error: "Свои harness на MySQL не поддерживаются", field: null }, 501));
   return unsupported;

@@ -1,13 +1,14 @@
-import type { SqlClient } from "@open-managed-agents/sql-client";
+import { containsLikePattern, type SqlClient } from "@open-managed-agents/sql-client";
 import type { Deployment, DeploymentResourceSecret } from "@open-managed-agents/domain/deployments";
-import type {
-  DeploymentLocation,
-  DeploymentStore,
-  InsertDeploymentRecord,
-  ListDeploymentRecords,
-  ReplaceDeploymentRecord,
-  ReplaceDeploymentRecordResult,
-  StoredDeployment,
+import {
+  deploymentReferences,
+  type DeploymentLocation,
+  type DeploymentStore,
+  type InsertDeploymentRecord,
+  type ListDeploymentRecords,
+  type ReplaceDeploymentRecord,
+  type ReplaceDeploymentRecordResult,
+  type StoredDeployment,
 } from "@open-managed-agents/deployment-store";
 
 export interface DeploymentResourceSecretCipher {
@@ -208,15 +209,34 @@ export class SqlDeploymentStore implements DeploymentStore {
       conditions.push("(created_at < ? OR (created_at = ? AND id < ?))");
       parameters.push(createdAt, createdAt, input.position.deploymentId);
     }
-    parameters.push(input.limit);
+    // References live only in the document: LIKE narrows the rows, the
+    // exact check runs on the parsed deployment, and the limit applies after it.
+    const documentNeedles = [
+      input.environmentId,
+      input.fileId,
+      input.memoryStoreId,
+      input.vaultId,
+    ].filter((value): value is string => value !== undefined);
+    for (const needle of documentNeedles) {
+      conditions.push("document LIKE ? ESCAPE '!'");
+      parameters.push(containsLikePattern(needle));
+    }
+    const exact = documentNeedles.length > 0;
+    if (!exact) parameters.push(input.limit);
     const rows = await this.client.prepare(
       `SELECT id, document, sealed_resource_secrets, revision,
               created_at, updated_at, archived_at
          FROM managed_deployments
         WHERE ${conditions.join(" AND ")}
         ORDER BY created_at DESC, id DESC
-        LIMIT ?`,
+        ${exact ? "" : "LIMIT ?"}`,
     ).bind(...parameters).all<DeploymentRow>();
-    return Promise.all((rows.results ?? []).map((row) => this.toStored(row)));
+    const selected = exact
+      ? (rows.results ?? [])
+          .filter((row) =>
+            deploymentReferences(JSON.parse(row.document) as Deployment, input))
+          .slice(0, input.limit)
+      : (rows.results ?? []);
+    return Promise.all(selected.map((row) => this.toStored(row)));
   }
 }

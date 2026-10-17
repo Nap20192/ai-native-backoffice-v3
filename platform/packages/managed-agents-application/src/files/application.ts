@@ -1,3 +1,5 @@
+import type { DependenciesApplicationPort } from "../ports/dependencies";
+import { dependencyConflictOf } from "../dependencies/application";
 import type { FileMetadata } from "../domain/file";
 import type {
   DownloadFileQuery,
@@ -21,6 +23,8 @@ export interface FilesApplicationServiceDependencies {
   content: FileContentStore;
   clock: { now(): Date };
   ids: { nextFileId(): string };
+  /** Delete checks dependencies with it (docs/plans/crud.md, 1.3). */
+  dependencyCheck?: DependenciesApplicationPort;
 }
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -144,6 +148,12 @@ export class FilesApplicationService
   }
 
   async deleteFile(command: DeleteFileCommand): Promise<DeleteFileResult> {
+    const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
+      kind: "file",
+      id: command.fileId,
+      operation: "delete",
+    });
+    if (conflict !== null) return conflict;
     const result = await this.dependencies.store.delete({
       workspaceId: this.dependencies.workspaceId,
       fileId: command.fileId,

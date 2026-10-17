@@ -11,18 +11,8 @@ description: Проверка конструктора агентов (копи�
 Папка скилла: `.claude/skills/verify-agent-console/`, дальше `S=.claude/skills/verify-agent-console/scripts`.
 Команды запускаются из корня репозитория `/home/vnkjd/orca/projects/ai-native-backoffice-v3`.
 
-**Статус.** Последний полный прогон 2026-10-16 `20261016-082706`: «ПРОЙДЕН», 90 проверок, 0 провалов. Node 24.21.0, Playwright 1.59.1 с Chromium 1243, fake-модель, LiteBox на `/dev/kvm`, git `8c1a64d` с незакоммиченными правками рабочей копии на 07:40 (хэши изменений: консоль `7b84408f28c237ea`, сервер `b6f30487b05fe73d`). Консоль собрана один раз в прогоне `20261016-074730` и передана прогонам через `VERIFY_CONSOLE_DIR`. Цепочка шла в своём scope с потолком памяти (см. «Память и сессия агента») и от launch до конца cleanup заняла 67 с. Прогон `20261016-081718` на том же снимке тоже прошёл, 60 с из его 132 с ушли на паузу `vac_wait_cool` (CPU 94°C).
-Прогон шёл из снимка дерева, а не из рабочей копии: пока он идёт, другие агенты правят консоль и сервер, и doctor падает на сверке хэша (`20261016-034810` остановлен по этой причине). Снимок это `git clone --shared` в `~/.cache/verify-agent-console/models-harness-snapshot` (раньше `no-cost-snapshot`, `session-snapshot` и `w4-snapshot`). Поверх клона лежат изменённые и новые файлы рабочей копии на 07:40 и папка скилла. Правки волн страницы сессии, трейса и окружений после 07:40 в прогон не попали. Код формы агента, страницы «Harness», guard, прокси модели и карточек harness в снимке тот же, что в рабочей копии на 08:20. Затем идёт `corepack pnpm install --frozen-lockfile --offline` (глобальный `pnpm` на машине сломан). До `8c1a64d` `src/data/` закрывала строка `data/` в `.gitignore`, clone его не переносил, и сборка консоли падала на `../data/mcp-registry` (прогон `20261016-055926`, «ПРЕРВАН на шаге launch»). Теперь папка в git. `sandbox-hosted-inference.ts` не закоммичен, хотя `apps/main-node/src/config.ts` импортирует его с `ae270e4`. Без этого файла сервер из чистого клона падает при старте с `ERR_MODULE_NOT_FOUND` (прогон `20261016-065026`, «ПРЕРВАН на шаге launch»). Скрипты запускаются из снимка, доказательства пишутся в эту папку (`VERIFY_EVIDENCE_ROOT`).
-Прогон главного сценария 2026-10-16 `20261016-140043` (рабочая копия на 14:00): «ПРОЙДЕН». До него `20261016-135739` дал 1 провал `run.ui_files`: с `19ea4b9` файл агента на вкладке «Ресурсы» это кнопка просмотра и кнопка «Скачать», а не ссылка. Проверка теперь жмёт «Скачать» и сверяет содержимое файла.
-Ожидаемый итог на текущем коде: «ПРОЙДЕН», 90 проверок, 0 провалов, строк «внимание» нет. С волной «модели и harness» (2026-10-16) агент создаётся в режиме «Форма» без YAML: модель по ключу сервера и усилие «Низкое» (`agent.form_model_effort`), YAML той же формы туда и обратно (`agent.yaml_roundtrip`), `agent.created` сверяет `model.effort`, `agent.detail_ui` ищет «Усилие: низкое», `run.fake_model_effort` сверяет журнал фейка. Строка «внимание» `agent.form_without_model_cards` ушла вместе с YAML-обходом. С 2026-10-16 добавлены `run.answer_full` и `run.turn_duration` (без правки консоли по срезу ответа и «Работал 0 с» падают они и `run.ui_turn_done`) и `env.networking_allowed_host`. Тогда же страница сессии переделана как в консоли Claude, и сценарий получил её проверки: `session.ui_no_usage`, `session.ui_inspector`, `session.ui_select_sync`, `session.ui_events`, `session.ui_tools`, `session.ui_minimap`, `session.ui_search`, `session.ui_mobile_390`, `run.ui_tool_duration`; `run.ui_tool_card`, `run.ui_tool_output_text`, `run.ui_files` и `session.header_ui` переведены на новую страницу, `run.ui_timeline` («Хронология») убран вместе с вкладкой. `session.ui_no_usage` заменила `session.ui_header_tokens`, которая сверяла чип токенов в шапке с журналом. Владелец отменил токены, стоимость и бюджет, потому что модели внутренние. На консоли без этой правки (`b03c0d9`) проверка падает и перечисляет всё найденное: чипы `tokens` и `cost`, «нет цены», токены и бюджет в подсказках чипов, пункт «Изменить бюджет» в меню, «Стоимость», токены и кнопку бюджета на вкладке «Сессия» (прогон `20261016-065601`).
-
-С 2026-10-17 остался только harness Pi (решение D41 в `docs/decisions-2026-10-17.md`). Сценарий `claude-code` удалён вместе с ACP, с ним ушли `features/claude-code-sandbox.md`, `features/harnesses.md`, `scripts/journey-claude-code.mjs` и `scripts/acp-echo-agent.cjs`. В форме агента больше нет выбора harness: `agent.form_model_effort` проверяет, что поля «Harness» нет, а `agent.detail_ui` не ищет «Встроенный цикл». В сценарии `builder` нет шагов карточки harness, журнал 6.2 держит 9 строк и 5 подтверждений. Первый прогон после удаления `20261017-073421` прерван на шаге launch: `packages/auth/src/index.ts` импортировал удалённый пакет `@open-managed-agents/inference-proxy`, сервер падал с `ERR_MODULE_NOT_FOUND`. Ветку прокси модели и вид учётных данных `sandbox_inference` убрали из `packages/auth`. Прогон `20261017-073641` (рабочая копия на 07:36): «ПРОЙДЕН», 90 проверок, 0 провалов, строк «внимание» нет. Сценарий `crud` `20261017-073825` на той же копии тоже «ПРОЙДЕН», 25 проверок, 0 провалов. Сценарий `builder` после удаления не запускался.
-
-`session.initial_status` и `run.ui_send_label` это настоящие проверки: новая сессия без сообщения должна быть `idle` («Ожидает», без «Агент работает…», кнопка «Отправить сообщение»). Их провал значит, что вернулся дефект 2026-10-16, когда новая сессия создавалась со `status: "running"` и консоль бесконечно показывала «Агент работает…».
-
-Подфункций карты пройдено 26 из 47 (с 2026-10-16 добавлены `agent-model`, `agent-effort`, `session-answer` и подфункции страницы сессии `session-no-usage`, `session-inspector`, `session-inspector-events`, `session-inspector-tools`, `session-select-sync`, `session-minimap`, `session-search`, `session-mobile`; `session-timeline` убрана), остальные 21 идут строками «не проверено» `feature.*`.
-История: 2026-10-15 (`20261015-193100`) было 7 провалов (сеть VM, пакеты окружения, название сессии, реплика в ходе, вывод bash); 2026-10-16 первый прогон после правок (`20261016-001648`) дал 12 провалов из-за ошибки DNS allowlist BoxLite 0.9.0, см. Gotchas в `features/environments.md`; `20261016-021532` дал 13 провалов `run.*` из-за разового сбоя BoxLite `spawn_failed … InitReady` в VM главной сессии (повтор прошёл, см. Gotchas в `features/sessions-and-agent-run.md`); `20261016-040821` дал 1 провал `env.probe.network` из-за того же сбоя на сетевом ходе пробы, повтор `20261016-041400` на том же дереве прошёл. Первый прогон с проверками страницы сессии (`20261016-060057`) дал 2 провала: `session.ui_events` (строка `user.message` во «Событиях» несла id `local-user-…` вместо id журнала, дефект консоли, исправлен, см. Gotchas в `features/sessions-and-agent-run.md`) и `evidence.screens_distinct` (снимок `turn-answer-full` совпадал с `turn-done`: раскрывать стало нечего, исправлено в сценарии). Красные прогоны `session.ui_no_usage` на консоли `b03c0d9` без правки: `20261016-065145` дал 1 провал, но подсказку чипа токенов не нашёл, потому что прочитал подсказку чипа длительности, которая ещё стояла в DOM; меню на снимке вышло полупрозрачным. Оба места исправлены в сценарии (Gotchas в `features/sessions-and-agent-run.md`), и `20261016-065601` дал тот же 1 провал со всеми находками. Прогоны волны «модели и harness»: `20261016-074035` прерван на шаге агента (strict mode violation: «Модель» без `exact` находила и «Вспомогательную модель», исправлено в сценарии); `20261016-074730` оборвался на launch, когда systemd-oomd убил scope Claude вместе с прогоном (см. «Память и сессия агента»); `20261016-080856` дал 1 провал `agent.created`: API отдаёт усилие объектом `{type: "low"}`, а сценарий ждал строку (исправлено в сценарии, Gotchas в `features/agents.md`).
-Если упало что-то другое, исправьте скрипт и карту функций. Проверки не ослабляйте.
+**Ожидаемый итог на текущем коде.** Главный сценарий «ПРОЙДЕН», 90 проверок, 0 провалов, строк «внимание» нет, подфункций карты 26 из 47, остальные идут строками «не проверено» `feature.*` (`20261018-023845`). `mcp-ask` «ПРОЙДЕН», 17 проверок, подфункций 6 из 6, одна строка «внимание» `mcp.ui_waiting_row` (`20261018-024228`). `crud` «ПРОЙДЕН», 25 проверок, подфункций 7 из 7 (`20261017-073825`). `builder` «ПРОВАЛ» на `vb.fake_tools` и шаге 6.6 (`20261018-004607`): сценарий не обновлён после волны crud, причина в `HISTORY.md`.
+Когда прогон упал или проверка ведёт себя неожиданно, прочитайте `HISTORY.md`: там прошлые провалы с причинами, снимки дерева и сбои машины по датам. Если упало то, чего там нет, исправьте скрипт и карту функций. Проверки не ослабляйте.
 
 ## Предусловия
 
@@ -38,9 +28,8 @@ sudo pacman -S sqlite jq                       # sqlite3 и jq нужны launch
 - `/dev/kvm` доступен на чтение и запись (LiteBox поднимает микро-VM).
 - Порты 8791, 8792 и 8793 свободны.
 - Без `playwright install` сценарий берёт самую новую ревизию из `~/.cache/ms-playwright` с `INSTALLATION_COMPLETE` (на этой машине 1243, а не 1217) или `/usr/bin/google-chrome-stable`. Свой путь: `VERIFY_CHROMIUM=<путь>`.
-- `pnpm install` и `playwright install` в прогоне 2026-10-15 не запускались: зависимости уже стояли, Chromium 1217 не скачивался.
 
-**Таймауты инструмента Bash.** По умолчанию команда Bash живёт 120 с, максимум 600 с. Цепочка целиком идёт около 1–2 минут при прогретом кэше, но первый прогон с новым `BOXLITE_HOME` скачивает образ, `vac_wait_cool` может ждать до 10 минут, а таймаут первого хода 900 с. Поэтому цепочку запускайте с `run_in_background: true` (и читайте лог), а не в переднем плане. Если сценарий всё же убьют по таймауту, `cleanup.sh` остановит его процессы: PID сценария и Chromium записаны в `state/pids`.
+**Таймауты инструмента Bash.** По умолчанию команда Bash живёт 120 с, максимум 600 с. Цепочка целиком идёт от 1 до 2 минут при прогретом кэше, но первый прогон с новым `BOXLITE_HOME` скачивает образ, `vac_wait_cool` может ждать до 10 минут, а таймаут первого хода 900 с. Поэтому цепочку запускайте с `run_in_background: true` (и читайте лог), а не в переднем плане. Если сценарий всё же убьют по таймауту, `cleanup.sh` остановит его процессы: PID сценария и Chromium записаны в `state/pids`.
 
 ## Правила изоляции (читать до запуска)
 
@@ -49,24 +38,21 @@ sudo pacman -S sqlite jq                       # sqlite3 и jq нужны launch
 - **`platform/apps/console/dist` не трогать.** Консоль собирается в папку прогона и отдаётся сервером через `CONSOLE_DIR`.
 - **Данные прогона** лежат в `~/.cache/verify-agent-console/runs/<RUN_ID>/`: БД, сборка консоли, логи, учётка и секреты. Cleanup удаляет эту папку.
 - **Прогон задаётся только явно.** `launch.sh` печатает на stdout папку прогона; `doctor.sh`, `seed-user.sh`, `journey.sh` и `cleanup.sh` принимают её через `--run <RUN_ID|папка>` или `VERIFY_RUN_DIR=<папка>` и без неё не работают. Общего указателя «текущий прогон» нет: иначе cleanup после отказа launch остановил бы чужой прогон (другого агента или оставленный через `VERIFY_KEEP_SESSION=1`).
-- **Кэш между прогонами:**
-  - `~/.cache/verify-agent-console/boxlite` — это `BOXLITE_HOME`, там образы VM;
-  - `~/.cache/verify-agent-console/home` — это `HOME` сервера.
-
+- **Кэш между прогонами.** `~/.cache/verify-agent-console/boxlite` это `BOXLITE_HOME` с образами VM, `~/.cache/verify-agent-console/home` это `HOME` сервера.
   Общий `~/.boxlite` не используется, потому что BoxLite разрешает один рантайм на папку.
   Отсюда ограничение: **одновременно может идти только один прогон.** `launch.sh` проверяет все папки в `runs/` и откажется стартовать, пока у какой-то из них жив записанный процесс. Чужой прогон он не останавливает.
 - **Тяжёлые команды** (сборка, сервер, Playwright, VM) запускаются через `nice -n 15` и строго по одной.
-  Перед ними `vac_wait_cool` проверяет нагрузку и память. Если load1 ≥ 10, CPU ≥ 93°C, свободной памяти (`MemAvailable`) меньше `VERIFY_MIN_FREE_MB` (3072) или свободная память вместе со свободным swap меньше `VERIFY_MIN_HEADROOM_MB` (6144), он ждёт 60 с, не больше 10 раз. Процент swap отдельно не считается: ядро выносит в zram простаивающие страницы и при 7 ГБ свободной памяти, 2026-10-16 swap держался от 60 до 80%.
-- **Память и сессия агента.** На машине работает systemd-oomd: когда память и swap заняты больше чем на 90%, он убивает cgroup с самым большим swap. Всё, что агент запускает из Bash, по умолчанию живёт в scope приложения Claude. 2026-10-16 в 07:55 oomd убил этот scope целиком: сессия агента оборвалась вместе с прогоном `20261016-074730` (журнал: `journalctl -u systemd-oomd`). Поэтому цепочку запускайте в своём scope с потолком памяти, тогда при нехватке ядро и oomd бьют прогон, а не сессию:
+  Перед ними `vac_wait_cool` проверяет нагрузку и память. Если load1 ≥ 10, CPU ≥ 93°C, свободной памяти (`MemAvailable`) меньше `VERIFY_MIN_FREE_MB` (3072) или свободная память вместе со свободным swap меньше `VERIFY_MIN_HEADROOM_MB` (6144), он ждёт 60 с, не больше 10 раз. Процент swap отдельно не считается: ядро выносит в zram простаивающие страницы.
+- **Память и сессия агента.** На машине работает systemd-oomd: когда память и swap заняты больше чем на 90%, он убивает cgroup с самым большим swap. Всё, что агент запускает из Bash, по умолчанию живёт в scope приложения Claude, и oomd может убить этот scope вместе с сессией агента (журнал: `journalctl -u systemd-oomd`). Поэтому цепочку запускайте в своём scope с потолком памяти, тогда при нехватке ядро и oomd бьют прогон, а не сессию:
 
   ```sh
   systemd-run --user --scope -q --unit=vac-run-$(date +%H%M%S) -p MemoryHigh=4G -p MemoryMax=5G -p MemorySwapMax=3G bash -c '<цепочка из Drive>'
   ```
 
-  Прогоны 2026-10-16 с `VERIFY_CONSOLE_DIR` (без сборки консоли) держали в scope до 2 ГБ памяти и до 1 ГБ swap (замер раз в 30 с). Сборку консоли `vite build` лучше делать один раз и передавать прогонам через `VERIFY_CONSOLE_DIR`, если исходники консоли не менялись.
+  Сборку консоли `vite build` лучше делать один раз и передавать прогонам через `VERIFY_CONSOLE_DIR`, если исходники консоли не менялись.
 - **Процессы останавливаются только по своим PID.** PID пишутся в `state/pids` вместе со временем старта: `server-tsx`, `server-node`, `fake-model`, `fake-mcp`, `journey`, `journey-child` (Chromium). По имени процессы не убиваются никогда.
-- **Чужие контейнеры не трогать:** `backoffice-*`, `qm-backoffice-*`, `mvp-test-pg`, `bo-registry`, `oma-dev-pg`.
-- **`.env` не читать.** Значения из `platform/.env` не нужны: секреты этого прогона генерируются в `state/secrets.env`. Наличие переменной проверяется только командой `grep -c '^ИМЯ=.' platform/.env`. Исключение — режим `real` (см. ниже), он требует согласия владельца.
+- **Чужие контейнеры не трогать.** Это `backoffice-*`, `qm-backoffice-*`, `mvp-test-pg`, `bo-registry`, `oma-dev-pg`.
+- **`.env` не читать.** Значения из `platform/.env` не нужны: секреты этого прогона генерируются в `state/secrets.env`. Наличие переменной проверяется только командой `grep -c '^ИМЯ=.' platform/.env`. Исключение составляет режим `real` (см. ниже), он требует согласия владельца.
 
 ## Launch
 
@@ -80,25 +66,16 @@ RUN="$($S/launch.sh)"     # stdout: одна строка, папка прого
 2. Создаёт пустую папку прогона `runs/<RUN_ID>` (RUN_ID имеет вид `YYYYmmdd-HHMMSS`) и папку доказательств `.verify-evidence/<RUN_ID>/`. Записывает в `run.env` git HEAD и хэши изменений рабочего дерева консоли и сервера (`git diff HEAD` плюс неотслеживаемые файлы).
 3. Собирает консоль командой `nice -n 15 vite build --outDir <прогон>/console`. Чтобы взять готовую сборку и пропустить этот шаг, задайте `VERIFY_CONSOLE_DIR=<папка с index.html>`.
 4. В режиме `fake` запускает `fake-model.mjs` на 8792. В любом режиме запускает `fake-mcp.mjs` на 8793 (журнал `logs/fake-mcp.jsonl` прогона), его вызывает сценарий `mcp-ask`.
-5. Запускает `main-node` (`nice -n 15 ./node_modules/.bin/tsx src/index.ts`, без watch) с чистым окружением:
-   - `DATABASE_URL` не задан, поэтому база SQLite;
-   - все пути данных указывают в папку прогона;
-   - `SANDBOX_PROVIDER=litebox`, `SANDBOX_IMAGE=node:22-bookworm`;
-   - `DREAM_CURATOR_MODE=dedup`;
-   - в режиме `fake` дополнительно `ANTHROPIC_API_KEY=verify-local-fake-key` и `ANTHROPIC_BASE_URL=http://127.0.0.1:8792`.
+5. Запускает `main-node` (`nice -n 15 ./node_modules/.bin/tsx src/index.ts`, без watch) с чистым окружением. `DATABASE_URL` не задан, поэтому база SQLite. Все пути данных указывают в папку прогона. Дальше `SANDBOX_PROVIDER=litebox`, `SANDBOX_IMAGE=node:22-bookworm`, `DREAM_CURATOR_MODE=dedup`, в режиме `fake` ещё `ANTHROPIC_API_KEY=verify-local-fake-key` и `ANTHROPIC_BASE_URL=http://127.0.0.1:8792`.
 
 **Готовность.** Это не «процесс отвечает», а все условия ниже. Каждая строка пишется в `logs/launch.txt` с пометкой OK или FAIL:
 
-- `GET /health`:
-  - `status=ok`;
-  - `backends.db = "sqlite <прогон>/data/oma.db"`;
-  - `auth = "better-auth-sqlite"`;
-  - `memory_blobs` и `files_blobs` равны `localfs <прогон>/data/...`.
+- `GET /health`: `status=ok`, `backends.db = "sqlite <прогон>/data/oma.db"`, `auth = "better-auth-sqlite"`, `memory_blobs` и `files_blobs` равны `localfs <прогон>/data/...`.
 - `GET /auth-info` возвращает `email_password: true`.
 - `GET /` отвечает 200 с `text/html`, и sha256 ответа совпадает с sha256 `index.html` этой сборки.
 - Строк в `__drizzle_migrations` столько же, сколько записей в `migrations-sqlite/meta/_journal.json`. Сейчас это 28.
 - В логе есть `"op":"main-node.listening"`, а строк с `"level":50` ноль.
-- Родитель процесса с `/health.pid` — наш tsx, и порт 8791 слушает именно этот node.
+- Родитель процесса с `/health.pid` это наш tsx, и порт 8791 слушает именно этот node.
 
 Код 0 и строка `ГОТОВО: http://127.0.0.1:8791` в stderr означают, что экземпляр годен; на stdout в этот момент печатается папка прогона.
 Код 1: экземпляр не готов. Если папка прогона уже создана, launch сам вызывает `cleanup.sh` для **своей** папки (останавливает всё, что успел запустить) и пишет в `summary.md` итог «ПРЕРВАН на шаге launch» с причиной. Если launch отказался раньше (порт занят, жив другой прогон), он ничего не создаёт и ничего не останавливает.
@@ -117,20 +94,16 @@ $S/doctor.sh --run "$RUN"   # не меняет экземпляр; код 0 = �
 
 Запускать первым, когда что-то выглядит странно, и перед каждым сценарием. Вывод дублируется в `.verify-evidence/<RUN_ID>/logs/doctor-<ЧЧММСС>.txt`. Что проверяет:
 
-- процессы прогона живы, и это те же PID (сверяется время старта);
-- порт 8791 слушает наш node;
-- `/health.pid` указывает на наш процесс, а база и blobs лежат в папке прогона;
-- `GET /` отдаёт `index.html` нашей сборки;
-- **Код не менялся после launch.** Git HEAD и хэши изменений консоли (`platform/apps/console`) и сервера (`platform/apps/main-node`, `platform/apps/agent`, `platform/packages`) равны значениям из `run.env`. `apps/agent` (харнессы) добавлен 2026-10-16: до этого правка `acp-translate.ts` после launch не ловилась. Сервер идёт без watch, а консоль собрана один раз, поэтому после правок старый экземпляр крутит прежний код; при расхождении FAIL;
-- `/auth-info` в порядке;
-- cookie тестовой учётки принимается: `/v1/oma/me` и `/v1/agents` отвечают 200;
+- процессы прогона живы, и это те же PID (сверяется время старта); порт 8791 слушает наш node;
+- `/health.pid` указывает на наш процесс, а база и blobs лежат в папке прогона; `GET /` отдаёт `index.html` нашей сборки;
+- **Код не менялся после launch.** Git HEAD и хэши изменений консоли (`platform/apps/console`) и сервера (`platform/apps/main-node`, `platform/apps/agent`, `platform/packages`) равны значениям из `run.env`. Сервер идёт без watch, а консоль собрана один раз, поэтому после правок старый экземпляр крутит прежний код; при расхождении FAIL;
+- `/auth-info` в порядке; cookie тестовой учётки принимается: `/v1/oma/me` и `/v1/agents` отвечают 200;
 - фейковая модель и фейковый MCP-сервер отвечают (у прогонов без `FAKE_MCP_URL` в `run.env` второе не проверяется);
-- `/dev/kvm` доступен;
-- `BOXLITE_HOME/.lock` не держит чужой процесс;
-- в логе нет ошибок уровня 50;
-- нагрузка.
+- `/dev/kvm` доступен, `BOXLITE_HOME/.lock` не держит чужой процесс, в логе нет ошибок уровня 50, нагрузка.
 
 Если в выводе есть FAIL, этот экземпляр не вести: остановите его (`$S/cleanup.sh --run "$RUN"`) и запустите заново. При FAIL doctor пишет «ПРЕРВАН на шаге doctor» в `summary.md`, если сценарий его ещё не записал.
+
+**Рабочую копию правят другие агенты.** Тогда doctor падает на сверке хэша. Запускайте прогон из снимка дерева: `git clone --shared` в `~/.cache/verify-agent-console/<имя>-snapshot`, поверх клона изменённые и новые файлы рабочей копии и папка скилла, затем `corepack pnpm install --frozen-lockfile --offline` (глобальный `pnpm` на машине сломан). Скрипты запускаются из снимка, доказательства пишутся в `.verify-evidence/` рабочей копии через `VERIFY_EVIDENCE_ROOT`. Сбои снимков описаны в `HISTORY.md`.
 
 ## Drive
 
@@ -142,72 +115,28 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
 
 Запускайте эту строку через `run_in_background: true` с перенаправлением в лог (см. «Таймауты инструмента Bash») и внутри `systemd-run --user --scope` с потолком памяти (см. «Память и сессия агента»).
 
-1. **`seed-user.sh`** создаёт тестовую учётку запросом `POST /auth/sign-up/email` с заголовком `origin: http://127.0.0.1:8791`.
-   - Почта имеет вид `verify-<RUN_ID>@verify.test`, пароль случайный.
-   - Хук Better Auth сам создаёт рабочее пространство `tn_…`.
-   - Скрипт сверяет почту и `user.id` через `GET /auth/get-session`, а `user.id`, tenant и роль owner — через `/v1/oma/me`.
-   - Почта, пароль, `user_id` и `tenant_id` сохраняются в `state/test-user.json` (права 600, пароль не печатается), cookie — в `state/cookies.txt`.
-2. **`journey.sh`** записывает свой PID (роль `journey`), проверяет нагрузку и запускает `nice -n 15 node journey-env-to-agent.mjs`. Сценарий пишет PID Chromium (роль `journey-child`). Шаги:
-   - **Вход.** На `/login` нажать «Продолжить с почтой», заполнить `#auth-email` и `#auth-password`, затем в группе «Действия входа» нажать «Войти». Дождаться навигации и h1 в `main`. Проверяются cookie `better-auth.session_token`, почта и `user.id` в `GET /auth/get-session`, тот же `user.id` и tenant в `/v1/oma/me`.
+1. **`seed-user.sh`** создаёт тестовую учётку запросом `POST /auth/sign-up/email` с заголовком `origin: http://127.0.0.1:8791`. Почта имеет вид `verify-<RUN_ID>@verify.test`, пароль случайный, хук Better Auth сам создаёт рабочее пространство `tn_…`. Скрипт сверяет почту и `user.id` через `GET /auth/get-session`, а `user.id`, tenant и роль owner через `/v1/oma/me`. Почта, пароль, `user_id` и `tenant_id` сохраняются в `state/test-user.json` (права 600, пароль не печатается), cookie в `state/cookies.txt`.
+2. **`journey.sh`** записывает свой PID (роль `journey`), проверяет нагрузку и запускает `nice -n 15 node journey-env-to-agent.mjs`. Сценарий пишет PID Chromium (роль `journey-child`). Рецепт каждого шага с зацепками, ожидаемым результатом и ловушками лежит в `features/` (начните с `features/README.md`). Шаги и их проверки:
+   - **Вход** (`auth.*`). На `/login` нажать «Продолжить с почтой», заполнить `#auth-email` и `#auth-password`, затем в группе «Действия входа» нажать «Войти». Дождаться навигации и h1 в `main`. Проверяются cookie `better-auth.session_token`, почта и `user.id` в `GET /auth/get-session`, тот же `user.id` и tenant в `/v1/oma/me`.
      `/v1/oma/me` отдаёт почту через `loadUser` в `buildMeRoutes` (`apps/main-node/src/modules/node-http.ts`, маршрут `/oma/me`); строка `auth.me_email`. Источник истины для почты: Better Auth.
-   - **Окружение.** Ссылка «Окружения» в навигации «Разделы консоли». Перед скриншотом сценарий ждёт h1 «Окружения» в `main` и пустое состояние «Окружений пока нет» (`env.list_empty`) или строку таблицы, а не смену URL. Дальше «Новое окружение», окно `dialog "Новое окружение"`, поля «Название» и «Описание (необязательно)», «Создать». Затем:
-     - строка `[data-testid="data-body-table"] tr[data-slot="table-row"]` с именем окружения;
-     - сверка через `GET /v1/environments/:id`;
-     - карточка `/environments/:id` (h1 и `#env-name`).
-   - **Проба окружения (обходной путь).** Действия «проверить окружение» нет ни в консоли, ни в API, а песочница создаётся лениво (`NodeSessionRouter.init`, `apps/main-node/src/lib/node-session-router.ts`). Поэтому по API создаются технический агент (только bash) и сессия на новом окружении, и отправляется одна команда. Проба доказывает:
-     - VM поднялась: `Box started successfully` в логе BoxLite, процесс `libkrun VM` с pid из строки `boxlite-shim subprocess spawned … pid=N` — потомок нашего server-node, папка `.openma/litebox-scratch-*`;
-     - VM выполнила команду: `agent.tool_result` содержит `VERIFY_OK_<nonce>`; ядро в VM отличается от ядра хоста;
-     - база для настроек: пакета `jq` в образе нет (`env.probe.baseline`);
-     - сессия пробы видна в консоли с репликой и ответом (`env.probe.ui_visible`, страница открыта заново, история из `GET /events`);
-     - сеть «Без ограничений» (`env.probe.network`): отдельный ход `curl https://example.com` и `curl https://example.org` из VM и ещё один ход `echo`, чтобы проверить, жива ли VM после запроса. База: код того же адреса с хоста. До 2026-10-16 запрос ронял boxlite-shim (`Attach stream error … h2 protocol error`, затем `Connection refused`); причина и обход в `features/environments.md`. Сетевые ходы по-прежнему идут последними в сессиях пробы.
-
-     Затем сессия архивируется, и проверяется, что VM остановилась (`Box stopped`, scratch удалён).
-   - **Настройки окружения.** Снова «Окружения» → строка → карточка. Изменить `#env-description`, в «Тип доступа» выбрать «Ограниченный», включить «Разрешить сетевой доступ менеджерам пакетов», в «Разрешённые хосты» вписать `example.org`, «Добавить пакет» → менеджер `apt`, «Пакеты и версии» `jq`, «Сохранить изменения», тост «Окружение сохранено». Сверка `GET /v1/environments/:id` (`env.settings_saved`). Затем новая сессия на этом окружении (песочница создаётся заново):
-     - `env.packages_applied`: в VM установлен `jq` (`dpkg-query`). Окружение доходит до адаптера через `buildSandbox` в `createManagedNodeRuntime` (`apps/main-node/src/modules/node-managed.ts`), пакеты ставит `initializeBox` (`packages/sandbox-adapter-litebox/src/litebox.ts`);
-     - `env.networking_limited_applied`: неразрешённый `https://example.com` из VM даёт 000, и VM отвечает после запроса;
-     - `env.networking_allowed_host`: разрешённый пользователем `https://example.org` из VM отвечает 200, как с хоста. «Ограниченный» превращается в `allowNet` BoxLite (`liteBoxNetwork` в `litebox.ts`), разрешённые имена закрепляются в `/etc/hosts` VM из-за ошибки DNS allowlist BoxLite 0.9.0. См. Gotchas сети в `features/environments.md`.
-
-     Главная сессия идёт на том же настроенном окружении, поэтому её VM тоже ставит `jq` и живёт с «Ограниченной» сетью.
-
-     Шаги настроек не обязательные: их сбой пишется провалом, а сценарий идёт к агенту. В конце технический агент пробы архивируется, чтобы шаг агентов шёл по пустому списку.
-   - **Агент.** «Агенты» (h1 и пустое состояние «Агентов пока нет», `agent.list_empty`), «Новый агент», шаблон-кнопка `/^Пустой агент/`, `#agent-name` и `#agent-system`. Модель и усилие задаются в режиме «Форма», без YAML: `combobox "Модель"` → пункт `[data-slot="command-item"][data-value^="claude-sonnet-4-6 "]` (группа «Ключ сервера», список из `GET /v1/oma/model_options`, карточек моделей нет), `combobox "Усилие"` → «Низкое» (`agent.form_model_effort`; поля «Harness» в форме нет, ход ведёт только Pi). Вкладка «Инструменты», затем «YAML» той же формы: блок `model:` с `id: claude-sonnet-4-6` и `effort: low`, после возврата в «Форму» выбор на месте (`agent.yaml_roundtrip`). «Создать агента» из режима «Форма». Результат: переход на `/agents/:id`, в регионе «Свойства агента» модель и «Усилие: низкое» (`agent.detail_ui`); `GET /v1/agents/:id` → `model: {id: "claude-sonnet-4-6", effort: {type: "low"}}` (`agent.created`; API отдаёт усилие объектом, YAML формы пишет строку `effort: low`). До 2026-10-16 без карточек в форме не было поля модели, и модель задавал YAML (строка «внимание» `agent.form_without_model_cards`, её больше нет).
-   - **Сессия.** «Сессии» (h1), «Новая сессия». В окне два безымянных `combobox`: первый для агента, второй для окружения. В каждом выбрать `[data-slot="command-item"]` с нужным id. Заполнить `#session-title`, нажать «Создать». Результат: переход на `/sessions/:id`, в шапке чипы-ссылки `a[href="/agents/<id>"]` и `a[href="/environments/<id>"]` с именами (`session.header_ui`). Сверка через API: `agent.id`, `environment_id`, `archived_at = null`.
-     - `session.title_saved`: название из окна сохранено (API и h1). Поле ведёт `Controller` (`pages/SessionsList.tsx`, поле `title` окна «Новая сессия»); до правки 2026-10-15 `{...register("title")}` с подменённым `name` терял ввод.
-     - `session.initial_status`: новая сессия без сообщения: в API `status = idle`, в шапке «Ожидает», в разговоре «Отправьте сообщение, чтобы начать сессию.», текста «Агент работает…» нет (снимок `session-new`). Статус при создании считает `createSession` в `packages/managed-agents-application/src/sessions/application.ts` (`admitsBootstrapTurn`): `running` только если начальные события ставят ход в очередь.
-   - **Ход агента.** Сценарий открывает тот же поток `GET /v1/sessions/:id/events/stream`, что и консоль (cookie браузера), затем в textbox «Сообщение» вводит промпт с маркером и нажимает кнопку отправки. Её подпись зависит от статуса (`ComposerPrimaryAction` в `SessionComposer.tsx`): в новой сессии это «Отправить сообщение» (`run.ui_send_label`; «Поставить сообщение в очередь» значит, что сессия ошибочно `running`). Проверки в интерфейсе:
-     - `run.ui_prompt_on_send` и `run.ui_prompt_visible`: реплика пользователя (`[data-session-turn-prompt]` с `nonce=<n>`) видна в ходе сразу после отправки и после конца хода; `run.sse_user_message`: поток отдаёт `user.message` с маркером. Как реплика попадает в ход, см. Gotchas в `features/sessions-and-agent-run.md`;
-     - `article[data-turn-id]` получил `data-session-turn-status=completed`, ответ виден в `[data-session-turn-answer]`;
-     - `run.answer_full`: итоговый ответ (строка, блок кода с `VERIFY_DONE_<nonce>`, строка после него) виден целиком, первое сообщение хода (текст модели перед `tool_use`) тоже, повторов нет. «Виден» значит и в тексте страницы, и на экране: `clippedLine` проверяет, что строку не срезает предок с `overflow: hidden` (сценарий ждёт конца анимации раскрытия блока процесса, `settleAnimations`). `run.turn_duration`: нет «Работал 0 с» при ходе дольше секунды. Почему ответ резался (`streamPrefixes`), см. Gotchas в `features/sessions-and-agent-run.md`;
-     - страница сессии как в консоли Claude (`docs/plans/session-page.md`), id событий берутся из `GET /events` (`api/47-session-page-events.json`), рецепты в `features/sessions-and-agent-run.md`:
-       - `session.ui_no_usage`: шапка, подсказки её чипов, меню «Действия» и вкладка «Сессия» без токенов, стоимости и бюджета. На странице нет `[data-session-chip="tokens"]` и `[data-session-chip="cost"]`, текста «нет цены», пункта меню и кнопки «Изменить бюджет». При этом журнал хранит `model_usage` всех `span.model_request_end`, чипы `duration` и `activity` на месте, в таблице «Использование» есть «Активное время». Находки идут списком, снимки `session-actions-menu` и `session-tab`;
-       - `session.ui_inspector`: «Инспектор сессии» закрывается крестиком и открывается кнопкой «Инспектор», в адресе `inspector=`, ширина 360..720 px, ровно 5 вкладок: «Сессия», «События», «Инструменты», «Ресурсы», «Потоки»;
-       - `run.ui_tool_card` и `session.ui_select_sync`: при открытых «Событиях» клик по строке `[data-tool-call][data-event-id=<id agent.tool_use>]` в ходе раскрывает вызов (`[data-tool-command]`, `[data-tool-output]` с `VERIFY_OK_<nonce>`), ставит `?event=<id>` и выделяет одну строку с этим id во «Событиях» с её JSON;
-       - `run.ui_tool_output_text`: вывод показан текстом (строка `kernel=` отдельно, без `"type": "text"`, без литералов `\n` и `\u001b`, текст в `api/45-tool-card-text.txt`); `run.ui_tool_duration`: длительность в строке вызова равна разнице `processed_at` у `agent.tool_use` и `agent.tool_result` (допуск 0,25 с) и не 0;
-       - `session.ui_events`: во «Событиях» строки `user.message` и `agent.tool_use` хода с id из журнала, клик показывает «Событие <тип>» и JSON с тем же `"id"` и маркером;
-       - `session.ui_tools`: во «Инструментах» у `bash` 1 вызов и 0 ошибок, как в журнале;
-       - `session.ui_minimap`: «Карта хода» держит отрезок реплики и по отрезку на каждый `span.model_request_start`, наведение показывает карточку с именем агента;
-       - `session.ui_search`: nonce в «Найти в разговоре» даёт счётчик `1/N` при N ≥ 2, подсветку `CSS.highlights` «session-search» с текстом nonce и метки на мини-карте;
-       - `run.ui_files`: на вкладке «Ресурсы» ссылка `/mnt/session/outputs/verify-<nonce>.txt` на `GET /v1/sessions/:id/outputs/verify-<nonce>.txt`;
-       - `session.ui_mobile_390`: на 390 x 844 у документа и `main` нет горизонтальной прокрутки, и с закрытым инспектором, и с нижним листом `?inspector=events`.
-
+   - **Окружение** (`env.list_empty`, `env.created`, `env.detail_ui`; `features/environments.md`). Перед скриншотом списка сценарий ждёт h1 «Окружения» в `main` и пустое состояние «Окружений пока нет» или строку таблицы, а не смену URL.
+   - **Проба окружения, обходной путь** (`env.probe.*`, `env.probe_path`). Действия «проверить окружение» нет ни в консоли, ни в API, а песочница создаётся лениво. Поэтому по API создаются технический агент (только bash) и сессия на новом окружении, и отправляется одна команда. Проба доказывает, что VM поднялась и выполнила команду (`VERIFY_OK_<nonce>`, ядро VM отличается от ядра хоста), что пакета `jq` в образе нет (`env.probe.baseline`), что сессия пробы видна в консоли с репликой и ответом после повторного открытия страницы (`env.probe.ui_visible`) и что сеть «Без ограничений» работает (`env.probe.network`). Затем сессия архивируется, и проверяется, что VM остановилась.
+   - **Настройки окружения** (`env.settings_saved`, `env.packages_applied`, `env.networking_limited_applied`, `env.networking_allowed_host`). На карточке «Ограниченный» доступ, сеть для менеджеров пакетов, хост `example.org` и пакет `apt` `jq`. Новая сессия на этом окружении проверяет в VM `jq`, код 000 для `https://example.com` и 200 для `https://example.org`. Главная сессия идёт на том же настроенном окружении. Шаги настроек не обязательные: их сбой пишется провалом, а сценарий идёт к агенту. В конце технический агент пробы архивируется, чтобы шаг агентов шёл по пустому списку.
+   - **Агент** (`agent.*`; `features/agents.md`). Модель `claude-sonnet-4-6` по ключу сервера и усилие «Низкое» задаются в режиме «Форма» без YAML, поля «Harness» в форме нет. YAML той же формы проверяется туда и обратно, агент создаётся из режима «Форма».
+   - **Сессия** (`session.created`, `session.header_ui`, `session.title_saved`, `session.initial_status`; `features/sessions-and-agent-run.md`). Новая сессия без сообщения должна быть `idle`: в шапке «Ожидает», текста «Агент работает…» нет.
+   - **Ход агента** (`run.*`, `session.ui_*`; `features/sessions-and-agent-run.md`). Сценарий слушает тот же поток `GET /v1/sessions/:id/events/stream`, что и консоль, и отправляет промпт с маркером. В новой сессии кнопка подписана «Отправить сообщение» (`run.ui_send_label`). В интерфейсе проверяются реплика в ходе, ответ целиком и длительность хода, страница сессии как в консоли Claude (без токенов, стоимости и бюджета, инспектор, «События», «Инструменты», мини-карта, поиск, 390 px) и файл на вкладке «Ресурсы»: «Скачать» отдаёт его с `VERIFY_OK_<nonce>` (`run.ui_files`).
      Через API и файлы проверяется:
      - порядок событий `user.message → agent.tool_use(bash) → agent.tool_result → agent.message → session.status_idle(end_turn)`;
-     - `GET /v1/sessions/:id/outputs`;
-     - файл `<прогон>/data/session-outputs/<tenant>/<session>/verify-<nonce>.txt` с содержимым `VERIFY_OK_<nonce>`. Он записан внутри VM в `/mnt/session/outputs`;
-     - ядро VM отличается от ядра хоста;
-     - записи BoxLite (третий старт VM) и процесс VM — потомок нашего сервера;
+     - `GET /v1/sessions/:id/outputs` и файл `<прогон>/data/session-outputs/<tenant>/<session>/verify-<nonce>.txt` с содержимым `VERIFY_OK_<nonce>`, записанный внутри VM в `/mnt/session/outputs`;
+     - ядро VM отличается от ядра хоста, BoxLite записал третий старт VM, процесс VM это потомок нашего сервера;
      - вывод bash без служебных строк рантайма (`tool_output_clean`): ведущую строку stderr `libcontainer … seccomp not available` срезает адаптер (`stripRuntimeNoise`);
-     - решения фейковой модели;
-     - `run.fake_model_effort`: усилие из формы дошло до модели. У каждого запроса хода в журнале фейка `thinking: "adaptive"` и `effort: "low"` (pi-ai шлёт `output_config.effort`), у запросов технического агента пробы без усилия `effort: null`.
+     - решения фейковой модели и `run.fake_model_effort`: у каждого запроса хода `thinking: "adaptive"` и `effort: "low"`, у запросов технического агента пробы `effort: null`.
 
      В конце сессия архивируется, и проверяется остановка VM.
    - **Итог.** Для каждой подфункции из разделов `Sub-features` в `features/*.md`, которую сценарий не прошёл, в `summary.md` автоматически пишется строка «не проверено» `feature.<id>`. Скриншоты соседних шагов сравниваются по sha256 (`evidence.screens_distinct`).
 
 Чтобы оставить сессии живыми для ручного осмотра, задайте `VERIFY_KEEP_SESSION=1`. Чтобы видеть браузер, задайте `VERIFY_HEADED=1`.
-Таймауты ходов: `VERIFY_FIRST_TURN_TIMEOUT_MS` (по умолчанию 900000) и `VERIFY_TURN_TIMEOUT_MS` (по умолчанию 600000).
-Первый ход с новым `BOXLITE_HOME` скачивает образ `node:22-bookworm` и собирает его диск: 2026-10-15 это заняло около минуты, кэш вырос до 3 ГБ. Дальше проба идёт за 2–8 с.
-
-Устойчивые зацепки и ловушки по каждой функции описаны в `features/` (начните с `features/README.md`).
+Таймауты ходов: `VERIFY_FIRST_TURN_TIMEOUT_MS` (по умолчанию 900000) и `VERIFY_TURN_TIMEOUT_MS` (по умолчанию 600000). Первый ход с новым `BOXLITE_HOME` скачивает образ `node:22-bookworm` и собирает его диск, поэтому идёт дольше.
 
 ## Сценарий builder: ассистент платформы
 
@@ -218,19 +147,9 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
 ```
 
 - `seed-user.sh --others` заводит участника пространства тестовой учётки (роль `member`, приглашение и его принятие) и второго пользователя со своим пространством. Файлы `state/member.json`, `state/foreign.json` и их cookie-jar.
-- `launch.sh` запускает фейк с `--canary-file state/canaries.json --oracle-file state/oracle.json`. Сценарий пишет контрольные секреты в эти файлы до первого хода ассистента, фейк ищет их в сыром теле каждого запроса и пишет только `{decision: "canary_hit", canary_id, n}`.
-- Модель ассистента и созданного им агента это карточка `vb-fake-<n>` на фейк. Маркер `VERIFY_BUILDER[_<ВИД>] nonce=<n>` и строки `Ключ: значение` с id задают шаги фейка.
+- Канарейки, карточка `vb-fake-<n>`, маркеры фейка и `VERIFY_BUILDER_ONLY` описаны в `features/builder-agent.md`.
 - Шаги: 6.2 (установка по Ctrl I, пачка «окружение, навык, агент», деплоймент на паузе, правка агента, сессия, первое сообщение и ответ сессии, журнал, «Изменения», нижний лист на 390 px), 6.3 (отклонить, прямое подтверждение, `always_allow`, встроенные инструменты и хранилище памяти, выключатель), 6.4 (чужое пространство, второй участник, прямой вход), 6.5 (указания в файле и навыке), 6.6 (агент, деплоймент, путь памяти и сессия поменялись после preview), 6.7 (канарейки, ротация, подбор секрета). Через 2 минуты после 6.2 сценарий проверяет, что деплоймент на паузе не запускался.
-- Отдельные шаги: `VERIFY_BUILDER_ONLY=6.7` (подстроки имён шагов; вход, карточка, секреты и установка идут всегда).
-- **Живая модель (6.8).** `VERIFY_BUILDER_MODE=live` на том же экземпляре (сервер в режиме fake, модель задаёт карточка): карточка `VERIFY_LIVE_CARD` (по умолчанию `qwen3.6-35b`), провайдер `VERIFY_LIVE_PROVIDER` (`openai-compatible`), адрес `VERIFY_LIVE_BASE_URL`, модель шлюза `VERIFY_LIVE_WIRE_MODEL`. Ключ из файла `VERIFY_LIVE_SECRET_FILE` (права 600, не из `~/.claude`) или, с согласия владельца, из одной переменной `platform/.env`, имя в `VERIFY_LIVE_ENV_KEY`. Значение не печатается. Сценарий шлёт в панель `VERIFY_LIVE_PROMPT` (по умолчанию просьба владельца про агента со сводкой заявок в xlsx, окружение для документов и сессию с заданием), подтверждает карточки, на вопросы отвечает до трёх раз и пишет `live.*`: агент, окружение, сессия, первое сообщение отдельной карточкой, ответ сессии, ошибки схемы (не больше 2), замеры. `seed-user.sh` без `--others`.
-
-**Статус сценария.** Прогон 2026-10-16 `20261016-140351` (fake, порт 8791, рабочая копия на 14:03, та же сборка консоли, что у `20261016-135447`): «ПРОЙДЕН», 57 проверок, 0 провалов, «не проверено»: токен туннеля, окно между кликом и исполнением (его ловят тесты), повтор 6.2 и `feature.builder-qwen`. Цепочка от launch до cleanup заняла около 3 минут, из них 2 минуты ожидание деплоймента. Первые прогоны дня нашли дефекты продукта, все исправлены с тестами:
-- консоль читала preview в другой форме, чем отдаёт сервер (`kind` вместо `target_kind`, `not_found` как `true`), заголовки карточек были «Создать » и «Изменить », строки про root и паузу не появлялись (`20261016-132557`); вкладка «Изменения» читала `data` вместо `actions` и всегда была пустой;
-- preview от второго участника отвечал 500: вложенное чтение шло с токеном участника, а токены ассистента выдаются только владельцу сессии;
-- отказ ассистента сервером (`isError`) у встроенного цикла приходил модели и в журнал как успешный результат;
-- `session.warning` «MCP setup failed» в сессию не попадал: main-node не передавал harness `broadcastEvent`, а событие без `source` ломало страницу событий;
-- «Отклонить» не писал строку `denied` в журнал; `search_config` писал `masked_count` 0; запись памяти по свободному пути показывала кнопку «Применить» вместо «Создать»; при выключенном ассистенте панель прятала ленту, а preview прятал кнопки у владельца.
-Живая проверка на Qwen не запускалась: в `platform/.env` нет ключа модели, файла с ключом тоже нет.
+- **Живая модель (6.8).** `VERIFY_BUILDER_MODE=live` на том же экземпляре (сервер в режиме fake, модель задаёт карточка): карточка `VERIFY_LIVE_CARD` (по умолчанию `qwen3.6-35b`), провайдер `VERIFY_LIVE_PROVIDER` (`openai-compatible`), адрес `VERIFY_LIVE_BASE_URL`, модель шлюза `VERIFY_LIVE_WIRE_MODEL`. Ключ из файла `VERIFY_LIVE_SECRET_FILE` (права 600, не из `~/.claude`) или, с согласия владельца, из одной переменной `platform/.env`, имя в `VERIFY_LIVE_ENV_KEY`. Значение не печатается. Сценарий шлёт в панель `VERIFY_LIVE_PROMPT` (по умолчанию просьба владельца про агента со сводкой заявок в xlsx, окружение для документов и сессию с заданием), подтверждает карточки, на вопросы отвечает до трёх раз и пишет `live.*`: агент, окружение, сессия, первое сообщение отдельной карточкой, ответ сессии, ошибки схемы (не больше 2), замеры. `seed-user.sh` без `--others`. На Qwen этот режим не проверялся.
 
 ## Сценарий crud: правка, архив и удаление
 
@@ -242,18 +161,11 @@ RUN="$(VERIFY_PORT=8797 VERIFY_FAKE_PORT=8798 $S/launch.sh)" && { $S/doctor.sh -
 
 - Порты 8797 и 8798, чтобы не мешать главному сценарию и пробной консоли. Правило «один прогон за раз» общее.
 - Исходные объекты (карточка модели на фейк, агент, два окружения, две сессии без сообщений, два файла) создаются по API: их создание через консоль проверяют сценарии `env-to-agent` и `builder`. Это строка «не проверено» `crud.seed_path`. Всё остальное идёт через консоль.
-- Шаги и проверки:
-  - `crud.agent_archive`, `crud.agent_unarchive`, `crud.env_archive`, `crud.env_unarchive`: меню строки «В архив», окно со строкой «Можно вернуть из архива», строка уходит из активных; фильтр «Статус: В архиве», «Вернуть из архива», строка снова в активных;
-  - `crud.env_delete_blocked`: окружение с живой сессией, окно удаления со списком «Мешает» и выключенной «Удалить», `DELETE` отвечает 409 `dependency_conflict_error` со списком;
-  - `crud.session_archive_ui`, `crud.env_delete_after_stop`: сессия уходит в архив из «Сессий», затем окружение удаляется (GET 404);
-  - `crud.session_delete_after_env_delete`: архивная сессия удалённого окружения удаляется из «Сессий»;
-  - `crud.deployment_*`: «Создать деплоймент» в меню агента, деплоймент на паузе, «Запустить» на паузе выключена, «Продолжить», «Запустить» с прогоном на вкладке «Прогоны», «Пауза», «В архив»;
-  - `crud.file_upload`, `crud.file_delete`: «Загрузить» на странице «Файлы», затем «Удалить» с окном «Это нельзя отменить»;
-  - `crud.assistant_*`: помощник читает `get_dependencies`, красная карточка «Архивировать сессию …» (метка «Опасное», «В архив»), прямой `user.tool_confirmation` без карточки даёт 403, после клика сессия в архиве; красная карточка «Удалить файл …» («Это нельзя отменить»), после клика файл удалён; карточка удаления без клика 5 с и «Отклонить» оставляют файл, журнал `denied`, карточка «Отклонено».
-
-**Статус сценария.** Прогон 2026-10-17 `20261017-052602` (fake, порт 8797, рабочая копия на 05:26): «ПРОЙДЕН», 25 проверок, 0 провалов, подфункций 7 из 7, «не проверено» только `crud.seed_path`. Цепочка от launch до cleanup заняла около 2 минут, в логе сервера нет строк уровня 50. Первые прогоны нашли дефекты продукта, все исправлены с тестами:
-- `20261017-051622`: после «Вернуть из архива» список «Активные» 30 с показывал кэш до действия, агент и окружение «пропадали» (`refresh` у `useInfiniteApiQuery` обновлял только текущий фильтр, теперь сбрасывает все списки адреса); у деплоймента на паузе кнопка и пункт меню «Запустить» были включены, а сервер отвечает 409 «is not active»; отклонённая карточка помощника показывала «Не применено» вместо «Отклонено»; карточки архива и удаления у помощника не было совсем: консоль не знала инструментов `archive_object`, `delete_object` и класса `danger` (C12 плана);
-- `20261017-052321`: cleanup получил 500 на архиве сессии удалённого окружения, `DELETE` такой сессии тоже падал: `EnvironmentAwareSessionLifecycleRouter.sessionStopped` бросал ошибку, когда окружения нет.
+- Проверки по подфункциям `features/crud.md`:
+  - `crud-agent-archive` и `crud-env-archive`: `crud.agent_archive`, `crud.agent_unarchive`, `crud.env_archive`, `crud.env_unarchive`;
+  - `crud-env-delete`: `crud.env_delete_blocked` (список «Мешает», 409 `dependency_conflict_error`), `crud.session_archive_ui`, `crud.env_delete_after_stop`, `crud.session_delete_after_env_delete`;
+  - `crud-deployments`: `crud.deployment_*`; `crud-files`: `crud.file_upload`, `crud.file_delete`;
+  - `crud-assistant-danger` и `crud-assistant-deny`: `crud.assistant_*`.
 
 ## Сценарий mcp-ask: подтверждение MCP
 
@@ -268,53 +180,22 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
 - `mcp.repeat_allow_none` шлёт второе `allow` на исполненный `write_act` по API: кнопки в консоли после первого клика нет. Проверка ждёт, что вызов не ушёл снова и модель не проснулась (нет `agent.message`, `span.model_request_start` и нового запроса к фейку). Старый агент для `mcp.old_agent_*` создаётся по API с набором MCP на явном `always_allow`, как его писала консоль до функции 3.1.
 - `mcp.ui_waiting_row` пишет «внимание», если строка ожидающего вызова в ходе подписана «Прервано», а не «Ждёт вас». Это дефект консоли до функции 3.1 (`collectToolCalls` в `apps/console/src/lib/session-stats.ts`), см. Gotchas в `features/mcp-confirmation.md`.
 
-**Статус сценария.** Прогон 2026-10-18 `20261018-004131` после срезов 2 и 3 функции 3.1: «ПРОЙДЕН», 10 проверок, 0 провалов. В `logs/fake-mcp.jsonl` один `write_act`, он ушёл после «Разрешить», после «Отклонить» вызова нет. Прогон шёл из снимка `~/.cache/verify-agent-console/cma31-s3-snapshot`: git `1070bc0` и правки функции 3.1 без правок Pi другой волны, иначе doctor падал на сверке хэша.
-
-После среза 4 прогон `20261018-010717` из снимка `cma31-s4-snapshot` тоже «ПРОЙДЕН», 10 из 10. Затем вне сценария по curl ушло второе `allow` на уже исполненный `write_act`, и в журнале fake-mcp остался один вызов. Контроль на снимке среза 3 (`20261018-010829`) после такого же `allow` дал второй `write_act`. Второе `allow` всё ещё запускает ход модели без нового результата. Проверки сценария на это нет.
-
-После среза 5 прогон `20261018-013009` из снимка `cma31-s5-snapshot` «ПРОЙДЕН», 10 из 10. Затем вне сценария по curl ушёл `user.define_outcome` с вызовом `write_act`: ход встал на `requires_action`, `span.outcome_evaluation_start` нет, outcome остался `pending`. Контроль на снимке среза 4 (`20261018-013119`) начал оценку при ожидающем вызове и записал outcome как `failed`. После `allow` оценка не продолжается, это срез 5 функции 3.3. Проверки сценария на это тоже нет.
-
-Срез 6 добавил в сценарий шаг «исключение read_report»: поле «Разрешение» сервера в форме агента, предупреждение у «Всегда разрешать», исключение `read_report` и ход в новой сессии без карточки (`mcp.exception_form`, `mcp.exception_read`). Прогон `20261018-014610` из снимка `cma31-s6-snapshot` (снимок среза 5 и правки консоли среза 6): «ПРОЙДЕН», 12 из 12. Снимки вкладки «MCP-серверы» на 1280 и 390 лежат в `screens/10-…` и `screens/11-…`. Прогон `20261018-014457` на том же снимке тоже «ПРОЙДЕН», но его снимок на 390 не показывает строку исключения: окно прокручивается внутри себя, теперь сценарий подводит строку в поле зрения.
-
-Срез 7 поменял только тексты помощника. Прогон `20261018-020213` из снимка `cma31-s7-snapshot` (снимок среза 6 и тексты среза 7) «ПРОЙДЕН», 12 из 12, это ядро функции 3.1 целиком. Затем вне сценария скрипт поставил ассистента по API, как это делает консоль, и через маркер `VERIFY_TOOL` вызвал `search_docs` с запросом «По умолчанию инструмент MCP спрашивает» и `help` с темой `agent`. `search_docs` нашёл два раздела: «Агент» в `platform-reference.md` и «Агент с внешним сервисом через MCP» в `platform-builder.md`. Правило в `help` содержит ту же фразу и `configs`. Файл `api/slice7-search-docs.json`. Проверки сценария на это нет.
-
-После ревью срезов 1-7 (раннер не будит модель на втором `allow`, сессия с субагентом на `always_ask` получает 400) сценарий получил шаги второго «Разрешить» и старого агента. Прогон `20261018-024228` из снимка `cma31-final-snapshot` (git `9cb5bbf` и все правки функции 3.1 на 02:35): «ПРОЙДЕН», 17 проверок, 0 провалов, подфункций 6 из 6, одна строка «внимание» `mcp.ui_waiting_row` (строка ожидающего вызова подписана «Прервано»). Второе `allow` принято с ответом 200, прогон раннера кончился `end_turn` без `agent.message`, в журнале fake-mcp один `write_act`. Главный сценарий на том же снимке `20261018-023845`: «ПРОЙДЕН», 90 проверок, 0 провалов. Контроль `20261018-024601` из снимка `cma31-final-control` (тот же снимок, раннер среза 7) дал «ПРОВАЛ» ровно на `mcp.repeat_allow_none`: после второго `allow` в журнале сессии `span.model_request_start` и `agent.message`, `write_act` в журнале fake-mcp по-прежнему один.
-
-До срезов 2 и 3 был прогон 2026-10-18 `20261018-000539` (рабочая копия на 00:05, git `1070bc0`): «ПРОВАЛ», 10 проверок, 1 провал `mcp.write_waits`. Это красный тест среза 1 функции 3.1: форма консоли пишет новому серверу `always_allow`, ход кончился `end_turn`, у `agent.mcp_tool_use` нет `evaluated_permission`, блока «Ожидает подтверждения» нет, а в `logs/fake-mcp.jsonl` один `tools/call write_act` до любого клика. Остальные проверки зелёные. Зелёный путь сценария прошла разовая копия, которая после создания агента ставила набору `always_ask` по API (`20261018-000734`, «ПРОЙДЕН», 10 проверок, 0 провалов). Копия удалена.
-
 ## Evidence
 
 Всё лежит в `.verify-evidence/<RUN_ID>/`. Строка `.verify-evidence/` есть в корневом `.gitignore` (закоммичена в `b62dd98`), cleanup эту папку не удаляет.
 
-- `summary.md` — итог «ПРОЙДЕН / ПРОВАЛ / ПРЕРВАН» (при сбое до сценария «ПРЕРВАН на шаге launch / doctor / seed-user / journey» с причиной), id и пути, затем таблица проверок со статусами «проверено», «провал», «внимание», «не проверено» и список скриншотов с sha256.
-- `screens/NN-<шаг>.png` — скриншот действия и скриншот результата на каждый шаг. Ширина 1280; оболочка консоли прокручивает `main`, а не документ, поэтому на время снимка окно растягивается на высоту внутренней прокрутки (до 6000 px), и видна вся карточка. Скриншоты `fail-<проверка>.png`, `fail-step-<шаг>.png` и `NN-abort.png` снимаются в момент сбоя и в сравнении sha256 не участвуют.
-- `aria/NN-<шаг>.yml` — ARIA-снимки карточек окружения и агента, сохранённых настроек и завершённого хода.
-- `api/`:
-  - ответы `/health`, `/auth-info`, `/v1/oma/me`, `/auth/get-session` (без токена);
-  - окружение до и после настроек, агент, сессии, архивы;
-  - полные журналы событий сессий: проба (`21-…`, сеть `21b-…`), проба настроек (`22-…`, `22b-…`), главная сессия (`41-…`);
-  - поток событий главной сессии `41-session-stream.json` (что консоль получает вживую);
-  - текст вывода bash `45-tool-card-text.txt`, текст ответа хода со страницы `46-turn-answer-text.txt`, журнал главной сессии для проверок страницы `47-session-page-events.json`, outputs, YAML агента, копия файла из VM;
-  - каталог моделей формы агента `29-model-options.json`;
-  - `fake-model-requests.jsonl` (у каждого запроса `thinking` и `effort`).
-- `logs/`:
-  - `launch.txt`, `console-build.log`, `doctor-<время>.txt`;
-  - `main-node.journey.log` (снимок после сценария), `main-node.final.log` (после остановки);
-  - `fake-model.log`, `cleanup.txt`;
-  - `fake-mcp.log` и `fake-mcp.jsonl` (журнал фейкового MCP-сервера, сценарий `mcp-ask`), после cleanup ещё `fake-mcp.final.*`.
+- `summary.md` содержит итог «ПРОЙДЕН / ПРОВАЛ / ПРЕРВАН» (при сбое до сценария «ПРЕРВАН на шаге launch / doctor / seed-user / journey» с причиной), id и пути, затем таблицу проверок со статусами «проверено», «провал», «внимание», «не проверено» и список скриншотов с sha256.
+- `screens/NN-<шаг>.png` хранит скриншот действия и скриншот результата на каждый шаг. Ширина 1280; оболочка консоли прокручивает `main`, а не документ, поэтому на время снимка окно растягивается на высоту внутренней прокрутки (до 6000 px), и видна вся карточка. Скриншоты `fail-<проверка>.png`, `fail-step-<шаг>.png` и `NN-abort.png` снимаются в момент сбоя и в сравнении sha256 не участвуют.
+- `aria/NN-<шаг>.yml` хранит ARIA-снимки карточек окружения и агента, сохранённых настроек и завершённого хода.
+- `api/` хранит ответы `/health`, `/auth-info`, `/v1/oma/me`, `/auth/get-session` (без токена), окружение до и после настроек, агента, сессии, архивы и полные журналы событий сессий: проба (`21-…`, сеть `21b-…`), проба настроек (`22-…`, `22b-…`), главная сессия (`41-…`). Ещё там поток событий главной сессии `41-session-stream.json`, текст вывода bash `45-tool-card-text.txt`, текст ответа хода `46-turn-answer-text.txt`, журнал для проверок страницы `47-session-page-events.json`, outputs, YAML агента, копия файла из VM, каталог моделей формы `29-model-options.json` и `fake-model-requests.jsonl` (у каждого запроса `thinking` и `effort`).
+- `logs/` хранит `launch.txt`, `console-build.log`, `doctor-<время>.txt`, `main-node.journey.log` (снимок после сценария), `main-node.final.log` (после остановки), `fake-model.log`, `cleanup.txt`, `fake-mcp.log` и `fake-mcp.jsonl` (журнал фейкового MCP-сервера, сценарий `mcp-ask`), после cleanup ещё `fake-mcp.final.*`.
 
-Стандарты доказательства:
+Стандарты доказательства (общие правила в `features/README.md`, раздел «Proof and skip reporting»):
 
 - **Пользовательский путь.** Окружение, его настройки, агент, сессия и сообщение создаются через консоль. API используется для двух вещей: для сверки, и для проб окружения, потому что в продукте для них нет пути. В `summary.md` проба помечена как обходной путь (`env.probe_path`).
-- **Действие и результат.** На каждый шаг есть скриншот до действия и скриншот результата. Перед снимком ждём содержимое страницы (h1, строку, пустое состояние, очищенное поле ввода), а не URL. Два подряд одинаковых по sha256 снимка шагов — провал `evidence.screens_distinct`. Состояние после действия подтверждается вторым способом: API, файлом, потоком событий или логом.
-- **Побочные эффекты:**
-  - записи в БД видны через API;
-  - файл из VM лежит на хосте;
-  - BoxLite записал старт и остановку VM;
-  - процесс VM (`libkrun VM`, pid из лога BoxLite) — потомок нашего server-node.
-    В логе сервера есть строка `creating box (image=…, network=…)` от `litebox-sandbox` (`*.server_log_box`): логгер берётся в момент записи (`moduleLogger` в `litebox.ts`), а не при импорте.
-- **Где мок.** Мок только один — модель. Это внешний провайдер, и сервер ходит к нему через `ANTHROPIC_BASE_URL`, как в тестах репозитория (`apps/main-node/test/_helpers/openai-node-process.ts`). Песочница настоящая: LiteBox с микро-VM через `/dev/kvm`. Сетевая проба ходит на настоящий `https://example.com` (и с хоста для базы).
-- **Что фейк не проверяет:** доступ к api.anthropic.com, работу ключа и качество ответа. Это строка «не проверено» в `summary.md`. Проверить можно только в режиме `real`.
+- **Побочные эффекты.** Записи в БД видны через API, файл из VM лежит на хосте, BoxLite записал старт и остановку VM, процесс VM (`libkrun VM`, pid из лога BoxLite) это потомок нашего server-node. В логе сервера есть строка `creating box (image=…, network=…)` от `litebox-sandbox` (`*.server_log_box`): логгер берётся в момент записи (`moduleLogger` в `litebox.ts`), а не при импорте.
+- **Где мок.** Мок только один, это модель. Это внешний провайдер, и сервер ходит к нему через `ANTHROPIC_BASE_URL`, как в тестах репозитория (`apps/main-node/test/_helpers/openai-node-process.ts`). Песочница настоящая: LiteBox с микро-VM через `/dev/kvm`. Сетевая проба ходит на настоящий `https://example.com` (и с хоста для базы).
+- **Пробелы фейка.** Фейк не проверяет доступ к api.anthropic.com, работу ключа и качество ответа. Это строка «не проверено» в `summary.md`. Проверить можно только в режиме `real`.
 
 ## Cleanup
 
@@ -324,15 +205,10 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 
 Без `--run` (или `VERIFY_RUN_DIR`) скрипт ничего не делает. Что делает:
 
-0. Останавливает сценарий и Chromium, если они ещё живы (роли `journey`, `journey-child` и потомки `journey`).
-1. Пока сервер жив, архивирует сессии из `state/created.json`, чтобы VM остановились штатно.
-2. Записывает потомков сервера: PID и время старта.
-3. Отправляет SIGTERM tsx (сигнал передаётся node), затем node, фейковой модели и фейковому MCP-серверу. Ждёт 30, 10, 5 и 5 с соответственно, после чего шлёт SIGKILL только этим PID.
-4. Останавливает записанных потомков, которые пережили сервер.
-5. Копирует финальные логи в доказательства (с ними `fake-mcp.final.log` и `fake-mcp.final.jsonl`) и проверяет, что порты 8791, 8792 и 8793 свободны.
-6. Сообщает о процессах, у которых в командной строке есть путь `BOXLITE_HOME`, но не убивает их.
-7. Удаляет `runs/<RUN_ID>` только если всё освобождено.
-8. Если `summary.md` нет (сбой до сценария), пишет «ПРЕРВАН» с причиной; печатает число файлов в папке доказательств.
+1. Останавливает сценарий и Chromium, если они ещё живы (роли `journey`, `journey-child` и потомки `journey`). Пока сервер жив, архивирует сессии из `state/created.json`, чтобы VM остановились штатно.
+2. Записывает потомков сервера (PID и время старта), шлёт SIGTERM tsx (сигнал передаётся node), затем node, фейковой модели и фейковому MCP-серверу. Ждёт 30, 10, 5 и 5 с соответственно, после чего шлёт SIGKILL только этим PID. Потом останавливает записанных потомков, которые пережили сервер.
+3. Копирует финальные логи в доказательства (с ними `fake-mcp.final.log` и `fake-mcp.final.jsonl`) и проверяет, что порты 8791, 8792 и 8793 свободны. О процессах, у которых в командной строке есть путь `BOXLITE_HOME`, сообщает, но не убивает их.
+4. Удаляет `runs/<RUN_ID>` только если всё освобождено. Если `summary.md` нет (сбой до сценария), пишет «ПРЕРВАН» с причиной; печатает число файлов в папке доказательств.
 
 Доказательства и кэш BoxLite не удаляются. После cleanup проверьте, что `.verify-evidence/<RUN_ID>/summary.md` на месте.
 Запускайте cleanup и после неудачного прогона (с тем же `--run`), чтобы не оставлять процессы и порты.
@@ -342,7 +218,7 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 | Скрипт | Вызов | Что делает |
 |---|---|---|
 | `scripts/lib.sh` | `$S/lib.sh` | Общие функции. При прямом запуске печатает порты, папки и живые прогоны |
-| `scripts/launch.sh` | `RUN="$($S/launch.sh)"` | Сборка консоли, фейковая модель, сервер, проверка готовности; stdout — папка прогона |
+| `scripts/launch.sh` | `RUN="$($S/launch.sh)"` | Сборка консоли, фейковая модель, сервер, проверка готовности; stdout: папка прогона |
 | `scripts/doctor.sh` | `$S/doctor.sh --run "$RUN"` | Можно ли вести экземпляр, включая сверку кода с моментом launch |
 | `scripts/seed-user.sh` | `$S/seed-user.sh --run "$RUN" [--others]` | Тестовая учётка и её рабочее пространство; с `--others` участник этого пространства и второй пользователь со своим |
 | `scripts/journey.sh` | `$S/journey.sh --run "$RUN" [--scenario builder\|crud\|mcp-ask]` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск сценария (по умолчанию главного) |
@@ -366,4 +242,4 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 - сценарий: `VERIFY_KEEP_SESSION`, `VERIFY_HEADED`, `VERIFY_CHROMIUM`, `VERIFY_FIRST_TURN_TIMEOUT_MS`, `VERIFY_TURN_TIMEOUT_MS`;
 - сценарий `builder`: `VERIFY_BUILDER_ONLY`, `VERIFY_BUILDER_MODE` (`live`), `VERIFY_LIVE_CARD`, `VERIFY_LIVE_PROVIDER`, `VERIFY_LIVE_BASE_URL`, `VERIFY_LIVE_WIRE_MODEL`, `VERIFY_LIVE_SECRET_FILE`, `VERIFY_LIVE_ENV_KEY`, `VERIFY_LIVE_PROMPT`, `VERIFY_LIVE_TIMEOUT_MS`, `VERIFY_LIVE_CHILD_TIMEOUT_MS`.
 
-Значения `VERIFY_*` можно передавать в окружении `launch.sh` (`VERIFY_PORT=8795 $S/launch.sh`): до 2026-10-16 `start_server` снимал экспортированные переменные до чтения, и сервер падал с `VERIFY_PORT: unbound variable` (прогон `20261016-011416`).
+Значения `VERIFY_*` можно передавать в окружении `launch.sh` (`VERIFY_PORT=8795 $S/launch.sh`).

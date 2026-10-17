@@ -28,7 +28,7 @@ const RULES: Record<Topic, { text: string; tools: string[]; schema?: SchemaKind 
     tools: ["help", "search_docs", "search_config", "list", "get", "preview_change", "apply_changes"],
   },
   agent: {
-    text: "Агент создаётся через create_agent, правится через update_agent с expected_version из get. Версия растёт с каждой правкой. Своего агента ассистент не меняет.",
+    text: "Агент создаётся через create_agent, правится через update_agent с expected_version из get. Версия растёт с каждой правкой. По умолчанию инструмент MCP спрашивает: вызов ждёт кнопки «Разрешить» на странице сессии. Инструмент чтения разрешай по имени в configs набора mcp_toolset с политикой always_allow. Своего агента ассистент не меняет.",
     tools: ["create_agent", "update_agent", "restore_agent_version"],
     schema: "agent",
   },

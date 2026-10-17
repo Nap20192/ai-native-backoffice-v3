@@ -3,10 +3,11 @@
 # затем journey-env-to-agent.mjs (Playwright). Код выхода = код сценария.
 # PID сценария пишется в state/pids (роль journey), PID Chromium — сам сценарий
 # (роль journey-child): cleanup.sh остановит их, даже если сценарий убили по таймауту.
-# Использование: scripts/journey.sh --run <RUN_ID|папка> [--scenario env-to-agent|builder|crud]
+# Использование: scripts/journey.sh --run <RUN_ID|папка> [--scenario env-to-agent|builder|crud|mcp-ask]
 #   (или VERIFY_RUN_DIR=<папка>). По умолчанию главный сценарий env-to-agent;
 #   builder: journey-builder.mjs (ассистент платформы, нужен seed-user.sh --others);
-#   crud: journey-crud.mjs (архив, возврат и удаление в консоли и через помощника).
+#   crud: journey-crud.mjs (архив, возврат и удаление в консоли и через помощника);
+#   mcp-ask: journey-mcp-ask.mjs (вызов MCP ждёт «Разрешить» на странице сессии, fake-mcp.mjs).
 # Переменные сценария: VERIFY_FIRST_TURN_TIMEOUT_MS (900000), VERIFY_TURN_TIMEOUT_MS (600000),
 #   VERIFY_KEEP_SESSION=1 (не архивировать сессии в конце), VERIFY_HEADED=1, VERIFY_CHROMIUM=<путь>.
 set -euo pipefail
@@ -25,7 +26,8 @@ case "$SCENARIO" in
   env-to-agent) JOURNEY_SCRIPT=journey-env-to-agent.mjs ;;
   builder) JOURNEY_SCRIPT=journey-builder.mjs ;;
   crud) JOURNEY_SCRIPT=journey-crud.mjs ;;
-  *) vac_die "сценарий $SCENARIO неизвестен: env-to-agent, builder или crud" ;;
+  mcp-ask) JOURNEY_SCRIPT=journey-mcp-ask.mjs ;;
+  *) vac_die "сценарий $SCENARIO неизвестен: env-to-agent, builder, crud или mcp-ask" ;;
 esac
 vac_load_run
 trap 'vac_abort_summary "$EVIDENCE_DIR" journey "${VAC_LAST_ERROR:-journey.sh завершился до запуска сценария}"' EXIT

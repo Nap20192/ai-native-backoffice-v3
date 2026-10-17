@@ -3,7 +3,7 @@
 #   0) останавливает сценарий (роли journey, journey-child в state/pids) и его потомков;
 #   1) пока сервер жив: архивирует сессии прогона (state/created.json) -> VM останавливаются;
 #   2) запоминает потомков сервера (VM-шимы BoxLite и т. п.) по PID и времени старта;
-#   3) SIGTERM серверу (tsx передаёт сигнал node), ждёт до 30 с, затем фейковой модели;
+#   3) SIGTERM серверу (tsx передаёт сигнал node), ждёт до 30 с, затем фейковой модели и фейковому MCP-серверу;
 #   4) добивает только записанные PID этого прогона, если они пережили SIGTERM;
 #   5) копирует финальные логи в доказательства и проверяет, что порты свободны;
 #   6) удаляет папку прогона (данные, сборку консоли, секреты, учётку).
@@ -86,6 +86,8 @@ grep -q '"op":"main-node.shutdown"' "$SERVER_LOG" 2>/dev/null \
   && say "в логе сервера есть op main-node.shutdown" || say "в логе сервера нет op main-node.shutdown"
 read -r fake_pid fake_start <<<"$(vac_pid_of fake-model)"
 [ -n "${fake_pid:-}" ] && stop_pid "$fake_pid" "$fake_start" "фейковая модель" 5
+read -r mcp_pid mcp_start <<<"$(vac_pid_of fake-mcp)"
+[ -n "${mcp_pid:-}" ] && stop_pid "$mcp_pid" "$mcp_start" "фейковый MCP-сервер" 5
 
 # --- 4. Пережившие потомки (только записанные PID) ---------------------------------
 left=0
@@ -103,8 +105,11 @@ say "потомков, переживших остановку сервера: $
 [ -f "$SERVER_LOG" ] && cp "$SERVER_LOG" "$EVIDENCE_DIR/logs/main-node.final.log"
 [ -f "$FAKE_LOG" ] && cp "$FAKE_LOG" "$EVIDENCE_DIR/logs/fake-model.final.log"
 [ -f "$FAKE_REQUESTS" ] && cp "$FAKE_REQUESTS" "$EVIDENCE_DIR/logs/fake-model-requests.final.jsonl"
+# Прогоны до 2026-10-18 не знали фейкового MCP-сервера: в их run.env нет FAKE_MCP_*.
+[ -n "${FAKE_MCP_LOG:-}" ] && [ -f "$FAKE_MCP_LOG" ] && cp "$FAKE_MCP_LOG" "$EVIDENCE_DIR/logs/fake-mcp.final.log"
+[ -n "${FAKE_MCP_REQUESTS:-}" ] && [ -f "$FAKE_MCP_REQUESTS" ] && cp "$FAKE_MCP_REQUESTS" "$EVIDENCE_DIR/logs/fake-mcp.final.jsonl"
 rc=0
-for port in "$VERIFY_PORT" "$VERIFY_FAKE_PORT"; do
+for port in "$VERIFY_PORT" "$VERIFY_FAKE_PORT" ${FAKE_MCP_URL:+"$VERIFY_FAKE_MCP_PORT"}; do
   if vac_port_busy "$port"; then say "порт $port всё ещё занят: $(vac_port_pids "$port" | tr '\n' ' ')"; rc=1; else say "порт $port свободен"; fi
 done
 say "ящиков BoxLite в кэше: $(ls -A "$BOXLITE_HOME/boxes" 2>/dev/null | wc -l) (autoRemove: должно быть 0)"

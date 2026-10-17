@@ -374,7 +374,7 @@ CREATE INDEX IF NOT EXISTS mcp_registry_events_server_idx
 - Кодек пишет `mcp_servers: [{type: "url", name: <id>, url}]` и `mcp_toolset` с `default_config: {enabled: false, permission_policy: {type: "always_ask"}}` и `configs` по включённым инструментам. Прежний `mcp_toolset` с политиками сохраняется, как сейчас (`agentFormCodec.ts:597-610`).
 - «Разрешать» по умолчанию стоит только у инструмента с `readOnlyHint: true` на записи с `trust_annotations`. У остальных «Спрашивать».
 - «Свой адрес» остаётся, пока `registry_only` выключен. Новый свой сервер тоже получает «Спрашивать», у строки чип «Нет в реестре». Неверная подсказка `https://mcp.github.com/sse` (`AgentFormDialog.tsx:1405`) уходит.
-- Серверную политику по умолчанию (`always_allow`, раздел 1, пункт 10) не меняем: так ведут себя старые агенты и клиенты API. Форма пишет политику явно.
+- Серверная политика по умолчанию у `mcp_toolset` теперь `always_ask`, как в CMA (раздел 1, пункт 10). Так решил владелец, решение 9 в `docs/plans/cma-wave-1.md`: иначе API и SDK остаются без защиты. У старых агентов политика записана явно и не меняется. Форма по-прежнему пишет политику явно.
 - При ACP вкладка по-прежнему показывает пояснение `acpMcpNote` (`docs/plans/models-harness.md`, 6.5).
 
 ### 4.5 Хранилища и сессии

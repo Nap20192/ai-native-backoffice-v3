@@ -3,7 +3,7 @@
 # Проверяет: процессы прогона живы и это те же PID; порт слушает наш node;
 # /health смотрит в папку прогона; консоль = сборка прогона; код не менялся после
 # сборки (HEAD и хэши изменений консоли и сервера = значения из run.env); вход работает;
-# фейковая модель отвечает; /dev/kvm; кэш BoxLite не занят чужим процессом;
+# фейковая модель и фейковый MCP-сервер отвечают; /dev/kvm; кэш BoxLite не занят чужим процессом;
 # ошибки в логе; нагрузка. Экземпляр не меняет; вывод пишет в
 # $EVIDENCE_DIR/logs/doctor-<время>.txt, а при FAIL без summary.md — «ПРЕРВАН на шаге doctor».
 # Использование: scripts/doctor.sh --run <RUN_ID|папка>   (или VERIFY_RUN_DIR=<папка>)
@@ -30,7 +30,7 @@ DOC_LOG="$EVIDENCE_DIR/logs/doctor-$(date +%H%M%S).txt"
 : > "$DOC_LOG"
 info "прогон $RUN_ID, режим модели $MODEL_MODE; данные $DATA_DIR; доказательства $EVIDENCE_DIR"
 
-for role in server-tsx server-node $( [ "$MODEL_MODE" = fake ] && echo fake-model ); do
+for role in server-tsx server-node $( [ "$MODEL_MODE" = fake ] && echo fake-model ) ${FAKE_MCP_URL:+fake-mcp}; do
   read -r pid start <<<"$(vac_pid_of "$role")"
   if [ -n "${pid:-}" ] && vac_same_process "$pid" "$start"; then ok "$role pid $pid жив"; else fail "$role не запущен или PID сменился (${pid:-нет записи})"; fi
 done
@@ -90,6 +90,10 @@ if [ "$MODEL_MODE" = fake ]; then
   F="$(curl -fsS --max-time 3 "$FAKE_URL/health" 2>/dev/null)" && ok "фейковая модель отвечает, запросов: $(jq -r .requests <<<"$F")" || fail "фейковая модель $FAKE_URL не отвечает"
 else
   info "режим real: модель api.anthropic.com, ключ из platform/.env (значение не печатается)"
+fi
+# Прогоны до 2026-10-18 фейковый MCP-сервер не поднимали: в их run.env нет FAKE_MCP_URL.
+if [ -n "${FAKE_MCP_URL:-}" ]; then
+  M="$(curl -fsS --max-time 3 "$FAKE_MCP_URL/health" 2>/dev/null)" && ok "фейковый MCP-сервер отвечает, сообщений JSON-RPC: $(jq -r .requests <<<"$M")" || fail "фейковый MCP-сервер $FAKE_MCP_URL не отвечает"
 fi
 
 [ -r /dev/kvm ] && [ -w /dev/kvm ] && ok "/dev/kvm доступен" || fail "/dev/kvm недоступен"

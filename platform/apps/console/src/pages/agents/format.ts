@@ -28,11 +28,21 @@ const TOOLSET_LABELS: Record<string, string> = {
 };
 
 /** Подпись инструмента агента по-русски. Сырой тип из API (`agent_toolset_20260401`)
- *  в интерфейс не выводится (раздел 5 DDC); неизвестный тип остаётся как есть. */
-export function toolLabel(tool: { type?: string; name?: string; mcp_server_name?: string }): string {
+ *  в интерфейс не выводится (раздел 5 DDC); неизвестный тип остаётся как есть.
+ *  Сервер MCP на «Всегда разрешать» получает пометку «без подтверждения»: сохранённые
+ *  агенты молча не меняются, а человек видит, кто ходит во внешнюю систему сам. */
+export function toolLabel(tool: {
+  type?: string;
+  name?: string;
+  mcp_server_name?: string;
+  default_config?: { permission_policy?: { type?: string } };
+}): string {
   if (tool.type === "custom") return tool.name ? `Свой: ${tool.name}` : "Свой инструмент";
   if (tool.type === "mcp_toolset") {
-    return tool.mcp_server_name ? `MCP: ${tool.mcp_server_name}` : TOOLSET_LABELS.mcp_toolset;
+    const label = tool.mcp_server_name ? `MCP: ${tool.mcp_server_name}` : TOOLSET_LABELS.mcp_toolset;
+    return tool.default_config?.permission_policy?.type === "always_allow"
+      ? `${label}, без подтверждения`
+      : label;
   }
   return (tool.type && TOOLSET_LABELS[tool.type]) || tool.type || "";
 }

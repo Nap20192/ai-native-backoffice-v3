@@ -29,8 +29,8 @@
 Preconditions:
 
 - Учётка вошла в консоль, хранилищ нет.
-- Для `mcp-call-with-vault` нужен локальный MCP-сервер, который проверяет `Authorization: Bearer <тестовый токен>`. В скилле его **пока нет**, поэтому этот пункт сейчас «не проверено». Заглушку стоит добавить по образцу `scripts/fake-model.mjs` на свободном порту, например 8793.
-- Скрипта для этой функции нет. Шаги выполняются кодом Playwright по образцу `scripts/journey-env-to-agent.mjs`.
+- Для `mcp-call-with-vault` нужен локальный MCP-сервер, который проверяет `Authorization: Bearer <тестовый токен>`. Это `scripts/fake-mcp.mjs` на 8793, его поднимает `launch.sh`, журнал `logs/fake-mcp.jsonl` прогона хранит sha256 токена. Главный сценарий его не вызывает, поэтому пункт в главном сценарии «не проверено». Вызов с токеном из хранилища проходит сценарий `mcp-ask` (`mcp.vault_token`, `features/mcp-confirmation.md`).
+- Скрипта для хранилищ через консоль нет. Шаги выполняются кодом Playwright по образцу `scripts/journey-env-to-agent.mjs`, MCP-сервер агента и флажок хранилища в окне «Новая сессия» есть в `scripts/journey-mcp-ask.mjs`.
 
 - **Создать хранилище.** Нажать ссылку «Хранилища секретов», затем `getByRole("button", { name: "Новое хранилище" }).first()`. В `getByRole("dialog", { name: "Новое хранилище" })` заполнить `#vault-name` значением `verify-vault-<n>` и нажать «Создать». Результат: строка в списке. `GET /v1/vaults` содержит хранилище с `display_name`.
 - **Добавить Bearer для MCP.** На `/vaults/:id` нажать «Добавить». В `getByRole("dialog", { name: "Добавить учётные данные" })`:
@@ -43,7 +43,7 @@ Preconditions:
   Результат: в `[data-testid="credential-list-surface"]` строка с кнопками «Изменить: …» и «Удалить: …». `GET /v1/vaults/:id/credentials` возвращает `auth.type = "static_bearer"` и `auth.mcp_server_url`. Поля `token` в ответе нет (`packages/managed-agents-api/src/contracts/credentials.ts:170-175`).
 - **MCP-сервер у агента.** В форме агента открыть вкладку `getByRole("tab", { name: /^MCP-серверы/ })` и нажать «Свой сервер». Заполнить `#mcp-name-0`, `#mcp-type-0` (url) и `#mcp-url-0` (тот же URL). Результат: в YAML агента есть `mcp_servers` с этим URL.
 - **Хранилище в сессии.** В окне «Новая сессия» отметить флажок с подписью `verify-vault-<n>`. Результат: `GET /v1/sessions/:id` возвращает `vault_ids` с id хранилища, в шапке сессии бейдж `[title="Хранилище секретов: verify-vault-<n>"]`.
-- **Вызов MCP.** Фейковая модель (её нужно расширить) вызывает MCP-инструмент заглушки. Ожидается: в журнале `agent.mcp_tool_use` и `agent.mcp_tool_result`, а в логе заглушки заголовок `Authorization: Bearer verify-token-<n>`. Токен приходит из хранилища (`apps/main-node/src/modules/node-managed.ts:127-160`, совпадение по `mcp_server_url`). Сейчас «не проверено».
+- **Вызов MCP.** Фейковая модель по маркеру `VERIFY_TOOL` (строки `Инструмент:` и `Вход:`) вызывает инструмент fake-mcp. Ожидается: в журнале `agent.mcp_tool_use` и `agent.mcp_tool_result`, а в журнале fake-mcp sha256 токена из хранилища (сам токен туда не пишется). Токен приходит из хранилища (`resolveNodeMcpProxyTarget` в `apps/main-node/src/modules/node-managed.ts`, совпадение по `mcp_server_url`). В главном сценарии «не проверено», в сценарии `mcp-ask` это проверка `mcp.vault_token`.
 - **Доказательство.** Скриншоты карточки хранилища и окна учётных данных, `api/vault.json`, `api/vault-credentials.json` (без токена), `api/session-with-vault.json`, лог заглушки MCP.
 
 ## Gotchas

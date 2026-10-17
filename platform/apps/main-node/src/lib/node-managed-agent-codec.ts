@@ -307,12 +307,35 @@ export function toLegacyHarnessAgentConfig(
   };
 }
 
+/**
+ * The executable copy for a confirmed call: every policy becomes allow, so
+ * `buildTools` keeps `execute`. A server without `mcp_toolset` asks in the
+ * harness, so it gets an allowing toolset, otherwise its confirmed call fails
+ * with "not executable". The new entry goes last: the first non-custom entry
+ * still picks the builtins in `getEnabledTools`.
+ */
 export function allowAllLegacyHarnessTools(
   agent: LegacyManagedHarnessAgentConfig,
 ): LegacyManagedHarnessAgentConfig {
+  const withToolset = new Set(
+    agent.tools.flatMap((tool) =>
+      tool.type === "mcp_toolset" ? [tool.mcp_server_name] : [],
+    ),
+  );
+  const bareServers: LegacyAgentTool[] = (agent.mcp_servers ?? [])
+    .filter((server) => !withToolset.has(server.name))
+    .map((server) => ({
+      type: "mcp_toolset" as const,
+      mcp_server_name: server.name,
+      default_config: {
+        enabled: true,
+        permission_policy: { type: "always_allow" as const },
+      },
+      configs: [],
+    }));
   return {
     ...agent,
-    tools: agent.tools.map((tool) => {
+    tools: [...agent.tools.map((tool): LegacyAgentTool => {
       switch (tool.type) {
         case "custom":
           return { ...tool };
@@ -341,6 +364,6 @@ export function allowAllLegacyHarnessTools(
             })),
           };
       }
-    }),
+    }), ...bareServers],
   };
 }

@@ -12,16 +12,23 @@ import type {
   AgentToolInput,
 } from "../domain/agent-definition";
 
-const DEFAULT_PERMISSION_POLICY: AgentPermissionPolicy = {
-  type: "always_allow",
-};
+/**
+ * Policy for a toolset whose input names none, as in Claude Managed Agents:
+ * built-in tools run, an MCP server tool waits for a human. Saved agents keep
+ * the policy written in them (docs/plans/cma-wave-1.md, 3.1).
+ */
+const DEFAULT_PERMISSION_POLICY = {
+  agent_toolset_20260401: { type: "always_allow" },
+  mcp_toolset: { type: "always_ask" },
+} as const satisfies Record<string, AgentPermissionPolicy>;
 
 function resolveDefaultConfig(
   input: AgentToolDefaultConfigInput | null | undefined,
+  fallback: AgentPermissionPolicy,
 ): AgentToolDefaultConfig {
   return {
     enabled: input?.enabled ?? true,
-    permissionPolicy: input?.permissionPolicy ?? DEFAULT_PERMISSION_POLICY,
+    permissionPolicy: input?.permissionPolicy ?? { ...fallback },
   };
 }
 
@@ -96,7 +103,10 @@ export function resolveAgentTools(inputs: AgentToolInput[]): AgentTool[] {
   return inputs.map((input) => {
     switch (input.type) {
       case "agent_toolset_20260401": {
-        const defaultConfig = resolveDefaultConfig(input.defaultConfig);
+        const defaultConfig = resolveDefaultConfig(
+          input.defaultConfig,
+          DEFAULT_PERMISSION_POLICY.agent_toolset_20260401,
+        );
         return {
           type: input.type,
           defaultConfig,
@@ -106,7 +116,10 @@ export function resolveAgentTools(inputs: AgentToolInput[]): AgentTool[] {
         };
       }
       case "mcp_toolset": {
-        const defaultConfig = resolveDefaultConfig(input.defaultConfig);
+        const defaultConfig = resolveDefaultConfig(
+          input.defaultConfig,
+          DEFAULT_PERMISSION_POLICY.mcp_toolset,
+        );
         return {
           type: input.type,
           mcpServerName: input.mcpServerName,
@@ -120,6 +133,66 @@ export function resolveAgentTools(inputs: AgentToolInput[]): AgentTool[] {
         return structuredClone(input);
     }
   });
+}
+
+/**
+ * Checks the MCP part of a whole agent definition: at most 20 unique servers,
+ * every server has an mcp_toolset and every mcp_toolset names a server. A
+ * Session runs it on the agent after its overrides are merged, so a server
+ * added without a toolset fails with 400 instead of running unchecked.
+ */
+export function validateMcpConfiguration(
+  mcpServers: ReadonlyArray<{ name: string }>,
+  tools: ReadonlyArray<{ type: string; mcpServerName?: string }>,
+): string | null {
+  if (mcpServers.length > 20) {
+    return "Agent MCP servers may contain at most 20 entries";
+  }
+  const serverNames = new Set<string>();
+  for (const server of mcpServers) {
+    if (serverNames.has(server.name)) {
+      return "Agent MCP server names must be unique";
+    }
+    serverNames.add(server.name);
+  }
+  const referencedNames = new Set(
+    tools.flatMap((tool) =>
+      tool.type === "mcp_toolset" && typeof tool.mcpServerName === "string"
+        ? [tool.mcpServerName]
+        : [],
+    ),
+  );
+  for (const referencedName of referencedNames) {
+    if (!serverNames.has(referencedName)) {
+      return `MCP toolset references unknown server ${referencedName}`;
+    }
+  }
+  for (const serverName of serverNames) {
+    if (!referencedNames.has(serverName)) {
+      return `MCP server ${serverName} must be referenced by an mcp_toolset`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The first MCP server whose enabled tool would ask for a confirmation, or
+ * null. A subagent thread cannot be confirmed: its call would stay without a
+ * result, so a session refuses such a roster member (docs/plans/cma-wave-1.md,
+ * section 4, decision 5).
+ */
+export function askingMcpServer(tools: ReadonlyArray<AgentTool>): string | null {
+  for (const tool of tools) {
+    if (tool.type !== "mcp_toolset") continue;
+    const { defaultConfig } = tool;
+    if (defaultConfig.enabled && defaultConfig.permissionPolicy.type === "always_ask") {
+      return tool.mcpServerName;
+    }
+    if (tool.configs.some((config) => config.enabled && config.permissionPolicy.type === "always_ask")) {
+      return tool.mcpServerName;
+    }
+  }
+  return null;
 }
 
 export function resolveAgentSkills(inputs: AgentSkillInput[]): AgentSkill[] {

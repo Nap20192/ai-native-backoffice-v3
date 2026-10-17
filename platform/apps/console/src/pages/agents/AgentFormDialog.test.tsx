@@ -556,3 +556,120 @@ describe("AgentFormDialog: старый harness агента", () => {
     expect((managed.update.mock.calls[0][1] as { _oma: unknown })._oma).toEqual({ harness: "pi" });
   });
 });
+
+describe("AgentFormDialog: разрешение MCP-сервера (план cma-wave-1, 3.1, срез 6)", () => {
+  const iikoAgent = {
+    ...existingAgent,
+    mcp_servers: [{ name: "iiko", type: "url", url: "https://mcp.example.test/iiko" }],
+    tools: [
+      { type: "agent_toolset_20260401" },
+      {
+        type: "mcp_toolset",
+        mcp_server_name: "iiko",
+        default_config: { permission_policy: { type: "always_ask" } },
+        configs: [{ name: "read_report", permission_policy: { type: "always_allow" } }],
+      },
+    ],
+  } as unknown as Agent;
+
+  async function openMcpTab() {
+    await userEvent.click(screen.getByRole("tab", { name: /^MCP-серверы/ }));
+  }
+
+  it("новый сервер спрашивает, а «Всегда разрешать» показывает предупреждение", async () => {
+    renderDialog();
+    await pickBlankTemplate();
+    await openMcpTab();
+    await userEvent.click(screen.getByRole("button", { name: "Свой сервер" }));
+
+    const permission = screen.getByRole("combobox", { name: /^Разрешение сервера/ });
+    expect(permission).toHaveTextContent("Всегда спрашивать");
+    expect(screen.queryByText(/без подтверждения/)).toBeNull();
+
+    await userEvent.click(permission);
+    await userEvent.click(await screen.findByRole("option", { name: "Всегда разрешать" }));
+
+    expect(permission).toHaveTextContent("Всегда разрешать");
+    expect(screen.getByText(/без подтверждения/)).toBeInTheDocument();
+  });
+
+  it("сохранённый агент с «Всегда разрешать» видит предупреждение сразу", async () => {
+    renderDialog({
+      agent: {
+        ...iikoAgent,
+        tools: [
+          { type: "agent_toolset_20260401" },
+          {
+            type: "mcp_toolset",
+            mcp_server_name: "iiko",
+            default_config: { permission_policy: { type: "always_allow" } },
+          },
+        ],
+      } as unknown as Agent,
+    });
+    await openMcpTab();
+
+    expect(screen.getByRole("combobox", { name: "Разрешение сервера iiko" })).toHaveTextContent(
+      "Всегда разрешать",
+    );
+    expect(screen.getByText(/без подтверждения/)).toBeInTheDocument();
+  });
+
+  it("показывает исключения агента и сохраняет новое исключение", async () => {
+    managed.update.mockResolvedValue({ ...iikoAgent, version: 3 });
+    renderDialog({ agent: iikoAgent });
+    await openMcpTab();
+
+    expect(
+      screen.getByRole("textbox", { name: "Инструмент исключения 1 сервера iiko" }),
+    ).toHaveValue("read_report");
+    await userEvent.click(screen.getByRole("button", { name: "Добавить исключение" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Инструмент исключения 2 сервера iiko" }),
+      "list_acts",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
+
+    await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
+    const body = managed.update.mock.calls[0][1] as { tools: unknown[] };
+    expect(body.tools).toContainEqual({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { permission_policy: { type: "always_ask" } },
+      configs: [
+        { name: "read_report", permission_policy: { type: "always_allow" } },
+        { name: "list_acts", permission_policy: { type: "always_allow" } },
+      ],
+    });
+  });
+
+  it("сервер платформы у ассистента открыт только для чтения", async () => {
+    renderDialog({
+      agent: {
+        ...existingAgent,
+        metadata: { oma_role: "builder" },
+        mcp_servers: [{ name: "platform", type: "url", url: "http://127.0.0.1:8787/v1/oma/platform-mcp" }],
+        tools: [
+          { type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [] },
+          {
+            type: "mcp_toolset",
+            mcp_server_name: "platform",
+            default_config: { permission_policy: { type: "always_ask" } },
+            configs: [{ name: "help", permission_policy: { type: "always_allow" } }],
+          },
+        ],
+      } as unknown as Agent,
+    });
+    await openMcpTab();
+
+    expect(screen.getByRole("textbox", { name: "Название" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "URL" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Разрешение сервера platform" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Инструмент исключения 1 сервера platform" }),
+    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Удалить MCP-сервер/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Добавить исключение" })).toBeNull();
+    expect(screen.getByText(/шаблон ассистента/)).toBeInTheDocument();
+  });
+});

@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentConfig } from "@open-managed-agents/shared";
-import { buildTools, DEFAULT_TOOLS, getEnabledBuiltinTools, disposeTools } from "../src/harness/tools";
+import { buildTools, DEFAULT_TOOLS, getEnabledBuiltinTools, getToolPermission, disposeTools } from "../src/harness/tools";
 import { emitHarnessToolUseFromCall } from "../src/harness/tool-events";
 
 const disabled = { type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [] };
 const config = (tools: unknown[]): AgentConfig => ({ tools } as AgentConfig);
+// A server without a toolset asks, so an executed MCP call needs an allowing
+// toolset. The confirmed-call copy (allowAllLegacyHarnessTools) adds the same one.
+const allowPlatform = { type: "mcp_toolset", mcp_server_name: "platform", default_config: { permission_policy: { type: "always_allow" } }, configs: [] };
 
 describe("enabled builtins", () => {
   it("preserves defaults and first non-custom entry semantics", () => {
@@ -27,6 +30,46 @@ describe("enabled builtins", () => {
   });
 });
 
+describe("MCP asks by default (plan cma-wave-1, 3.1)", () => {
+  const iiko = { type: "url", name: "iiko", url: "https://iiko.test/mcp" };
+  const withIiko = (tools: unknown[]) => ({ ...config(tools), mcp_servers: [iiko] } as AgentConfig);
+
+  it("asks for a tool of a server that has no mcp_toolset", () => {
+    expect(getToolPermission(withIiko([disabled]), "mcp__iiko__write_act")).toBe("always_ask");
+  });
+
+  it("asks when the mcp_toolset sets no policy, and keeps an explicit one", () => {
+    const bare = { type: "mcp_toolset", mcp_server_name: "iiko" };
+    expect(getToolPermission(withIiko([bare]), "mcp__iiko__write_act")).toBe("always_ask");
+    const explicit = withIiko([{
+      ...bare,
+      default_config: { permission_policy: { type: "always_allow" } },
+      configs: [{ name: "write_act", permission_policy: { type: "always_ask" } }],
+    }]);
+    expect(getToolPermission(explicit, "mcp__iiko__read_report")).toBe("always_allow");
+    expect(getToolPermission(explicit, "mcp__iiko__write_act")).toBe("always_ask");
+    expect(getToolPermission(config([]), "bash")).toBe("always_allow");
+  });
+
+  it("builds write_act of a server without a toolset as a pending call", async () => {
+    const callTool = vi.fn(async () => ({ content: [] }));
+    const mcp = await import("@open-managed-agents/mcp");
+    vi.spyOn(mcp, "connectHttpMcpClient").mockResolvedValue({
+      listTools: async () => [{ name: "write_act", inputSchema: { type: "object" } }],
+      callTool, close: vi.fn(),
+    });
+    const tools = await buildTools(withIiko([disabled]), {} as any, { mcpBinding: { fetch: vi.fn() }, tenantId: "tenant", sessionId: "session" } as any);
+    try {
+      expect(tools.mcp__iiko__write_act).toBeDefined();
+      expect(tools.mcp__iiko__write_act.execute).toBeUndefined();
+      expect(callTool).not.toHaveBeenCalled();
+    } finally {
+      await disposeTools(tools);
+      vi.restoreAllMocks();
+    }
+  });
+});
+
 it("marks pending MCP calls for confirmation and keeps server metadata", () => {
   const broadcast = vi.fn();
   for (const execute of [undefined, vi.fn()]) {
@@ -46,7 +89,7 @@ it("passes the execution toolCallId to MCP, including confirmed calls", async ()
     listTools: async () => [{ name: "create_session", inputSchema: { type: "object" } }],
     callTool, close: vi.fn(),
   });
-  const agent = { ...config([disabled]), mcp_servers: [{ type: "url", name: "platform", url: "https://mcp.test" }] } as AgentConfig;
+  const agent = { ...config([disabled, allowPlatform]), mcp_servers: [{ type: "url", name: "platform", url: "https://mcp.test" }] } as AgentConfig;
   const tools = await buildTools(agent, {} as any, { mcpBinding: { fetch: vi.fn() }, tenantId: "tenant", sessionId: "session" } as any);
   try {
     const signal = new AbortController().signal;
@@ -65,7 +108,7 @@ it("turns an MCP result with isError into a tool error, so the model and the eve
     listTools: async () => [{ name: "get", inputSchema: { type: "object" } }],
     callTool, close: vi.fn(),
   });
-  const agent = { ...config([disabled]), mcp_servers: [{ type: "url", name: "platform", url: "https://mcp.test" }] } as AgentConfig;
+  const agent = { ...config([disabled, allowPlatform]), mcp_servers: [{ type: "url", name: "platform", url: "https://mcp.test" }] } as AgentConfig;
   const tools = await buildTools(agent, {} as any, { mcpBinding: { fetch: vi.fn() }, tenantId: "tenant", sessionId: "session" } as any);
   try {
     const run = tools.mcp__platform__get.execute!({ kind: "agent", id: "x" }, { toolCallId: "call-2", messages: [], abortSignal: new AbortController().signal });

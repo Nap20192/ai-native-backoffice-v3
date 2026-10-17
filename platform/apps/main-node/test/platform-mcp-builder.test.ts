@@ -19,6 +19,9 @@ import {
   readBuilderPrompt,
 } from "../src/lib/platform-mcp/builder-template";
 import { buildBuilderBundleRoutes } from "../src/lib/platform-mcp/builder-bundle";
+import { buildDocsIndex, searchDocs } from "../src/lib/platform-mcp/docs-search";
+import { helpText } from "../src/lib/platform-mcp/help";
+import { readAssistantDocs } from "../src/lib/platform-mcp/node-wiring";
 
 const MCP_URL = "http://127.0.0.1:8788/v1/oma/platform-mcp";
 
@@ -172,6 +175,27 @@ describe("тексты ассистента K/", () => {
     for (const name of ["create_session", "send_message", "apply_changes"]) expect(builder).toContain(name);
     const reference = readFileSync(`${docsDir}/platform-reference.md`, "utf8");
     for (const word of ["Файлы", "outcome", "рубрик"]) expect(reference).toContain(word);
+  });
+
+  // План cma-wave-1, 3.1, срез 7: сервер ставит MCP без политики на always_ask, помощник знает об этом.
+  it("справка, рецепт MCP и help говорят, что MCP по умолчанию спрашивает", () => {
+    const ASK_BY_DEFAULT = "По умолчанию инструмент MCP спрашивает";
+    const docsDir = `${assistantDir()}/docs`;
+    const reference = readFileSync(`${docsDir}/platform-reference.md`, "utf8");
+    expect(reference).toContain(ASK_BY_DEFAULT);
+    expect(reference).toContain("`configs`");
+    const builder = readFileSync(`${docsDir}/platform-builder.md`, "utf8");
+    // Старый рецепт ставил always_ask только записи, как будто чтение и так идёт без человека.
+    expect(builder).not.toContain("`always_ask` у инструментов записи");
+    expect(builder).toContain(ASK_BY_DEFAULT);
+    // search_docs ищет по тому же индексу, что сервер строит при старте.
+    const found = searchDocs(buildDocsIndex(readAssistantDocs()), ASK_BY_DEFAULT.toLowerCase());
+    expect(found.map((section) => `${section.document}#${section.heading}`)).toEqual(
+      expect.arrayContaining(["platform-reference.md#Агент", "platform-builder.md#Агент с внешним сервисом через MCP"]),
+    );
+    const rules = JSON.parse(helpText("agent", {}, new Map())).rules as string;
+    expect(rules).toContain(ASK_BY_DEFAULT);
+    expect(rules).toContain("configs");
   });
 
   it("лицензии источников лежат рядом и названы в THIRD_PARTY_NOTICES.md", () => {

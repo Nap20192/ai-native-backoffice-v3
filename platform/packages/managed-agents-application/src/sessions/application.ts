@@ -3,8 +3,10 @@ import type { Session, SessionAgent } from "../domain/session";
 import type { SessionBootstrapEvent } from "../domain/session-bootstrap";
 import type { SessionThreadAgent } from "../domain/session-thread";
 import {
+  askingMcpServer,
   resolveAgentSkills,
   resolveAgentTools,
+  validateMcpConfiguration,
 } from "../agents/definition-resolution";
 import type { AgentModelInput } from "../ports/agents";
 import type {
@@ -290,6 +292,28 @@ export class SessionsApplicationService
         message: `A multiagent roster member for Agent ${agent.id} was not found`,
       };
     }
+    if (
+      command.agent.type === "overrides" &&
+      (command.agent.mcpServers !== undefined || command.agent.tools !== undefined)
+    ) {
+      const invalidMcp = validateMcpConfiguration(
+        sessionAgent.mcpServers,
+        sessionAgent.tools,
+      );
+      if (invalidMcp !== null) {
+        return { type: "invalid_request", message: invalidMcp };
+      }
+    }
+    for (const member of sessionAgent.multiagent?.agents ?? []) {
+      if (member.type !== "agent") continue;
+      const asking = askingMcpServer(member.tools);
+      if (asking !== null) {
+        return {
+          type: "invalid_request",
+          message: `Subagent ${member.id} cannot wait for a tool confirmation: MCP server ${asking} uses always_ask`,
+        };
+      }
+    }
 
     const environment = await this.dependencies.environments.find({
       workspaceId: this.dependencies.workspaceId,
@@ -491,6 +515,15 @@ export class SessionsApplicationService
       ...(command.vaultIds !== undefined && { vaultIds: command.vaultIds }),
       updatedAt: this.dependencies.clock.now().toISOString(),
     };
+    if (updatesAgent) {
+      const invalidMcp = validateMcpConfiguration(
+        next.agent.mcpServers,
+        next.agent.tools,
+      );
+      if (invalidMcp !== null) {
+        return { type: "invalid_request", message: invalidMcp };
+      }
+    }
     const replaced = await this.dependencies.store.replaceCurrent({
       workspaceId: this.dependencies.workspaceId,
       sessionId: command.sessionId,

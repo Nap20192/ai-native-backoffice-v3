@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getToolPermission } from "@open-managed-agents/agent/harness/tools";
 import type { Session } from "@open-managed-agents/managed-agents-application";
 import * as managedAgentCodec from "../src/lib/node-managed-agent-codec.js";
 import {
@@ -323,5 +324,39 @@ describe("managed Agent to legacy Node harness codec", () => {
         ],
       },
     ]);
+  });
+
+  it("gives an allowing toolset to an MCP server that has none, so a confirmed call can run", () => {
+    const withBareServer: Session = {
+      ...session,
+      agent: {
+        ...session.agent,
+        mcpServers: [
+          ...session.agent.mcpServers,
+          { type: "url", name: "iiko", url: "https://iiko.example.test/mcp" },
+        ],
+      },
+    };
+    const encoded = toLegacyHarnessAgentConfig(withBareServer);
+    const executable = allowAllLegacyHarnessTools(encoded);
+    const asHarness = (agent: typeof encoded) =>
+      agent as unknown as Parameters<typeof getToolPermission>[0];
+
+    expect(getToolPermission(asHarness(encoded), "mcp__iiko__write_act")).toBe("always_ask");
+    expect(getToolPermission(asHarness(executable), "mcp__iiko__write_act")).toBe("always_allow");
+    // The new entry goes last: the first non-custom entry still picks the builtins.
+    expect(executable.tools.map((tool) => tool.type)).toEqual([
+      "agent_toolset_20260401",
+      "mcp_toolset",
+      "custom",
+      "mcp_toolset",
+    ]);
+    expect(executable.tools[3]).toEqual({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+      configs: [],
+    });
+    expect(encoded.tools).toHaveLength(3);
   });
 });

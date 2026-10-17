@@ -16,6 +16,12 @@
 //   кода с VERIFY_DONE_<n> и строка после него. Оба текста пишутся в журнал (reply_text).
 // Запрос без маркера получает текст FAKE_MODEL_NO_MARKER.
 //
+// Сценарий mcp-ask (journey-mcp-ask.mjs): маркер «VERIFY_TOOL nonce=<n>» и строки
+// «Инструмент: <имя>» и «Вход: <JSON>». Ход 1: tool_use по инструменту запроса, чьё имя равно
+// <имя> или кончается на «__<имя>» (MCP-инструменты приходят как mcp__<сервер>__<имя>), с этим
+// входом. Ход 2 (tool_result есть): текст «VERIFY_TOOL_DONE_<n>», если в результате есть
+// «VERIFY_TOOL_OK_<n>», иначе «VERIFY_TOOL_NOT_OK_<n>: ...» (так выглядит ответ после отказа).
+//
 // В журнал пишутся user-agent, sha256 ключа (12 знаков, не сам ключ), версия anthropic-beta
 // и инструменты запроса.
 // У каждого запроса в журнале есть thinking (тип thinking из тела) и effort
@@ -78,9 +84,62 @@ const leadText = (n) =>
 const finalRunText = (n) =>
   ["Готово, итог проверки:", "", "```text", `VERIFY_DONE_${n}`, "```", "", `Файл verify-${n}.txt записан в /mnt/session/outputs и прочитан командой cat.`].join("\n");
 
+const TOOL_MARKER = /VERIFY_TOOL nonce=([a-z0-9]+)/;
+const TOOL_NAME = /^Инструмент: (\S+)$/m;
+const TOOL_INPUT = /^Вход: (.+)$/m;
+
+/** Маркер VERIFY_TOOL: вызов одного инструмента по имени, затем итог по его результату. */
+function decideTool(body) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  let start = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user" && !hasToolResult(m) && TOOL_MARKER.test(textOf(m.content))) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return null;
+  const toolNames = (Array.isArray(body.tools) ? body.tools : []).map((t) => t?.name);
+  const prompt = textOf(messages[start].content);
+  const nonce = prompt.match(TOOL_MARKER)[1];
+  const wanted = prompt.match(TOOL_NAME)?.[1];
+  const base = { kind: "TOOL", nonce, toolNames };
+  if (!wanted) return { ...base, decision: "no_tool_line", reply: { text: `VERIFY_FAIL_${nonce}: в сообщении нет строки «Инструмент: …»` } };
+  const resultMessages = messages.slice(start + 1).filter(hasToolResult);
+  if (resultMessages.length === 0) {
+    const tool = toolNames.find((name) => name === wanted || String(name).endsWith(`__${wanted}`));
+    if (!tool) return { ...base, decision: "no_tool", reply: { text: `VERIFY_FAIL_${nonce}: в запросе нет инструмента ${wanted}` } };
+    let input = {};
+    const raw = prompt.match(TOOL_INPUT)?.[1];
+    if (raw) {
+      try {
+        input = JSON.parse(raw);
+      } catch {
+        return { ...base, decision: "bad_input", reply: { text: `VERIFY_FAIL_${nonce}: строка «Вход:» не JSON` } };
+      }
+    }
+    return { ...base, decision: "tool_use", reply: { tool, input } };
+  }
+  const blocks = resultMessages.flatMap((m) => m.content.filter((block) => block?.type === "tool_result"));
+  const results = resultMessages.map((m) => textOf(m.content)).join("\n");
+  const marker = `VERIFY_TOOL_OK_${nonce}`;
+  const ok = results.includes(marker);
+  return {
+    ...base,
+    decision: "final_text",
+    toolResultHasMarker: ok,
+    toolResultIsError: blocks.some((block) => block.is_error === true),
+    toolResultExcerpt: results.slice(0, 500),
+    reply: { text: ok ? `VERIFY_TOOL_DONE_${nonce}` : `VERIFY_TOOL_NOT_OK_${nonce}: в результате ${wanted} нет ${marker}` },
+  };
+}
+
 function decide(body) {
   const builder = decideBuilder(body, { canaryFile: args["canary-file"], oracleFile: args["oracle-file"] });
   if (builder) return builder;
+  const tool = decideTool(body);
+  if (tool) return tool;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   let start = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -233,6 +292,7 @@ const server = createServer(async (req, res) => {
     nonce: d.nonce,
     decision: d.decision,
     tool_result_has_marker: d.toolResultHasMarker ?? null,
+    tool_result_is_error: d.toolResultIsError ?? null,
     tool_result_excerpt: d.toolResultExcerpt ?? null,
     step: d.step ?? null,
     builder: d.kind?.startsWith("BUILDER_") ? {

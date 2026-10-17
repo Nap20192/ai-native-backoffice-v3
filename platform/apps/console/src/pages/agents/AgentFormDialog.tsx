@@ -38,6 +38,11 @@ import { useModelOptions, type EffortLevel, type ModelOption } from "../../lib/c
 import type { AgentRecord as Agent } from "../../types/agent";
 import { useI18n } from "../../i18n";
 import {
+  BUILDER_ROLE_KEY,
+  BUILDER_ROLE_VALUE,
+  PLATFORM_SERVER_NAME,
+} from "../../lib/assistant/api";
+import {
   INITIAL_FORM,
   agentToForm,
   agentToPreservedConfig,
@@ -45,10 +50,12 @@ import {
   configToForm,
   materializeAgentUpdate,
   mergeFormIntoConfig,
+  newMcpEntry,
   parseAgentConfigText,
   prepareCodePayload,
   type FormState,
   type McpEntry,
+  type McpPermission,
   type SkillEntry,
   type ToolOverride,
 } from "./agentFormCodec";
@@ -91,6 +98,19 @@ const PERMISSION_LABEL: Record<string, string> = {
   always_ask: "Всегда спрашивать",
   disabled: "Отключён",
 };
+
+/**
+ * Сервер платформы у агента ассистента (`metadata.oma_role: builder`). Его
+ * разрешения задаёт шаблон ассистента, форма показывает их только для чтения.
+ */
+function lockedMcpServer(config: Record<string, unknown> | null): string | null {
+  const metadata = config?.metadata;
+  const role =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)[BUILDER_ROLE_KEY]
+      : undefined;
+  return role === BUILDER_ROLE_VALUE ? PLATFORM_SERVER_NAME : null;
+}
 
 const TABS = [
   { id: "basic", label: "Основное" },
@@ -261,35 +281,14 @@ export function AgentFormDialog({
     }
   };
 
-  const addMcp = () =>
-    setForm({
-      ...form,
-      mcpServers: [...form.mcpServers, {
-        name: "",
-        type: "url",
-        url: "",
-        command: "",
-        argsJson: "[]",
-        envJson: "{}",
-      }],
-    });
+  const addMcp = () => setForm({ ...form, mcpServers: [...form.mcpServers, newMcpEntry()] });
   const addMcpFromRegistry = (entry: { id: string; name: string; url: string }) => {
     if (form.mcpServers.some((m) => m.url === entry.url)) return;
-    setForm({
-      ...form,
-      mcpServers: [...form.mcpServers, {
-        name: entry.id,
-        type: "url",
-        url: entry.url,
-        command: "",
-        argsJson: "[]",
-        envJson: "{}",
-      }],
-    });
+    setForm({ ...form, mcpServers: [...form.mcpServers, newMcpEntry(entry.id, entry.url)] });
   };
-  const updateMcp = (i: number, field: keyof McpEntry, val: string) => {
+  const updateMcp = (i: number, patch: Partial<McpEntry>) => {
     const updated = [...form.mcpServers];
-    updated[i] = { ...updated[i], [field]: val };
+    updated[i] = { ...updated[i], ...patch };
     setForm({ ...form, mcpServers: updated });
   };
   const removeMcp = (i: number) =>
@@ -331,13 +330,7 @@ export function AgentFormDialog({
         model: tmpl.model,
         system: tmpl.system,
         description: tmpl.description,
-        mcpServers: tmpl.mcpServers.map((m) => ({
-          ...m,
-          type: "url" as const,
-          command: "",
-          argsJson: "[]",
-          envJson: "{}",
-        })),
+        mcpServers: tmpl.mcpServers.map((m) => newMcpEntry(m.name, m.url)),
         skills: tmpl.skills.map((s) => ({ ...s } as SkillEntry)),
       });
       setPreservedConfig(null);
@@ -649,6 +642,7 @@ export function AgentFormDialog({
                 <TabsContent value="mcp">
                   <McpTab
                     form={form}
+                    lockedServer={lockedMcpServer(preservedConfig)}
                     onPickFromRegistry={() => setShowMcpPicker(true)}
                     addMcp={addMcp}
                     updateMcp={updateMcp}
@@ -1202,15 +1196,18 @@ function SkillsTab({
 
 function McpTab({
   form,
+  lockedServer,
   onPickFromRegistry,
   addMcp,
   updateMcp,
   removeMcp,
 }: {
   form: FormState;
+  /** Сервер, который форма показывает только для чтения (платформа у ассистента). */
+  lockedServer: string | null;
   onPickFromRegistry: () => void;
   addMcp: () => void;
-  updateMcp: (i: number, field: keyof McpEntry, val: string) => void;
+  updateMcp: (i: number, patch: Partial<McpEntry>) => void;
   removeMcp: (i: number) => void;
 }) {
   return (
@@ -1228,80 +1225,104 @@ function McpTab({
           </Button>
         </div>
       </div>
-      {form.mcpServers.map((mcp, i) => (
-        <div key={i} className="space-y-4 rounded-xl bg-ddc-surface-muted p-4">
-          <div className="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
-            <Field label="Название">
-              <Input
-                id={`mcp-name-${i}`}
-                value={mcp.name}
-                onChange={(e) => updateMcp(i, "name", e.target.value)}
-                placeholder="github"
-              />
-            </Field>
-            <Field label="Тип">
-              <Select
-                id={`mcp-type-${i}`}
-                value={mcp.type}
-                onValueChange={(value) => updateMcp(i, "type", value)}
-                className="w-full"
-              >
-                <SelectOption value="url">URL</SelectOption>
-                <SelectOption value="stdio">stdio</SelectOption>
-              </Select>
-            </Field>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => removeMcp(i)}
-              aria-label={`Удалить MCP-сервер ${mcp.name || i + 1}`}
-              title="Удалить"
-              className="justify-self-end text-ddc-icon-muted hover:bg-ddc-tone-danger-bg hover:text-ddc-danger-text"
-            >
-              <Trash2Icon />
-            </Button>
-          </div>
-          {mcp.type === "url" ? (
-            <Field label="URL">
-              <Input
-                id={`mcp-url-${i}`}
-                value={mcp.url}
-                onChange={(e) => updateMcp(i, "url", e.target.value)}
-                placeholder="https://mcp.github.com/sse"
-              />
-            </Field>
-          ) : (
-            <div className="space-y-4">
-              <Field label="Команда (абсолютный путь в песочнице)">
+      {form.mcpServers.map((mcp, i) => {
+        // Новая строка без originalName не блокируется, даже если её назвали так же.
+        const locked = lockedServer !== null && mcp.originalName === lockedServer;
+        return (
+          <div key={i} className="space-y-4 rounded-xl bg-ddc-surface-muted p-4">
+            {locked && (
+              <p className="text-xs leading-4 text-ddc-text-muted">
+                Сервер платформы у ассистента. Его адрес и разрешения задаёт шаблон
+                ассистента, в форме они только для чтения.
+              </p>
+            )}
+            <div className="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
+              <Field label="Название">
                 <Input
-                  id={`mcp-command-${i}`}
-                  value={mcp.command}
-                  onChange={(e) => updateMcp(i, "command", e.target.value)}
-                  placeholder="/usr/local/bin/my-mcp-server"
+                  id={`mcp-name-${i}`}
+                  value={mcp.name}
+                  disabled={locked}
+                  onChange={(e) => updateMcp(i, { name: e.target.value })}
+                  placeholder="github"
                 />
               </Field>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Аргументы (массив JSON)">
-                  <Input
-                    id={`mcp-args-${i}`}
-                    value={mcp.argsJson}
-                    onChange={(e) => updateMcp(i, "argsJson", e.target.value)}
-                    placeholder='["--root", "/workspace"]'
-                  />
-                </Field>
-                <Field label="Переменные окружения без секретов (объект JSON)">
-                  <Input
-                    id={`mcp-env-${i}`}
-                    value={mcp.envJson}
-                    onChange={(e) => updateMcp(i, "envJson", e.target.value)}
-                    placeholder='{"LOG_LEVEL":"info"}'
-                  />
-                </Field>
-              </div>
+              <Field label="Тип">
+                <Select
+                  id={`mcp-type-${i}`}
+                  value={mcp.type}
+                  disabled={locked}
+                  onValueChange={(value) => updateMcp(i, { type: value === "stdio" ? "stdio" : "url" })}
+                  className="w-full"
+                >
+                  <SelectOption value="url">URL</SelectOption>
+                  <SelectOption value="stdio">stdio</SelectOption>
+                </Select>
+              </Field>
+              {!locked && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeMcp(i)}
+                  aria-label={`Удалить MCP-сервер ${mcp.name || i + 1}`}
+                  title="Удалить"
+                  className="justify-self-end text-ddc-icon-muted hover:bg-ddc-tone-danger-bg hover:text-ddc-danger-text"
+                >
+                  <Trash2Icon />
+                </Button>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+            {mcp.type === "url" ? (
+              <Field label="URL">
+                <Input
+                  id={`mcp-url-${i}`}
+                  value={mcp.url}
+                  disabled={locked}
+                  onChange={(e) => updateMcp(i, { url: e.target.value })}
+                  placeholder="https://mcp.github.com/sse"
+                />
+              </Field>
+            ) : (
+              <div className="space-y-4">
+                <Field label="Команда (абсолютный путь в песочнице)">
+                  <Input
+                    id={`mcp-command-${i}`}
+                    value={mcp.command}
+                    disabled={locked}
+                    onChange={(e) => updateMcp(i, { command: e.target.value })}
+                    placeholder="/usr/local/bin/my-mcp-server"
+                  />
+                </Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Аргументы (массив JSON)">
+                    <Input
+                      id={`mcp-args-${i}`}
+                      value={mcp.argsJson}
+                      disabled={locked}
+                      onChange={(e) => updateMcp(i, { argsJson: e.target.value })}
+                      placeholder='["--root", "/workspace"]'
+                    />
+                  </Field>
+                  <Field label="Переменные окружения без секретов (объект JSON)">
+                    <Input
+                      id={`mcp-env-${i}`}
+                      value={mcp.envJson}
+                      disabled={locked}
+                      onChange={(e) => updateMcp(i, { envJson: e.target.value })}
+                      placeholder='{"LOG_LEVEL":"info"}'
+                    />
+                  </Field>
+                </div>
+              </div>
+            )}
+            <McpPermissionFields
+              mcp={mcp}
+              index={i}
+              locked={locked}
+              onChange={(patch) => updateMcp(i, patch)}
+            />
+          </div>
+        );
+      })}
       {form.mcpServers.length === 0 && (
         <EmptyState
           size="sm"
@@ -1309,6 +1330,122 @@ function McpTab({
           body="MCP-серверы подключают внешние инструменты по протоколу Model Context Protocol."
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Разрешение сервера и исключения по инструментам (план cma-wave-1, 3.1).
+ * Новый сервер спрашивает перед каждым вызовом, чтение владелец разрешает по
+ * имени инструмента.
+ */
+function McpPermissionFields({
+  mcp,
+  index,
+  locked,
+  onChange,
+}: {
+  mcp: McpEntry;
+  index: number;
+  locked: boolean;
+  onChange: (patch: Partial<McpEntry>) => void;
+}) {
+  const serverName = mcp.name || String(index + 1);
+  const setException = (j: number, patch: Partial<McpEntry["toolExceptions"][number]>) => {
+    const toolExceptions = [...mcp.toolExceptions];
+    toolExceptions[j] = { ...toolExceptions[j], ...patch };
+    onChange({ toolExceptions });
+  };
+  const addException = () =>
+    onChange({
+      toolExceptions: [
+        ...mcp.toolExceptions,
+        // Исключение имеет смысл только с разрешением, которое отличается от серверного.
+        { name: "", permission: mcp.permission === "always_ask" ? "always_allow" : "always_ask" },
+      ],
+    });
+  const removeException = (j: number) =>
+    onChange({ toolExceptions: mcp.toolExceptions.filter((_, k) => k !== j) });
+
+  return (
+    <div className="space-y-4">
+      <Field
+        label="Разрешение"
+        hint="Действует для каждого инструмента сервера, кроме исключений ниже, и для инструментов, которые появятся на сервере позже."
+      >
+        <Select
+          id={`mcp-permission-${index}`}
+          value={mcp.permission}
+          disabled={locked}
+          placeholder={`Разрешение сервера ${serverName}`}
+          onValueChange={(value) => onChange({ permission: value as McpPermission })}
+          className="w-full"
+        >
+          <SelectOption value="always_ask">{PERMISSION_LABEL.always_ask}</SelectOption>
+          <SelectOption value="always_allow">{PERMISSION_LABEL.always_allow}</SelectOption>
+        </Select>
+      </Field>
+      {mcp.permission === "always_allow" && (
+        <div className="callout-warning">
+          <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-4 flex-none" />
+          <p className="min-w-0">
+            Агент вызывает инструменты сервера без подтверждения, в том числе те, что
+            меняют данные во внешней системе. Оставьте «Всегда спрашивать», а чтение
+            разрешите исключениями ниже.
+          </p>
+        </div>
+      )}
+      <div>
+        <div className="text-sm font-medium text-ddc-heading">Исключения по инструментам</div>
+        <p className="mt-1 mb-3 text-xs leading-4 text-ddc-text-muted">
+          Своё разрешение для отдельного инструмента. Имя пишите так, как его отдаёт
+          сервер, например <span className="font-mono">read_report</span>.
+        </p>
+        {mcp.toolExceptions.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {mcp.toolExceptions.map((exception, j) => (
+              <div key={j} className="flex flex-wrap items-center gap-2">
+                <Input
+                  value={exception.name}
+                  disabled={locked}
+                  onChange={(e) => setException(j, { name: e.target.value })}
+                  aria-label={`Инструмент исключения ${j + 1} сервера ${serverName}`}
+                  placeholder="read_report"
+                  className="min-w-0 flex-1 basis-full font-mono sm:basis-0"
+                />
+                <Select
+                  value={exception.permission}
+                  disabled={locked}
+                  placeholder={`Разрешение исключения ${j + 1} сервера ${serverName}`}
+                  onValueChange={(value) => setException(j, { permission: value as McpPermission })}
+                  className="min-w-0 flex-1 sm:w-52 sm:flex-none"
+                >
+                  <SelectOption value="always_allow">{PERMISSION_LABEL.always_allow}</SelectOption>
+                  <SelectOption value="always_ask">{PERMISSION_LABEL.always_ask}</SelectOption>
+                </Select>
+                {!locked && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeException(j)}
+                    aria-label={`Удалить исключение ${exception.name || j + 1}`}
+                    title="Удалить"
+                    className="flex-none text-ddc-icon-muted hover:bg-ddc-tone-danger-bg hover:text-ddc-danger-text"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {!locked && (
+          <Button variant="outline" size="sm" onClick={addException}>
+            <PlusIcon />
+            Добавить исключение
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

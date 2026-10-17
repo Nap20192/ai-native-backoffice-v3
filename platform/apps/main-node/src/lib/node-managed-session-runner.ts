@@ -201,6 +201,53 @@ function findLastMatching<T>(
   return undefined;
 }
 
+function answerKey(
+  type: ManagedNodeConfirmableToolUse["type"],
+  toolUseId: string,
+): string {
+  return `${type}:${toolUseId}`;
+}
+
+/** One history event applied to the set of calls that have a result. A later
+ * call that reuses a model's tool id starts unanswered again. */
+function trackAnswer(answered: Set<string>, event: SessionEventView): void {
+  if (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") {
+    answered.delete(answerKey(event.type, event.id));
+  } else if (event.type === "agent.tool_result") {
+    answered.add(answerKey("agent.tool_use", event.toolUseId));
+  } else if (event.type === "agent.mcp_tool_result") {
+    answered.add(answerKey("agent.mcp_tool_use", event.mcpToolUseId));
+  }
+}
+
+/** Calls that already have a result, in the history of all threads. */
+function answeredToolUses(events: readonly SessionEventView[]): Set<string> {
+  const answered = new Set<string>();
+  for (const event of events) trackAnswer(answered, event);
+  return answered;
+}
+
+/**
+ * True when the call had its result before this confirmation was received:
+ * the confirmation repeats one that was already handled. A replay after a
+ * crash finds the result after the confirmation instead, and its turn still
+ * has to finish. A confirmation missing from the history counts as new.
+ */
+function repeatsAnsweredCall(
+  events: readonly SessionEventView[],
+  confirmationId: string,
+  key: string,
+): boolean {
+  const answered = new Set<string>();
+  for (const event of events) {
+    if (event.type === "user.tool_confirmation" && event.id === confirmationId) {
+      return answered.has(key);
+    }
+    trackAnswer(answered, event);
+  }
+  return false;
+}
+
 export class DefaultNodeManagedSessionRunner
   implements NodeManagedSessionRunner
 {
@@ -442,12 +489,16 @@ export class DefaultNodeManagedSessionRunner
     runtime.broadcastProducedEvent({ type: "session.status_running" });
     let turnTools: HarnessContext["tools"] | undefined;
     let runFailed = false;
+    // Confirmations of this run that came after their call's result.
+    const repeated = new Set<string>();
     try {
       if (event.type === "user.tool_confirmation") {
         // Every confirmation of this run, in order: two calls that waited in
-        // one turn may be confirmed together. A call with a result already
-        // never runs again.
+        // one turn may be confirmed together. A call that already has a
+        // result (in the history of all threads, or earlier in this run) never
+        // runs again, so a repeated allow executes nothing.
         const waiting = new Set(pendingConfirmations(runtime.history.getEvents()));
+        const answered = answeredToolUses(input.historyEvents);
         for (const confirmation of input.events) {
           if (confirmation.type !== "user.tool_confirmation") continue;
           const toolUse = findLastMatching(
@@ -462,8 +513,16 @@ export class DefaultNodeManagedSessionRunner
               `Tool use ${confirmation.toolUseId} was not found in session history`,
             );
           }
+          const key = answerKey(toolUse.type, toolUse.id);
+          if (answered.has(key)) {
+            if (repeatsAnsweredCall(input.historyEvents, confirmation.id, key)) {
+              repeated.add(confirmation.id);
+            }
+            continue;
+          }
           if (!waiting.has(toolUse.id) && confirmation !== event) continue;
           waiting.delete(toolUse.id);
+          answered.add(key);
           const result = confirmation.result === "deny"
             ? {
                 content: [{
@@ -599,8 +658,16 @@ export class DefaultNodeManagedSessionRunner
       };
       // Another call of the turn still waits for its confirmation: the model
       // would see a tool call without a result, so it resumes only after the
-      // last one (docs/plans/builder-agent.md, 2.5).
-      if (event.type !== "user.tool_confirmation" || pendingConfirmations(runtime.history.getEvents()).length === 0) {
+      // last one (docs/plans/builder-agent.md, 2.5). A run that only repeats
+      // handled confirmations wakes no model: its turn already ran
+      // (plan cma-wave-1, 3.1, decision 4).
+      const onlyRepeats = input.events.every((accepted) =>
+        accepted.type === "system.message" || repeated.has(accepted.id),
+      );
+      if (
+        event.type !== "user.tool_confirmation" ||
+        (!onlyRepeats && pendingConfirmations(runtime.history.getEvents()).length === 0)
+      ) {
         await runHarness();
       }
       if (event.type === "user.define_outcome") {
@@ -609,6 +676,9 @@ export class DefaultNodeManagedSessionRunner
           Math.max(1, event.maxIterations ?? 3),
         );
         for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+          // A call of the turn waits for the user: the work is not finished,
+          // so the session stops on requires_action without an evaluation.
+          if (pendingConfirmations(runtime.history.getEvents()).length > 0) break;
           const evaluationHistory = runtime.getApplicationHistoryEvents();
           const startId = runtime.broadcastProducedEvent({
             type: "span.outcome_evaluation_start",

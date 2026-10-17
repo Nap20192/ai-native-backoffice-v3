@@ -42,4 +42,16 @@ describe("agents/format", () => {
     expect(toolLabel({ type: "mcp_toolset" })).toBe("MCP-сервер");
     expect(toolLabel({ type: "future_toolset" })).toBe("future_toolset");
   });
+
+  it("помечает MCP-сервер, который вызывается без подтверждения (план cma-wave-1, 3.1)", () => {
+    const allow = { permission_policy: { type: "always_allow" } };
+    const ask = { permission_policy: { type: "always_ask" } };
+    expect(toolLabel({ type: "mcp_toolset", mcp_server_name: "iiko", default_config: allow })).toBe(
+      "MCP: iiko, без подтверждения",
+    );
+    expect(toolLabel({ type: "mcp_toolset", mcp_server_name: "iiko", default_config: ask })).toBe(
+      "MCP: iiko",
+    );
+    expect(toolLabel({ type: "mcp_toolset", mcp_server_name: "iiko" })).toBe("MCP: iiko");
+  });
 });

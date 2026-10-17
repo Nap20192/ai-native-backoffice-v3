@@ -512,17 +512,19 @@ describe("AgentsApplicationService", () => {
             ],
           },
           {
+            // An MCP toolset without a policy asks, as mcp_toolset does in
+            // Claude Managed Agents (docs/plans/cma-wave-1.md, 3.1).
             type: "mcp_toolset",
             mcpServerName: "docs",
             defaultConfig: {
               enabled: true,
-              permissionPolicy: { type: "always_allow" },
+              permissionPolicy: { type: "always_ask" },
             },
             configs: [
               {
                 name: "search_docs",
                 enabled: true,
-                permissionPolicy: { type: "always_allow" },
+                permissionPolicy: { type: "always_ask" },
               },
             ],
           },

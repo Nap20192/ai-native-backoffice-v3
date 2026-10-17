@@ -35,6 +35,7 @@ import type {
 import {
   resolveAgentSkills,
   resolveAgentTools,
+  validateMcpConfiguration,
 } from "./definition-resolution";
 import { dependencyConflictOf } from "../dependencies/application";
 import type { DependenciesApplicationPort } from "../ports/dependencies";
@@ -344,40 +345,6 @@ function validateMetadata(metadata: Record<string, string>): string | null {
     }
     if (value.length > 512) {
       return "Agent metadata values may contain at most 512 characters";
-    }
-  }
-  return null;
-}
-
-function validateMcpConfiguration(
-  mcpServers: Array<{ name: string }>,
-  tools: Array<{ type: string; mcpServerName?: string }>,
-): string | null {
-  if (mcpServers.length > 20) {
-    return "Agent MCP servers may contain at most 20 entries";
-  }
-  const serverNames = new Set<string>();
-  for (const server of mcpServers) {
-    if (serverNames.has(server.name)) {
-      return "Agent MCP server names must be unique";
-    }
-    serverNames.add(server.name);
-  }
-  const referencedNames = new Set(
-    tools.flatMap((tool) =>
-      tool.type === "mcp_toolset" && typeof tool.mcpServerName === "string"
-        ? [tool.mcpServerName]
-        : [],
-    ),
-  );
-  for (const referencedName of referencedNames) {
-    if (!serverNames.has(referencedName)) {
-      return `MCP toolset references unknown server ${referencedName}`;
-    }
-  }
-  for (const serverName of serverNames) {
-    if (!referencedNames.has(serverName)) {
-      return `MCP server ${serverName} must be referenced by an mcp_toolset`;
     }
   }
   return null;

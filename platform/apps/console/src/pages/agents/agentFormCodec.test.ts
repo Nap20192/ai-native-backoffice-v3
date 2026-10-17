@@ -13,6 +13,7 @@ import {
   mergeMcpServers,
   mergeToolsField,
   materializeAgentUpdate,
+  newMcpEntry,
   parseAgentConfigText,
   prepareCodePayload,
 } from "./agentFormCodec";
@@ -244,6 +245,8 @@ describe("agentFormCodec lossless update", () => {
       command: "/usr/local/bin/workspace-mcp",
       argsJson: '["--root","/workspace"]',
       envJson: '{"LOG_LEVEL":"info"}',
+      permission: "always_ask",
+      toolExceptions: [],
     }]);
     expect(mergeMcpServers(agent.mcp_servers as unknown[], form.mcpServers)).toEqual([
       {
@@ -275,6 +278,25 @@ describe("agentFormCodec lossless update", () => {
     expect(payload.tools).toContainEqual({
       type: "mcp_toolset",
       mcp_server_name: "renamed-github",
+      default_config: { permission_policy: { type: "always_ask" } },
+    });
+  });
+
+  it("новому серверу MCP форма пишет «Всегда спрашивать», старому оставляет его политику", () => {
+    const agent = sampleAgent();
+    const form = agentToForm(agent);
+    form.mcpServers.push(newMcpEntry("iiko", "https://mcp.example.test/iiko"));
+
+    const tools = mergeToolsField(agent.tools, form);
+
+    expect(tools).toContainEqual({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { permission_policy: { type: "always_ask" } },
+    });
+    expect(tools).toContainEqual({
+      type: "mcp_toolset",
+      mcp_server_name: "github",
       default_config: { permission_policy: { type: "always_ask" } },
     });
   });
@@ -787,5 +809,109 @@ describe("старый harness агента", () => {
       (payload.tools as unknown[]).some((t) => (t as { type?: string }).type === "custom"),
     ).toBe(true);
     expect((payload.mcp_servers as Array<{ name: string }>)[0]?.name).toBe("github");
+  });
+});
+
+describe("разрешение MCP-сервера в форме (план cma-wave-1, 3.1, срез 6)", () => {
+  function iikoAgent(toolset?: Record<string, unknown>): AgentRecord {
+    return sampleAgent({
+      mcp_servers: [{ name: "iiko", type: "url", url: "https://mcp.example.test/iiko" }],
+      tools: [{ type: "agent_toolset_20260401" }, ...(toolset ? [toolset] : [])],
+    } as unknown as Partial<AgentRecord>);
+  }
+
+  it("читает разрешение сервера и исключения, чужие строки configs исключениями не считает", () => {
+    const form = agentToForm(iikoAgent({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+      configs: [
+        { name: "read_report", permission_policy: { type: "always_allow" } },
+        { name: "write_act", enabled: true, permission_policy: { type: "always_ask" } },
+        { name: "drop_all", enabled: false },
+      ],
+    }));
+
+    expect(form.mcpServers[0]).toMatchObject({
+      permission: "always_allow",
+      toolExceptions: [
+        { name: "read_report", permission: "always_allow" },
+        { name: "write_act", permission: "always_ask" },
+      ],
+    });
+  });
+
+  it("набор без политики и сервер без набора форма читает как «Всегда спрашивать»", () => {
+    const noPolicy = agentToForm(iikoAgent({ type: "mcp_toolset", mcp_server_name: "iiko" }));
+    const noToolset = agentToForm(iikoAgent());
+
+    expect(noPolicy.mcpServers[0]).toMatchObject({ permission: "always_ask", toolExceptions: [] });
+    expect(noToolset.mcpServers[0]).toMatchObject({ permission: "always_ask", toolExceptions: [] });
+  });
+
+  it("правка разрешения и исключений сохраняет чужие строки configs и поля набора", () => {
+    const agent = iikoAgent({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+      configs: [
+        { name: "read_report", permission_policy: { type: "always_allow" } },
+        { name: "write_act", enabled: true, permission_policy: { type: "always_allow" } },
+        { name: "drop_all", enabled: false },
+      ],
+    });
+    const form = agentToForm(agent);
+    form.mcpServers[0].permission = "always_ask";
+    form.mcpServers[0].toolExceptions = [
+      { name: "write_act", permission: "always_ask" },
+      { name: "list_acts", permission: "always_allow" },
+    ];
+
+    const payload = mergeFormIntoConfig(form, agentToPreservedConfig(agent), { forUpdate: true });
+
+    expect(payload.tools).toContainEqual({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { enabled: true, permission_policy: { type: "always_ask" } },
+      configs: [
+        { name: "write_act", enabled: true, permission_policy: { type: "always_ask" } },
+        { name: "drop_all", enabled: false },
+        { name: "list_acts", permission_policy: { type: "always_allow" } },
+      ],
+    });
+  });
+
+  it("правка имени агента отправляет набор без политики как есть", () => {
+    const toolset = { type: "mcp_toolset", mcp_server_name: "iiko", configs: [] };
+    const agent = iikoAgent(toolset);
+    const form = agentToForm(agent);
+    form.name = "Другое имя";
+
+    expect(mergeToolsField(agent.tools, form)).toContainEqual(toolset);
+  });
+
+  it("новый сервер с исключением получает строку configs, пустое имя исключения не уходит", () => {
+    const agent = sampleAgent();
+    const form = agentToForm(agent);
+    form.mcpServers.push({
+      name: "iiko",
+      type: "url",
+      url: "https://mcp.example.test/iiko",
+      command: "",
+      argsJson: "[]",
+      envJson: "{}",
+      permission: "always_ask",
+      toolExceptions: [
+        { name: "read_report", permission: "always_allow" },
+        { name: "  ", permission: "always_allow" },
+      ],
+    });
+
+    expect(mergeToolsField(agent.tools, form)).toContainEqual({
+      type: "mcp_toolset",
+      mcp_server_name: "iiko",
+      default_config: { permission_policy: { type: "always_ask" } },
+      configs: [{ name: "read_report", permission_policy: { type: "always_allow" } }],
+    });
   });
 });

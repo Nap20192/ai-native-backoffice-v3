@@ -810,6 +810,202 @@ describe("DefaultNodeManagedSessionRunner", () => {
     ]);
   });
 
+  describe("one confirmation runs the call once (plan cma-wave-1, 3.1, slice 4)", () => {
+    const writeAct = (threadId?: string): Extract<
+      SessionEventView,
+      { type: "agent.mcp_tool_use" }
+    > => ({
+      id: "event_mcp_tool_use_01",
+      type: "agent.mcp_tool_use",
+      mcpServerName: "iiko",
+      name: "write_act",
+      input: { act: "A-1" },
+      evaluatedPermission: "ask",
+      processedAt: "2026-08-26T03:35:00.000Z",
+      ...(threadId !== undefined && { sessionThreadId: threadId }),
+    });
+    const allow = (id: string, processedAt: string): Extract<
+      NodeManagedSessionRunnerAcceptInput["events"][number],
+      { type: "user.tool_confirmation" }
+    > => ({
+      id,
+      type: "user.tool_confirmation",
+      result: "allow",
+      toolUseId: "event_mcp_tool_use_01",
+      processedAt,
+    });
+    const writeActResult = (threadId?: string): Extract<
+      SessionEventView,
+      { type: "agent.mcp_tool_result" }
+    > => ({
+      id: "event_mcp_tool_result_01",
+      type: "agent.mcp_tool_result",
+      mcpToolUseId: "event_mcp_tool_use_01",
+      content: [{ type: "text", text: "act written" }],
+      isError: false,
+      processedAt: "2026-08-26T03:41:00.000Z",
+      ...(threadId !== undefined && { sessionThreadId: threadId }),
+    });
+
+    async function acceptConfirmations(input: {
+      events: NodeManagedSessionRunnerAcceptInput["events"];
+      historyEvents: SessionEventView[];
+    }) {
+      const modulePath = "../src/lib/node-managed-session-runner.ts";
+      const runnerModule = await import(/* @vite-ignore */ modulePath) as {
+        DefaultNodeManagedSessionRunner: RunnerConstructor;
+      };
+      const executions: string[] = [];
+      let nextId = 0;
+      let turns = 0;
+      const runner = new runnerModule.DefaultNodeManagedSessionRunner({
+        outcomes: { evaluate: async () => { throw new Error("unexpected outcome evaluation"); } },
+        confirmedTools: {
+          execute: async (call) => {
+            executions.push(call.toolUse.id);
+            return { content: [{ type: "text", text: "act written" }], isError: false };
+          },
+        },
+        buildSandbox: async () => ({}) as SandboxExecutor,
+        buildModel: async () => ({}),
+        buildTools: async () => ({}),
+        buildHarness: () => ({ run: async () => { turns += 1; } }),
+        buildHarnessContext: async (context) => context,
+        clock: { now: () => new Date("2026-08-26T03:45:00.000Z") },
+        ids: { nextEventId: () => `event_once_0${++nextId}` },
+      });
+      await runner.start({
+        workspaceId: "workspace_01",
+        sessionId: session.id,
+        session,
+        environment,
+        initialEvents: [],
+      });
+      const output: Array<{ type?: string }> = [];
+      await runner.accept({
+        workspaceId: "workspace_01",
+        sessionId: session.id,
+        session,
+        environment,
+        events: input.events,
+        initialEvents: [],
+        historyEvents: input.historyEvents,
+        output: async (frame) => { output.push(frame as { type?: string }); },
+      });
+      return {
+        executions,
+        turns,
+        results: output.filter((frame) => frame.type === "agent.mcp_tool_result"),
+      };
+    }
+
+    it("a second allow on a call that already has a result runs nothing", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+      const second = allow("event_user_confirmation_02", "2026-08-26T03:44:00.000Z");
+
+      const { executions, results } = await acceptConfirmations({
+        events: [second],
+        historyEvents: [writeAct(), first, writeActResult(), second],
+      });
+
+      expect(executions).toEqual([]);
+      expect(results).toEqual([]);
+    });
+
+    it("skips a call whose result sits in another thread's history", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+      const second = allow("event_user_confirmation_02", "2026-08-26T03:44:00.000Z");
+
+      const { executions, results } = await acceptConfirmations({
+        events: [second],
+        historyEvents: [
+          writeAct("sthr_child"),
+          first,
+          writeActResult("sthr_child"),
+          second,
+        ],
+      });
+
+      expect(executions).toEqual([]);
+      expect(results).toEqual([]);
+    });
+
+    it("still runs a later call that reuses the tool id of an answered one", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+      const second = allow("event_user_confirmation_02", "2026-08-26T03:44:00.000Z");
+      const laterCall = { ...writeAct(), processedAt: "2026-08-26T03:43:00.000Z" };
+
+      const { executions, results } = await acceptConfirmations({
+        events: [second],
+        historyEvents: [writeAct(), first, writeActResult(), laterCall, second],
+      });
+
+      expect(executions).toEqual(["event_mcp_tool_use_01"]);
+      expect(results).toHaveLength(1);
+    });
+
+    // A repeated allow wakes no model either: the turn after the first allow
+    // already ran, a second one would repeat its messages and builtin calls.
+    it("a second allow on an answered call starts no model turn", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+      const second = allow("event_user_confirmation_02", "2026-08-26T03:44:00.000Z");
+
+      const { executions, turns } = await acceptConfirmations({
+        events: [second],
+        historyEvents: [writeAct(), first, writeActResult(), second],
+      });
+
+      expect(executions).toEqual([]);
+      expect(turns).toBe(0);
+    });
+
+    it("a replayed confirmation finds its own result and still finishes the turn", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+
+      // The worker wrote the result and died before the turn ended.
+      const { executions, results, turns } = await acceptConfirmations({
+        events: [first],
+        historyEvents: [writeAct(), first, writeActResult()],
+      });
+
+      expect(executions).toEqual([]);
+      expect(results).toEqual([]);
+      expect(turns).toBe(1);
+    });
+
+    it("a user message next to a repeated allow still gets its turn", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+      const message: NodeManagedSessionRunnerAcceptInput["events"][number] = {
+        id: "event_user_message_02",
+        type: "user.message",
+        content: [{ type: "text", text: "Что дальше?" }],
+        processedAt: "2026-08-26T03:43:00.000Z",
+      };
+      const second = allow("event_user_confirmation_02", "2026-08-26T03:44:00.000Z");
+
+      const { executions, turns } = await acceptConfirmations({
+        events: [message, second],
+        historyEvents: [writeAct(), first, writeActResult(), message, second],
+      });
+
+      expect(executions).toEqual([]);
+      expect(turns).toBe(1);
+    });
+
+    it("two allows of one waiting call in the same run execute it once", async () => {
+      const first = allow("event_user_confirmation_01", "2026-08-26T03:40:00.000Z");
+      const second = allow("event_user_confirmation_02", "2026-08-26T03:40:01.000Z");
+
+      const { executions, results } = await acceptConfirmations({
+        events: [first, second],
+        historyEvents: [writeAct(), first, second],
+      });
+
+      expect(executions).toEqual(["event_mcp_tool_use_01"]);
+      expect(results).toHaveLength(1);
+    });
+  });
+
   it("runs and evaluates a defined outcome through official spans", async () => {
     const modulePath = "../src/lib/node-managed-session-runner.ts";
     const runnerModule = await import(/* @vite-ignore */ modulePath) as {
@@ -1033,6 +1229,116 @@ describe("DefaultNodeManagedSessionRunner", () => {
           "</outcome_feedback>",
         ].join("\n"),
       }],
+    });
+  });
+
+  describe("outcome evaluation waits for a confirmation (plan cma-wave-1, 3.1, slice 5)", () => {
+    const writeAct = {
+      type: "agent.mcp_tool_use",
+      id: "event_mcp_tool_use_ask",
+      mcp_server_name: "iiko",
+      name: "write_act",
+      input: { act: "A-1" },
+      evaluated_permission: "ask",
+    } as SessionEvent;
+    const outcome: Extract<
+      NodeManagedSessionRunnerAcceptInput["events"][number],
+      { type: "user.define_outcome" }
+    > = {
+      id: "event_define_outcome_ask",
+      type: "user.define_outcome",
+      description: "Write the act",
+      rubric: { type: "text", content: "The act is written" },
+      maxIterations: 3,
+      outcomeId: "outc_ask",
+      processedAt: "2026-08-26T05:00:00.000Z",
+    };
+
+    async function runOutcome(input: {
+      /** Harness runs (0-based) that stop on a call waiting for "Разрешить". */
+      askOnRuns: number[];
+      evaluation: "satisfied" | "needs_revision";
+    }) {
+      const modulePath = "../src/lib/node-managed-session-runner.ts";
+      const runnerModule = await import(/* @vite-ignore */ modulePath) as {
+        DefaultNodeManagedSessionRunner: RunnerConstructor;
+      };
+      let runs = 0;
+      let nextId = 0;
+      const iterations: number[] = [];
+      const runner = new runnerModule.DefaultNodeManagedSessionRunner({
+        outcomes: {
+          evaluate: async (call) => {
+            iterations.push(call.iteration);
+            return {
+              result: input.evaluation,
+              explanation: "write the act",
+              usage: { cacheCreationInputTokens: 0, cacheReadInputTokens: 0, inputTokens: 1, outputTokens: 1 },
+            };
+          },
+        },
+        confirmedTools: { execute: async () => { throw new Error("unexpected confirmed tool execution"); } },
+        buildSandbox: async () => ({} as SandboxExecutor),
+        buildModel: async () => ({}),
+        buildTools: async () => ({}),
+        buildHarness: () => ({
+          run: async (context) => {
+            const run = runs;
+            runs += 1;
+            if (!input.askOnRuns.includes(run)) return;
+            (context as { runtime: { broadcast(event: SessionEvent): void } })
+              .runtime.broadcast(writeAct);
+          },
+        }),
+        buildHarnessContext: async (context) => context,
+        clock: { now: () => new Date("2026-08-26T05:30:00.000Z") },
+        ids: { nextEventId: () => `event_outcome_ask_0${++nextId}` },
+      });
+      await runner.start({
+        workspaceId: "workspace_01",
+        sessionId: session.id,
+        session,
+        environment,
+        initialEvents: [],
+      });
+      const output: Array<{ type?: string; result?: string; stop_reason?: object }> = [];
+      await runner.accept({
+        workspaceId: "workspace_01",
+        sessionId: session.id,
+        session,
+        environment,
+        events: [outcome],
+        initialEvents: [],
+        historyEvents: [outcome],
+        output: async (frame) => { output.push(frame as (typeof output)[number]); },
+      });
+      return { runs, iterations, output };
+    }
+
+    it("does not evaluate while a call of the turn waits for a confirmation", async () => {
+      const { runs, iterations, output } = await runOutcome({ askOnRuns: [0], evaluation: "satisfied" });
+
+      expect(runs).toBe(1);
+      expect(iterations).toEqual([]);
+      expect(output.some((frame) => frame.type === "span.outcome_evaluation_start")).toBe(false);
+      expect(output.at(-1)).toMatchObject({
+        type: "session.status_idle",
+        stop_reason: { type: "requires_action", event_ids: ["event_mcp_tool_use_ask"] },
+      });
+    });
+
+    it("stops a revision that waits for a confirmation before the next evaluation", async () => {
+      const { runs, iterations, output } = await runOutcome({ askOnRuns: [1], evaluation: "needs_revision" });
+
+      expect(runs).toBe(2);
+      expect(iterations).toEqual([0]);
+      expect(output
+        .filter((frame) => frame.type === "span.outcome_evaluation_end")
+        .map((frame) => frame.result)).toEqual(["needs_revision"]);
+      expect(output.at(-1)).toMatchObject({
+        type: "session.status_idle",
+        stop_reason: { type: "requires_action", event_ids: ["event_mcp_tool_use_ask"] },
+      });
     });
   });
 

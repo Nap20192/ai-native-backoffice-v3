@@ -2,14 +2,14 @@
 # Поднимает изолированный экземпляр конструктора агентов для проверки:
 #   1) пустая папка данных прогона ($VERIFY_STATE_ROOT/runs/<RUN_ID>);
 #   2) сборка консоли в эту папку (apps/console/dist не трогается);
-#   3) фейковая модель на $VERIFY_FAKE_PORT (режим fake);
+#   3) фейковая модель на $VERIFY_FAKE_PORT (режим fake) и фейковый MCP-сервер на $VERIFY_FAKE_MCP_PORT;
 #   4) main-node на SQLite на $VERIFY_PORT с CONSOLE_DIR из п. 2;
 #   5) ожидание готовности: /health, /auth-info, GET /, миграции, строка listening.
 # Использование: RUN="$(scripts/launch.sh)"   (stdout — только папка прогона, всё остальное в stderr)
 # Код 0: экземпляр готов, на stdout одна строка — папка прогона для --run / VERIFY_RUN_DIR.
 # Код 1: экземпляр не готов; всё, что этот вызов успел запустить, он сам останавливает
 #   (scripts/cleanup.sh для своей папки) и пишет «ПРЕРВАН на шаге launch» в summary.md.
-# Переменные: VERIFY_PORT (8791), VERIFY_FAKE_PORT (8792), VERIFY_MODEL_MODE (fake|real),
+# Переменные: VERIFY_PORT (8791), VERIFY_FAKE_PORT (8792), VERIFY_FAKE_MCP_PORT (8793), VERIFY_MODEL_MODE (fake|real),
 #   VERIFY_LITEBOX_DISK_SIZE_GB / VERIFY_LITEBOX_MEMORY_MIB (диск и память VM, по умолчанию как в BoxLite),
 #   VERIFY_CONSOLE_DIR (готовая сборка консоли, тогда сборка пропускается), VERIFY_RUN_ID.
 set -euo pipefail
@@ -20,10 +20,13 @@ vac_node24
 
 vac_guard_port_value "$VERIFY_PORT"
 vac_guard_port_value "$VERIFY_FAKE_PORT"
+vac_guard_port_value "$VERIFY_FAKE_MCP_PORT"
 [ "$VERIFY_PORT" != "$VERIFY_FAKE_PORT" ] || vac_die "VERIFY_PORT и VERIFY_FAKE_PORT совпадают"
+case "$VERIFY_FAKE_MCP_PORT" in "$VERIFY_PORT"|"$VERIFY_FAKE_PORT") vac_die "VERIFY_FAKE_MCP_PORT совпадает с VERIFY_PORT или VERIFY_FAKE_PORT" ;; esac
 vac_port_busy "$VERIFY_PORT" && vac_die "порт $VERIFY_PORT уже занят: чужой экземпляр не ведём (scripts/doctor.sh покажет, чей)"
 MODE="$(vac_model_mode)"
 [ "$MODE" = fake ] && vac_port_busy "$VERIFY_FAKE_PORT" && vac_die "порт $VERIFY_FAKE_PORT уже занят"
+vac_port_busy "$VERIFY_FAKE_MCP_PORT" && vac_die "порт $VERIFY_FAKE_MCP_PORT (фейковый MCP-сервер) уже занят"
 
 # Один прогон за раз: кэш BoxLite допускает только один рантайм на папку.
 # Проверяются все прогоны в runs/, а не «последний»: чужой прогон этот скрипт не трогает.
@@ -63,6 +66,7 @@ log() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LAUNCH_LOG" >&2; }
 CONSOLE_DIR="${VERIFY_CONSOLE_DIR:-$RUN_DIR/console}"
 BASE_URL="http://$VERIFY_HOST:$VERIFY_PORT"
 FAKE_URL="http://$VERIFY_HOST:$VERIFY_FAKE_PORT"
+FAKE_MCP_URL="http://$VERIFY_HOST:$VERIFY_FAKE_MCP_PORT"
 GIT_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 # shellcheck disable=SC2086
 CONSOLE_DIRTY="$( (git -C "$REPO_ROOT" status --porcelain -- $VAC_CONSOLE_PATHS 2>/dev/null || true) | wc -l | tr -d ' ')"
@@ -107,6 +111,10 @@ SERVER_HOME=$VERIFY_SERVER_HOME
 SERVER_LOG=$RUN_DIR/logs/main-node.log
 FAKE_LOG=$RUN_DIR/logs/fake-model.log
 FAKE_REQUESTS=$RUN_DIR/logs/fake-model-requests.jsonl
+VERIFY_FAKE_MCP_PORT=$VERIFY_FAKE_MCP_PORT
+FAKE_MCP_URL=$FAKE_MCP_URL
+FAKE_MCP_LOG=$RUN_DIR/logs/fake-mcp.log
+FAKE_MCP_REQUESTS=$RUN_DIR/logs/fake-mcp.jsonl
 GIT_REV=$GIT_REV
 CONSOLE_DIRTY_FILES=$CONSOLE_DIRTY
 SERVER_DIRTY_FILES=$SERVER_DIRTY
@@ -150,6 +158,17 @@ if [ "$MODE" = fake ]; then
   curl -fsS "$FAKE_URL/health" >/dev/null || { cat "$RUN_DIR/logs/fake-model.log" >&2; vac_die "фейковая модель не ответила"; }
   log "фейковая модель: $FAKE_URL"
 fi
+
+# --- 2б. Фейковый MCP-сервер -------------------------------------------------------
+# Нужен сценарию mcp-ask, поднимается в любом режиме модели: MCP-вызов идёт с хоста
+# через прокси main-node, а не к модели.
+( exec nice -n 15 "$VAC_NODE_BIN" "$VAC_SCRIPTS/fake-mcp.mjs" \
+    --port "$VERIFY_FAKE_MCP_PORT" --log "$RUN_DIR/logs/fake-mcp.jsonl" ) \
+  > "$RUN_DIR/logs/fake-mcp.log" 2>&1 < /dev/null &
+vac_record_pid fake-mcp "$!"
+for _ in $(seq 1 50); do curl -fsS "$FAKE_MCP_URL/health" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -fsS "$FAKE_MCP_URL/health" >/dev/null || { cat "$RUN_DIR/logs/fake-mcp.log" >&2; vac_die "фейковый MCP-сервер не ответил"; }
+log "фейковый MCP-сервер: $FAKE_MCP_URL/mcp"
 
 # --- 3. Сервер ---------------------------------------------------------------------
 vac_wait_cool

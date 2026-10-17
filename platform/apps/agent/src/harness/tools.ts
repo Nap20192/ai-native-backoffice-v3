@@ -477,7 +477,10 @@ function jsonSchemaPropertyToZod(prop: Record<string, unknown>): z.ZodTypeAny {
 
 /**
  * Resolve the permission policy for a given tool name from the agent config.
- * Checks per-tool config first, then falls back to default_config, then "always_allow".
+ * Checks per-tool config first, then falls back to default_config. Without a
+ * policy an MCP tool asks (as `mcp_toolset` does in CMA), a builtin is allowed.
+ * MCP tools of a server without a toolset ask too, on every path including
+ * `/v1/oma` (plan cma-wave-1, 3.1, owner decision 3).
  */
 export function getToolPermission(agentConfig: AgentConfig, toolName: string): string {
   const mcpPrefix = "mcp__";
@@ -491,9 +494,9 @@ export function getToolPermission(agentConfig: AgentConfig, toolName: string): s
       const remoteToolName = toolName.slice(serverPrefix.length);
       const cfg = ts.configs?.find((candidate) => candidate.name === remoteToolName);
       if (cfg?.permission_policy?.type) return cfg.permission_policy.type;
-      return ts.default_config?.permission_policy?.type ?? "always_allow";
+      return ts.default_config?.permission_policy?.type ?? "always_ask";
     }
-    return "always_allow";
+    return "always_ask";
   }
 
   const toolset = agentConfig.tools.find((tool) => tool.type === "agent_toolset_20260401");

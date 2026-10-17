@@ -7,7 +7,7 @@ import { MemoryEnvironmentStore } from "../../environment-store-memory/src/index
 import { createResourcesHandler } from "../src/resources";
 import type { OpenAIAgentsOperationRequest } from "../../openai-agents-api/src/index";
 import { validateOpenAIAgentsSchema } from "../../openai-agents-api/src/index";
-import { auditAgentRuntimeMapping } from "../src/resources";
+import { auditAgentRuntimeMapping, toCoreAgentConfig } from "../src/resources";
 import type { ResourceRuntimeFiles } from "../src/resource-types";
 import { mkdtemp, mkdir, readFile, rm, writeFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -157,6 +157,29 @@ describe("OpenAI resource compatibility using real application services", () => 
       expect.objectContaining({ type: "mcp_toolset", defaultConfig: expect.objectContaining({ enabled: false }), configs: [expect.objectContaining({ name: "search", enabled: true })] }),
       expect.objectContaining({ type: "agent_toolset_20260401", configs: expect.arrayContaining([expect.objectContaining({ name: "web_search", allowedDomains: ["example.com"] })]) }),
     ]) } });
+  });
+
+  // /openai не умеет подтверждать MCP, поэтому пишет явный always_allow
+  // (docs/plans/cma-wave-1.md, раздел 4, решение 2).
+  it("writes an explicit always_allow MCP policy because /openai cannot confirm tool calls", async () => {
+    const command = toCoreAgentConfig({ model: "gpt-5", tools: [
+      { type: "mcp", server_label: "docs", transport: { type: "http", server_url: "https://docs.example.com/mcp" }, allowed_tools: ["search"] },
+      { type: "mcp", server_label: "all", transport: { type: "http", server_url: "https://all.example.com/mcp" } },
+    ] });
+    expect(command.tools).toEqual([
+      { type: "mcp_toolset", mcpServerName: "docs", defaultConfig: { enabled: false, permissionPolicy: { type: "always_allow" } }, configs: [{ name: "search", enabled: true }] },
+      { type: "mcp_toolset", mcpServerName: "all", defaultConfig: { enabled: true, permissionPolicy: { type: "always_allow" } }, configs: [] },
+    ]);
+    const f = fixture();
+    const agent = await f.run("agents.create", { model: "gpt-5", tools: [
+      { type: "mcp", server_label: "docs", transport: { type: "http", server_url: "https://docs.example.com/mcp" }, allowed_tools: ["search"] },
+    ] });
+    const core = await f.agents.retrieveAgent({ agentId: agent.id });
+    expect(core).toMatchObject({ agent: { tools: [{
+      type: "mcp_toolset",
+      defaultConfig: { enabled: false, permissionPolicy: { type: "always_allow" } },
+      configs: [{ name: "search", enabled: true, permissionPolicy: { type: "always_allow" } }],
+    }] } });
   });
 
   it("inherits template confidential inputs and forbids session overrides that broaden its network", async () => {

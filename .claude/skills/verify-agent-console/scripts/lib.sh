@@ -16,6 +16,8 @@ CONSOLE_SRC_DIR="$PLATFORM_DIR/apps/console"
 VERIFY_HOST="127.0.0.1"
 VERIFY_PORT="${VERIFY_PORT:-8791}"
 VERIFY_FAKE_PORT="${VERIFY_FAKE_PORT:-8792}"
+# Фейковый MCP-сервер (fake-mcp.mjs): его вызывает сценарий mcp-ask.
+VERIFY_FAKE_MCP_PORT="${VERIFY_FAKE_MCP_PORT:-8793}"
 VERIFY_STATE_ROOT="${VERIFY_STATE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/verify-agent-console}"
 # Кэш BoxLite (образы VM) и HOME сервера живут между прогонами, чтобы образ
 # не скачивался каждый раз. Общий ~/.boxlite не используется.
@@ -220,6 +222,7 @@ REPO_ROOT=$REPO_ROOT
 PLATFORM_DIR=$PLATFORM_DIR
 VERIFY_PORT=$VERIFY_PORT  (сервер и консоль: http://$VERIFY_HOST:$VERIFY_PORT)
 VERIFY_FAKE_PORT=$VERIFY_FAKE_PORT  (фейковая модель)
+VERIFY_FAKE_MCP_PORT=$VERIFY_FAKE_MCP_PORT  (фейковый MCP-сервер, путь /mcp)
 VERIFY_STATE_ROOT=$VERIFY_STATE_ROOT  (прогоны: runs/<RUN_ID>)
 VERIFY_BOXLITE_HOME=$VERIFY_BOXLITE_HOME
 VERIFY_SERVER_HOME=$VERIFY_SERVER_HOME

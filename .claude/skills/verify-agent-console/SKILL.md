@@ -36,7 +36,7 @@ sudo pacman -S sqlite jq                       # sqlite3 и jq нужны launch
 ```
 
 - `/dev/kvm` доступен на чтение и запись (LiteBox поднимает микро-VM).
-- Порты 8791 и 8792 свободны.
+- Порты 8791, 8792 и 8793 свободны.
 - Без `playwright install` сценарий берёт самую новую ревизию из `~/.cache/ms-playwright` с `INSTALLATION_COMPLETE` (на этой машине 1243, а не 1217) или `/usr/bin/google-chrome-stable`. Свой путь: `VERIFY_CHROMIUM=<путь>`.
 - `pnpm install` и `playwright install` в прогоне 2026-10-15 не запускались: зависимости уже стояли, Chromium 1217 не скачивался.
 
@@ -45,7 +45,7 @@ sudo pacman -S sqlite jq                       # sqlite3 и jq нужны launch
 ## Правила изоляции (читать до запуска)
 
 - **Порты 8787, 8788, 5173, 5174 чужие.** Там работают другой workflow и пробная копия владельца. Процессы на них не трогать. `lib.sh` откажется работать с этими портами.
-- **Наши порты.** Сервер с консолью: `VERIFY_PORT=8791`. Фейковая модель: `VERIFY_FAKE_PORT=8792`.
+- **Наши порты.** Сервер с консолью: `VERIFY_PORT=8791`. Фейковая модель: `VERIFY_FAKE_PORT=8792`. Фейковый MCP-сервер: `VERIFY_FAKE_MCP_PORT=8793`.
 - **`platform/apps/console/dist` не трогать.** Консоль собирается в папку прогона и отдаётся сервером через `CONSOLE_DIR`.
 - **Данные прогона** лежат в `~/.cache/verify-agent-console/runs/<RUN_ID>/`: БД, сборка консоли, логи, учётка и секреты. Cleanup удаляет эту папку.
 - **Прогон задаётся только явно.** `launch.sh` печатает на stdout папку прогона; `doctor.sh`, `seed-user.sh`, `journey.sh` и `cleanup.sh` принимают её через `--run <RUN_ID|папка>` или `VERIFY_RUN_DIR=<папка>` и без неё не работают. Общего указателя «текущий прогон» нет: иначе cleanup после отказа launch остановил бы чужой прогон (другого агента или оставленный через `VERIFY_KEEP_SESSION=1`).
@@ -64,7 +64,7 @@ sudo pacman -S sqlite jq                       # sqlite3 и jq нужны launch
   ```
 
   Прогоны 2026-10-16 с `VERIFY_CONSOLE_DIR` (без сборки консоли) держали в scope до 2 ГБ памяти и до 1 ГБ swap (замер раз в 30 с). Сборку консоли `vite build` лучше делать один раз и передавать прогонам через `VERIFY_CONSOLE_DIR`, если исходники консоли не менялись.
-- **Процессы останавливаются только по своим PID.** PID пишутся в `state/pids` вместе со временем старта: `server-tsx`, `server-node`, `fake-model`, `journey`, `journey-child` (Chromium). По имени процессы не убиваются никогда.
+- **Процессы останавливаются только по своим PID.** PID пишутся в `state/pids` вместе со временем старта: `server-tsx`, `server-node`, `fake-model`, `fake-mcp`, `journey`, `journey-child` (Chromium). По имени процессы не убиваются никогда.
 - **Чужие контейнеры не трогать:** `backoffice-*`, `qm-backoffice-*`, `mvp-test-pg`, `bo-registry`, `oma-dev-pg`.
 - **`.env` не читать.** Значения из `platform/.env` не нужны: секреты этого прогона генерируются в `state/secrets.env`. Наличие переменной проверяется только командой `grep -c '^ИМЯ=.' platform/.env`. Исключение — режим `real` (см. ниже), он требует согласия владельца.
 
@@ -79,7 +79,7 @@ RUN="$($S/launch.sh)"     # stdout: одна строка, папка прого
 1. Проверяет инструменты, Node 24 через fnm, наличие `/dev/kvm`, что порты свободны и не из чужого списка и что ни один прогон в `runs/` не жив.
 2. Создаёт пустую папку прогона `runs/<RUN_ID>` (RUN_ID имеет вид `YYYYmmdd-HHMMSS`) и папку доказательств `.verify-evidence/<RUN_ID>/`. Записывает в `run.env` git HEAD и хэши изменений рабочего дерева консоли и сервера (`git diff HEAD` плюс неотслеживаемые файлы).
 3. Собирает консоль командой `nice -n 15 vite build --outDir <прогон>/console`. Чтобы взять готовую сборку и пропустить этот шаг, задайте `VERIFY_CONSOLE_DIR=<папка с index.html>`.
-4. В режиме `fake` запускает `fake-model.mjs` на 8792.
+4. В режиме `fake` запускает `fake-model.mjs` на 8792. В любом режиме запускает `fake-mcp.mjs` на 8793 (журнал `logs/fake-mcp.jsonl` прогона), его вызывает сценарий `mcp-ask`.
 5. Запускает `main-node` (`nice -n 15 ./node_modules/.bin/tsx src/index.ts`, без watch) с чистым окружением:
    - `DATABASE_URL` не задан, поэтому база SQLite;
    - все пути данных указывают в папку прогона;
@@ -124,7 +124,7 @@ $S/doctor.sh --run "$RUN"   # не меняет экземпляр; код 0 = �
 - **Код не менялся после launch.** Git HEAD и хэши изменений консоли (`platform/apps/console`) и сервера (`platform/apps/main-node`, `platform/apps/agent`, `platform/packages`) равны значениям из `run.env`. `apps/agent` (харнессы) добавлен 2026-10-16: до этого правка `acp-translate.ts` после launch не ловилась. Сервер идёт без watch, а консоль собрана один раз, поэтому после правок старый экземпляр крутит прежний код; при расхождении FAIL;
 - `/auth-info` в порядке;
 - cookie тестовой учётки принимается: `/v1/oma/me` и `/v1/agents` отвечают 200;
-- фейковая модель отвечает;
+- фейковая модель и фейковый MCP-сервер отвечают (у прогонов без `FAKE_MCP_URL` в `run.env` второе не проверяется);
 - `/dev/kvm` доступен;
 - `BOXLITE_HOME/.lock` не держит чужой процесс;
 - в логе нет ошибок уровня 50;
@@ -255,6 +255,33 @@ RUN="$(VERIFY_PORT=8797 VERIFY_FAKE_PORT=8798 $S/launch.sh)" && { $S/doctor.sh -
 - `20261017-051622`: после «Вернуть из архива» список «Активные» 30 с показывал кэш до действия, агент и окружение «пропадали» (`refresh` у `useInfiniteApiQuery` обновлял только текущий фильтр, теперь сбрасывает все списки адреса); у деплоймента на паузе кнопка и пункт меню «Запустить» были включены, а сервер отвечает 409 «is not active»; отклонённая карточка помощника показывала «Не применено» вместо «Отклонено»; карточки архива и удаления у помощника не было совсем: консоль не знала инструментов `archive_object`, `delete_object` и класса `danger` (C12 плана);
 - `20261017-052321`: cleanup получил 500 на архиве сессии удалённого окружения, `DELETE` такой сессии тоже падал: `EnvironmentAwareSessionLifecycleRouter.sessionStopped` бросал ошибку, когда окружения нет.
 
+## Сценарий mcp-ask: подтверждение MCP
+
+Сценарий `mcp-ask` (`scripts/journey-mcp-ask.mjs`, сервер `scripts/fake-mcp.mjs`, маркер фейка `VERIFY_TOOL` в `scripts/fake-model.mjs`) проверяет функцию 3.1 `docs/plans/cma-wave-1.md`: инструмент MCP-сервера без явной политики ждёт «Разрешить» на странице сессии. Рецепт и ловушки в `features/mcp-confirmation.md`.
+
+```sh
+RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$RUN" && $S/journey.sh --run "$RUN" --scenario mcp-ask; $S/cleanup.sh --run "$RUN"; }
+```
+
+- Окружение «Без ограничений» и хранилище с токеном `verify-mcp-<n>` для `http://127.0.0.1:8793/mcp` создаются по API (строка «не проверено» `mcp.seed_path`). Агент со своим MCP-сервером, сессия с хранилищем, реплики и кнопки идут через консоль.
+- Проверки: `mcp.agent_created`, `mcp.session_created`, `mcp.tools_listed`, `mcp.vault_token`, `mcp.write_waits`, `mcp.session_requires_action`, `mcp.allow_once`, `mcp.repeat_allow_none`, `mcp.deny_none`, `mcp.exception_form`, `mcp.exception_read`, `mcp.old_agent_marked`, `mcp.old_agent_kept`. Провал `mcp.write_waits` значит, что `write_act` ушёл без человека. Шаги «Разрешить» и «Отклонить» тогда пишутся строками «не проверено», второй вызов не делается, и в `logs/fake-mcp.jsonl` остаётся один `write_act`.
+- `mcp.repeat_allow_none` шлёт второе `allow` на исполненный `write_act` по API: кнопки в консоли после первого клика нет. Проверка ждёт, что вызов не ушёл снова и модель не проснулась (нет `agent.message`, `span.model_request_start` и нового запроса к фейку). Старый агент для `mcp.old_agent_*` создаётся по API с набором MCP на явном `always_allow`, как его писала консоль до функции 3.1.
+- `mcp.ui_waiting_row` пишет «внимание», если строка ожидающего вызова в ходе подписана «Прервано», а не «Ждёт вас». Это дефект консоли до функции 3.1 (`collectToolCalls` в `apps/console/src/lib/session-stats.ts`), см. Gotchas в `features/mcp-confirmation.md`.
+
+**Статус сценария.** Прогон 2026-10-18 `20261018-004131` после срезов 2 и 3 функции 3.1: «ПРОЙДЕН», 10 проверок, 0 провалов. В `logs/fake-mcp.jsonl` один `write_act`, он ушёл после «Разрешить», после «Отклонить» вызова нет. Прогон шёл из снимка `~/.cache/verify-agent-console/cma31-s3-snapshot`: git `1070bc0` и правки функции 3.1 без правок Pi другой волны, иначе doctor падал на сверке хэша.
+
+После среза 4 прогон `20261018-010717` из снимка `cma31-s4-snapshot` тоже «ПРОЙДЕН», 10 из 10. Затем вне сценария по curl ушло второе `allow` на уже исполненный `write_act`, и в журнале fake-mcp остался один вызов. Контроль на снимке среза 3 (`20261018-010829`) после такого же `allow` дал второй `write_act`. Второе `allow` всё ещё запускает ход модели без нового результата. Проверки сценария на это нет.
+
+После среза 5 прогон `20261018-013009` из снимка `cma31-s5-snapshot` «ПРОЙДЕН», 10 из 10. Затем вне сценария по curl ушёл `user.define_outcome` с вызовом `write_act`: ход встал на `requires_action`, `span.outcome_evaluation_start` нет, outcome остался `pending`. Контроль на снимке среза 4 (`20261018-013119`) начал оценку при ожидающем вызове и записал outcome как `failed`. После `allow` оценка не продолжается, это срез 5 функции 3.3. Проверки сценария на это тоже нет.
+
+Срез 6 добавил в сценарий шаг «исключение read_report»: поле «Разрешение» сервера в форме агента, предупреждение у «Всегда разрешать», исключение `read_report` и ход в новой сессии без карточки (`mcp.exception_form`, `mcp.exception_read`). Прогон `20261018-014610` из снимка `cma31-s6-snapshot` (снимок среза 5 и правки консоли среза 6): «ПРОЙДЕН», 12 из 12. Снимки вкладки «MCP-серверы» на 1280 и 390 лежат в `screens/10-…` и `screens/11-…`. Прогон `20261018-014457` на том же снимке тоже «ПРОЙДЕН», но его снимок на 390 не показывает строку исключения: окно прокручивается внутри себя, теперь сценарий подводит строку в поле зрения.
+
+Срез 7 поменял только тексты помощника. Прогон `20261018-020213` из снимка `cma31-s7-snapshot` (снимок среза 6 и тексты среза 7) «ПРОЙДЕН», 12 из 12, это ядро функции 3.1 целиком. Затем вне сценария скрипт поставил ассистента по API, как это делает консоль, и через маркер `VERIFY_TOOL` вызвал `search_docs` с запросом «По умолчанию инструмент MCP спрашивает» и `help` с темой `agent`. `search_docs` нашёл два раздела: «Агент» в `platform-reference.md` и «Агент с внешним сервисом через MCP» в `platform-builder.md`. Правило в `help` содержит ту же фразу и `configs`. Файл `api/slice7-search-docs.json`. Проверки сценария на это нет.
+
+После ревью срезов 1-7 (раннер не будит модель на втором `allow`, сессия с субагентом на `always_ask` получает 400) сценарий получил шаги второго «Разрешить» и старого агента. Прогон `20261018-024228` из снимка `cma31-final-snapshot` (git `9cb5bbf` и все правки функции 3.1 на 02:35): «ПРОЙДЕН», 17 проверок, 0 провалов, подфункций 6 из 6, одна строка «внимание» `mcp.ui_waiting_row` (строка ожидающего вызова подписана «Прервано»). Второе `allow` принято с ответом 200, прогон раннера кончился `end_turn` без `agent.message`, в журнале fake-mcp один `write_act`. Главный сценарий на том же снимке `20261018-023845`: «ПРОЙДЕН», 90 проверок, 0 провалов. Контроль `20261018-024601` из снимка `cma31-final-control` (тот же снимок, раннер среза 7) дал «ПРОВАЛ» ровно на `mcp.repeat_allow_none`: после второго `allow` в журнале сессии `span.model_request_start` и `agent.message`, `write_act` в журнале fake-mcp по-прежнему один.
+
+До срезов 2 и 3 был прогон 2026-10-18 `20261018-000539` (рабочая копия на 00:05, git `1070bc0`): «ПРОВАЛ», 10 проверок, 1 провал `mcp.write_waits`. Это красный тест среза 1 функции 3.1: форма консоли пишет новому серверу `always_allow`, ход кончился `end_turn`, у `agent.mcp_tool_use` нет `evaluated_permission`, блока «Ожидает подтверждения» нет, а в `logs/fake-mcp.jsonl` один `tools/call write_act` до любого клика. Остальные проверки зелёные. Зелёный путь сценария прошла разовая копия, которая после создания агента ставила набору `always_ask` по API (`20261018-000734`, «ПРОЙДЕН», 10 проверок, 0 провалов). Копия удалена.
+
 ## Evidence
 
 Всё лежит в `.verify-evidence/<RUN_ID>/`. Строка `.verify-evidence/` есть в корневом `.gitignore` (закоммичена в `b62dd98`), cleanup эту папку не удаляет.
@@ -273,7 +300,8 @@ RUN="$(VERIFY_PORT=8797 VERIFY_FAKE_PORT=8798 $S/launch.sh)" && { $S/doctor.sh -
 - `logs/`:
   - `launch.txt`, `console-build.log`, `doctor-<время>.txt`;
   - `main-node.journey.log` (снимок после сценария), `main-node.final.log` (после остановки);
-  - `fake-model.log`, `cleanup.txt`.
+  - `fake-model.log`, `cleanup.txt`;
+  - `fake-mcp.log` и `fake-mcp.jsonl` (журнал фейкового MCP-сервера, сценарий `mcp-ask`), после cleanup ещё `fake-mcp.final.*`.
 
 Стандарты доказательства:
 
@@ -299,9 +327,9 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 0. Останавливает сценарий и Chromium, если они ещё живы (роли `journey`, `journey-child` и потомки `journey`).
 1. Пока сервер жив, архивирует сессии из `state/created.json`, чтобы VM остановились штатно.
 2. Записывает потомков сервера: PID и время старта.
-3. Отправляет SIGTERM tsx (сигнал передаётся node), затем node и фейковой модели. Ждёт 30, 10 и 5 с соответственно, после чего шлёт SIGKILL только этим PID.
+3. Отправляет SIGTERM tsx (сигнал передаётся node), затем node, фейковой модели и фейковому MCP-серверу. Ждёт 30, 10, 5 и 5 с соответственно, после чего шлёт SIGKILL только этим PID.
 4. Останавливает записанных потомков, которые пережили сервер.
-5. Копирует финальные логи в доказательства и проверяет, что порты 8791 и 8792 свободны.
+5. Копирует финальные логи в доказательства (с ними `fake-mcp.final.log` и `fake-mcp.final.jsonl`) и проверяет, что порты 8791, 8792 и 8793 свободны.
 6. Сообщает о процессах, у которых в командной строке есть путь `BOXLITE_HOME`, но не убивает их.
 7. Удаляет `runs/<RUN_ID>` только если всё освобождено.
 8. Если `summary.md` нет (сбой до сценария), пишет «ПРЕРВАН» с причиной; печатает число файлов в папке доказательств.
@@ -317,18 +345,20 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 | `scripts/launch.sh` | `RUN="$($S/launch.sh)"` | Сборка консоли, фейковая модель, сервер, проверка готовности; stdout — папка прогона |
 | `scripts/doctor.sh` | `$S/doctor.sh --run "$RUN"` | Можно ли вести экземпляр, включая сверку кода с моментом launch |
 | `scripts/seed-user.sh` | `$S/seed-user.sh --run "$RUN" [--others]` | Тестовая учётка и её рабочее пространство; с `--others` участник этого пространства и второй пользователь со своим |
-| `scripts/journey.sh` | `$S/journey.sh --run "$RUN" [--scenario builder\|crud]` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск сценария (по умолчанию главного) |
+| `scripts/journey.sh` | `$S/journey.sh --run "$RUN" [--scenario builder\|crud\|mcp-ask]` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск сценария (по умолчанию главного) |
 | `scripts/journey-builder.mjs` | через `journey.sh --scenario builder` | Сценарий ассистента: шаги 6.2, 6.3, 6.4 и 6.7 плана, живой режим 6.8, `summary.md` |
 | `scripts/journey-crud.mjs` | через `journey.sh --scenario crud` | Сценарий «правка, архив и удаление»: списки агентов, окружений, сессий и файлов, страница деплойментов, красные карточки помощника, `summary.md` |
+| `scripts/journey-mcp-ask.mjs` | через `journey.sh --scenario mcp-ask` | Сценарий «подтверждение MCP»: агент со своим MCP-сервером из формы, сессия с хранилищем, вызов `write_act` ждёт «Разрешить», «Разрешить» и «Отклонить» на странице сессии, журнал fake-mcp, `summary.md` |
 | `scripts/journey-builder-guard.mjs` | модуль `journey-builder.mjs` | Шаги 6.5 и 6.6: подложенные указания и смена объекта после preview |
 | `scripts/fake-model-builder.mjs` | модуль `fake-model.mjs` | Решения фейка по маркерам `VERIFY_BUILDER*`, поиск канареек в сыром теле |
 | `scripts/journey-env-to-agent.mjs` | через `journey.sh` | Главный сценарий Playwright, проверки и `summary.md` |
-| `scripts/fake-model.mjs` | запускает `launch.sh` (`node fake-model.mjs --port 8792 --log f.jsonl`) | Модель Anthropic Messages (SSE): bash с командой из промпта, затем `VERIFY_DONE_<nonce>` (в ходе агента `VERIFY_AGENT_RUN` перед bash ещё текст, а ответ состоит из блока кода с `VERIFY_DONE_<nonce>` и строки после него); запрос без потока получает `ok`; отвечает на проверку ключа карточки OpenAI (`/chat/completions`); пишет в журнал `thinking` и `effort` каждого запроса |
+| `scripts/fake-model.mjs` | запускает `launch.sh` (`node fake-model.mjs --port 8792 --log f.jsonl`) | Модель Anthropic Messages (SSE): bash с командой из промпта, затем `VERIFY_DONE_<nonce>` (в ходе агента `VERIFY_AGENT_RUN` перед bash ещё текст, а ответ состоит из блока кода с `VERIFY_DONE_<nonce>` и строки после него); запрос без потока получает `ok`; отвечает на проверку ключа карточки OpenAI (`/chat/completions`); пишет в журнал `thinking` и `effort` каждого запроса; маркер `VERIFY_TOOL` вызывает инструмент из строки `Инструмент:` с входом из строки `Вход:` (сценарий `mcp-ask`) |
+| `scripts/fake-mcp.mjs` | запускает `launch.sh` (`node fake-mcp.mjs --port 8793 --log fake-mcp.jsonl`) | MCP-сервер Streamable HTTP без сессии на `/mcp`, ответы JSON: инструменты `read_report` и `write_act`, 401 без Bearer, -32601 на `server/discover`; журнал JSONL с sha256 токена, методом, инструментом и аргументами каждого сообщения |
 | `scripts/cleanup.sh` | `$S/cleanup.sh --run "$RUN" [--keep-state]` | Остановка по своим PID и уборка временных данных одного прогона |
 
 Переопределяемые переменные:
 
-- `VERIFY_PORT`, `VERIFY_FAKE_PORT`;
+- `VERIFY_PORT`, `VERIFY_FAKE_PORT`, `VERIFY_FAKE_MCP_PORT`;
 - `VERIFY_STATE_ROOT`, `VERIFY_BOXLITE_HOME`, `VERIFY_EVIDENCE_ROOT`;
 - `VERIFY_MODEL_MODE`, `VERIFY_AGENT_MODEL`, `VERIFY_SANDBOX_IMAGE`, `VERIFY_LITEBOX_DISK_SIZE_GB`, `VERIFY_LITEBOX_MEMORY_MIB`;
 - `VERIFY_CONSOLE_DIR`, `VERIFY_RUN_DIR`, `VERIFY_RUN_ID`, `VERIFY_START_TIMEOUT_S`;

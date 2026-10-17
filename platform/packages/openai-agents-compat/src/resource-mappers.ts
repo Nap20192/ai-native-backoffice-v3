@@ -52,7 +52,8 @@ export function toCoreAgentConfig(input: ResourceObject): CreateAgentCommand {
     });
     if (tool.type === "mcp" && tool.transport.type === "http") {
       mcpServers.push({ name: tool.server_label, type: "url", url: tool.transport.server_url });
-      tools.push({ type: "mcp_toolset", mcpServerName: tool.server_label, defaultConfig: { enabled: tool.allowed_tools == null }, configs: (tool.allowed_tools ?? []).map((name: string) => ({ name, enabled: true })) });
+      // /openai cannot confirm a tool call, so its MCP tools run without asking (cma-wave-1.md, decision 2).
+      tools.push({ type: "mcp_toolset", mcpServerName: tool.server_label, defaultConfig: { enabled: tool.allowed_tools == null, permissionPolicy: { type: "always_allow" } }, configs: (tool.allowed_tools ?? []).map((name: string) => ({ name, enabled: true })) });
     }
   }
   const effort = input.reasoning?.effort;

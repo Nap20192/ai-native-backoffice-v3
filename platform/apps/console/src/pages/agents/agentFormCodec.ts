@@ -134,6 +134,14 @@ export function materializeAgentUpdate(
   return next;
 }
 
+export type McpPermission = "always_allow" | "always_ask";
+
+/** Своё разрешение одного инструмента сервера: строка `configs[]` набора MCP. */
+export interface McpToolException {
+  name: string;
+  permission: McpPermission;
+}
+
 export interface McpEntry {
   name: string;
   type: "url" | "stdio";
@@ -143,6 +151,133 @@ export interface McpEntry {
   envJson: string;
   /** Stable identity used to preserve fields when an existing server is renamed. */
   originalName?: string;
+  /** Разрешение по умолчанию у набора сервера (`default_config.permission_policy`). */
+  permission: McpPermission;
+  /** Инструменты сервера со своим разрешением. */
+  toolExceptions: McpToolException[];
+}
+
+/**
+ * Набор MCP без политики API читает как «Всегда спрашивать» (план cma-wave-1, 3.1).
+ * Форма показывает то же значение и пишет его новому серверу.
+ */
+const MCP_DEFAULT_PERMISSION: McpPermission = "always_ask";
+
+/** Новая строка сервера в форме. */
+export function newMcpEntry(name = "", url = ""): McpEntry {
+  return {
+    name,
+    type: "url",
+    url,
+    command: "",
+    argsJson: "[]",
+    envJson: "{}",
+    permission: MCP_DEFAULT_PERMISSION,
+    toolExceptions: [],
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mcpPermissionOf(policy: unknown): McpPermission | undefined {
+  const type = isRecord(policy) ? policy.type : undefined;
+  return type === "always_allow" || type === "always_ask" ? type : undefined;
+}
+
+/**
+ * Строка `configs[]`, которую форма показывает исключением: имя и политика у
+ * включённого инструмента. Остальные строки форма не показывает и хранит как есть.
+ */
+function mcpExceptionOf(entry: unknown): McpToolException | undefined {
+  if (!isRecord(entry) || typeof entry.name !== "string" || entry.enabled === false) {
+    return undefined;
+  }
+  const permission = mcpPermissionOf(entry.permission_policy);
+  return permission ? { name: entry.name, permission } : undefined;
+}
+
+/** Разрешение и исключения сервера из его записи `mcp_toolset`. */
+function parseMcpToolset(
+  toolset: Record<string, unknown> | undefined,
+): Pick<McpEntry, "permission" | "toolExceptions"> {
+  const defaults = isRecord(toolset?.default_config) ? toolset.default_config : {};
+  const configs = Array.isArray(toolset?.configs) ? toolset.configs : [];
+  return {
+    permission: mcpPermissionOf(defaults.permission_policy) ?? MCP_DEFAULT_PERMISSION,
+    toolExceptions: configs.flatMap((entry) => {
+      const exception = mcpExceptionOf(entry);
+      return exception ? [exception] : [];
+    }),
+  };
+}
+
+function mcpToolsetOf(tools: unknown, serverName: string): Record<string, unknown> | undefined {
+  if (!Array.isArray(tools)) return undefined;
+  return tools.find(
+    (tool): tool is Record<string, unknown> =>
+      isRecord(tool) && tool.type === "mcp_toolset" && tool.mcp_server_name === serverName,
+  );
+}
+
+/**
+ * Запись `mcp_toolset` сервера из формы поверх прежней. Форма пишет только то,
+ * что в ней поменяли: правка имени агента отправляет набор как есть. Строки
+ * `configs[]`, которые форма не показывает, и прочие поля набора остаются.
+ */
+export function buildMcpToolset(
+  mcp: McpEntry,
+  existing?: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = existing
+    ? structuredClone(existing)
+    : { type: "mcp_toolset" };
+  result.mcp_server_name = mcp.name;
+
+  if (!existing || parseMcpToolset(existing).permission !== mcp.permission) {
+    const defaults = isRecord(result.default_config) ? result.default_config : {};
+    result.default_config = { ...defaults, permission_policy: { type: mcp.permission } };
+  }
+
+  const wanted = new Map<string, McpPermission>();
+  for (const exception of mcp.toolExceptions) {
+    const name = exception.name.trim();
+    if (name) wanted.set(name, exception.permission);
+  }
+  const priorConfigs = Array.isArray(existing?.configs) ? existing.configs : [];
+  const placed = new Set<string>();
+  const configs: unknown[] = [];
+  for (const entry of priorConfigs) {
+    if (!isRecord(entry) || typeof entry.name !== "string") {
+      configs.push(structuredClone(entry));
+      continue;
+    }
+    const permission = wanted.get(entry.name);
+    if (permission !== undefined) {
+      placed.add(entry.name);
+      const next = structuredClone(entry);
+      if (mcpPermissionOf(entry.permission_policy) !== permission) {
+        next.permission_policy = { type: permission };
+      }
+      configs.push(next);
+      continue;
+    }
+    if (mcpExceptionOf(entry) === undefined) {
+      configs.push(structuredClone(entry));
+      continue;
+    }
+    // Исключение убрали в форме. Остальные поля строки остаются, пустая строка уходит.
+    const next = structuredClone(entry);
+    delete next.permission_policy;
+    if (Object.keys(next).some((key) => key !== "name" && key !== "type")) configs.push(next);
+  }
+  for (const [name, permission] of wanted) {
+    if (!placed.has(name)) configs.push({ name, permission_policy: { type: permission } });
+  }
+  if (configs.length > 0 || Array.isArray(existing?.configs)) result.configs = configs;
+  else delete result.configs;
+  return result;
 }
 
 export interface SkillEntry {
@@ -329,6 +464,7 @@ export function configToForm(config: Record<string, unknown>): FormState {
               : {},
           ),
           originalName: String(m.name || "") || undefined,
+          ...parseMcpToolset(mcpToolsetOf(config.tools, String(m.name || ""))),
         }))
       : [],
     skills: Array.isArray(config.skills)
@@ -535,10 +671,7 @@ export function mergeToolsField(
       );
       if (mcp === undefined || !mcp.name) continue;
       handledMcp.add(mcp);
-      result.push({
-        ...structuredClone(tool as Record<string, unknown>),
-        mcp_server_name: mcp.name,
-      });
+      result.push(buildMcpToolset(mcp, tool as Record<string, unknown>));
       continue;
     }
     result.push(structuredClone(tool));
@@ -546,12 +679,9 @@ export function mergeToolsField(
 
   if (!handledManagedToolset) result.unshift(managedToolset);
 
+  // Новый сервер получает разрешение из формы, по умолчанию «Всегда спрашивать».
   for (const mcp of form.mcpServers.filter((entry) => entry.name && !handledMcp.has(entry))) {
-    result.push({
-      type: "mcp_toolset",
-      mcp_server_name: mcp.name,
-      default_config: { permission_policy: { type: "always_allow" } },
-    });
+    result.push(buildMcpToolset(mcp));
   }
 
   return result;

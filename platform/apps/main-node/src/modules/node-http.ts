@@ -72,6 +72,8 @@ import { SqlKvStore } from "@open-managed-agents/kv-store/adapters/sql";
 
 import { agentConfigGuard, storedAgentForGuard } from "../lib/agent-config-guard.js";
 import { buildModelOptionsRoutes, createWorkspaceCatalog } from "../lib/catalog-routes.js";
+import { buildSandboxCatalogRoutes } from "../lib/sandbox-catalog-routes.js";
+import { loadSandboxCatalog, sandboxCatalogSettings } from "../lib/sandbox-catalog.js";
 import { dependenciesPort } from "@open-managed-agents/app/modules/dependencies";
 import {
   buildCrudDependencyRoutes,
@@ -359,6 +361,10 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     },
   });
   v1.route("/oma/model_options", buildModelOptionsRoutes(catalog));
+  // Image catalog for the environment page (docs/plans/environments.md, 1.5).
+  // Read on each request, like the VM image lookup in node-managed.ts.
+  const sandboxCatalog = sandboxCatalogSettings(config.sandbox.environment);
+  v1.route("/oma/sandbox-catalog", buildSandboxCatalogRoutes({ catalog: () => loadSandboxCatalog(sandboxCatalog) }));
   // Archive and delete check dependencies (docs/plans/crud.md, 1.2 and 1.3).
   const crudDependenciesFor = (workspaceId: string) =>
     managedPlatform.app({ workspaceId }).port(dependenciesPort);

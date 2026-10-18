@@ -450,6 +450,17 @@ function staleAgentVersion(
   };
 }
 
+/** The answer when the store refused a write guarded by the expected version. */
+function versionChanged(
+  agentId: string,
+  actualVersion: number,
+): { type: "precondition_failed"; message: string } {
+  return {
+    type: "precondition_failed",
+    message: `Agent ${agentId} changed concurrently: now at version ${actualVersion}`,
+  };
+}
+
 export class AgentsApplicationService implements AgentsApplicationPort {
   constructor(private readonly dependencies: AgentsApplicationServiceDependencies) {}
 
@@ -666,12 +677,18 @@ export class AgentsApplicationService implements AgentsApplicationPort {
       operation: "archive",
     });
     if (conflict !== null) return conflict;
+    // The early check answers before the dependency queries. The store checks
+    // the version again inside the write: an update after the read gives 412.
     const result = await this.dependencies.store.archiveCurrent({
       workspaceId: this.dependencies.workspaceId,
       agentId: command.agentId,
       archivedAt: this.dependencies.clock.now().toISOString(),
+      expectedVersion: command.expectedVersion,
     });
     if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "version_conflict") {
+      return versionChanged(command.agentId, result.actualVersion);
+    }
     return { type: "archived", agent: result.agent };
   }
 
@@ -688,10 +705,13 @@ export class AgentsApplicationService implements AgentsApplicationPort {
       workspaceId: this.dependencies.workspaceId,
       agentId: command.agentId,
       updatedAt: this.dependencies.clock.now().toISOString(),
+      expectedVersion: command.expectedVersion,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : { type: "unarchived", agent: result.agent };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "version_conflict") {
+      return versionChanged(command.agentId, result.actualVersion);
+    }
+    return { type: "unarchived", agent: result.agent };
   }
 
   async deleteAgent(command: DeleteAgentCommand): Promise<DeleteAgentResult> {
@@ -711,10 +731,13 @@ export class AgentsApplicationService implements AgentsApplicationPort {
     const result = await this.dependencies.store.deleteCurrent({
       workspaceId: this.dependencies.workspaceId,
       agentId: command.agentId,
+      expectedVersion: command.expectedVersion,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : { type: "deleted", agentId: command.agentId };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "version_conflict") {
+      return versionChanged(command.agentId, result.actualVersion);
+    }
+    return { type: "deleted", agentId: command.agentId };
   }
 
   async listAgents(query: ListAgentsQuery): Promise<ListAgentsResult> {

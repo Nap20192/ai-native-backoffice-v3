@@ -61,6 +61,43 @@ describe("MemoryEnvironmentStore", () => {
     });
   });
 
+  it("archive and delete with a stale revision change nothing", async () => {
+    const store = new MemoryEnvironmentStore();
+    const inserted = await store.insert({
+      workspaceId: "workspace_a",
+      environment: environment("env_01", "2026-01-01T00:00:00.000Z"),
+    });
+    await store.replace({
+      workspaceId: "workspace_a",
+      environmentId: "env_01",
+      expectedRevision: 1,
+      next: { ...inserted.environment, name: "edited" },
+    });
+    const location = { workspaceId: "workspace_a", environmentId: "env_01" };
+
+    expect(await store.archive({
+      ...location,
+      archivedAt: "2026-01-03T00:00:00.000Z",
+      expectedRevision: 1,
+    })).toEqual({ type: "revision_conflict", actualRevision: 2 });
+    expect(await store.delete({ ...location, expectedRevision: 1 }))
+      .toEqual({ type: "revision_conflict", actualRevision: 2 });
+    expect(await store.find(location)).toMatchObject({
+      revision: 2,
+      environment: { name: "edited", archivedAt: null },
+    });
+
+    expect(await store.archive({
+      ...location,
+      archivedAt: "2026-01-03T00:00:00.000Z",
+      expectedRevision: 2,
+    })).toMatchObject({ type: "archived", record: { revision: 3 } });
+    expect(await store.delete({ ...location, expectedRevision: 3 }))
+      .toEqual({ type: "deleted" });
+    expect(await store.delete({ ...location, expectedRevision: 3 }))
+      .toEqual({ type: "not_found" });
+  });
+
   it("orders, pages, filters archived records, and deletes", async () => {
     const store = new MemoryEnvironmentStore();
     for (const [id, createdAt] of [

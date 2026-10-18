@@ -3,6 +3,7 @@ import {
   SessionResourceResolverService,
   type Environment,
   type DeploymentSessionLauncherPort,
+  type FilesApplicationPort,
   type Session,
   type SessionEventsApplicationPort,
   type SessionResourcesApplicationPort,
@@ -122,6 +123,13 @@ export interface SqlManagedSessionsCompositionDependencies {
   clock: { now(): Date };
   ids: SqlManagedSessionsIds;
   /**
+   * The files Port of a workspace. Session delete removes the output files
+   * with it (docs/plans/crud-fixes.md, F4). Called on use, never while a
+   * workspace graph is built: the graph that owns files may ask this
+   * composition for the Deployment launcher while it builds.
+   */
+  filesForWorkspace?: (workspaceId: string) => FilesApplicationPort;
+  /**
    * Atomically create durable Session Execution work with accepted events.
    * Enable for lease-based Node workers. Structural single-writer runtimes
    * such as Cloudflare Durable Objects dispatch directly instead.
@@ -165,6 +173,17 @@ class ComposedSessionExecutionContextSource
       revision: stored.revision,
     };
   }
+}
+
+/** A files Port that looks up the real one on every call. */
+function filesOnUse(files: () => FilesApplicationPort): FilesApplicationPort {
+  return {
+    listFiles: (query) => files().listFiles(query),
+    retrieveFileMetadata: (query) => files().retrieveFileMetadata(query),
+    uploadFile: (command) => files().uploadFile(command),
+    deleteFile: (command) => files().deleteFile(command),
+    downloadFile: (query) => files().downloadFile(query),
+  };
 }
 
 /**
@@ -245,6 +264,7 @@ export class SqlManagedSessionsComposition {
       environments,
       eventDispatch = runtime,
       eventStream = runtime,
+      filesForWorkspace,
     } = this.dependencies;
     const resources = new SessionResourceResolverService({
       files: this.files,
@@ -278,6 +298,12 @@ export class SqlManagedSessionsComposition {
         providePort(sessionEnvironmentSourcePort, environments),
         providePort(sessionResourceResolverPort, resources),
         providePort(sessionLifecyclePort, lifecycle),
+        ...(filesForWorkspace === undefined
+          ? []
+          : [providePort(
+              managedAgentsPortTokens.files,
+              filesOnUse(() => filesForWorkspace(workspaceId)),
+            )]),
         providePort(sessionEventStorePort, this.sessionEvents),
         providePort(sessionEventSourcePort, this.sessionSource),
         providePort(sessionEventExecutionContextSourcePort, this.executionContext),

@@ -157,6 +157,7 @@ const emptySessionResources = {
 const silentSessionLifecycle = {
   sessionStarted: async () => {},
   sessionStopped: async () => {},
+  sessionDeleted: async () => {},
 };
 
 const agent: Agent = {
@@ -361,6 +362,7 @@ describe("SessionsApplicationService", () => {
           lifecycleSignals.push(input);
         },
         sessionStopped: async () => {},
+        sessionDeleted: async () => {},
       },
       clock: { now: () => new Date("2026-08-26T02:00:00.000Z") },
       ids: { nextSessionId: () => "session_01" },
@@ -984,6 +986,9 @@ describe("SessionsApplicationService", () => {
         sessionStopped: async (input: object) => {
           lifecycleSignals.push({ type: "stopped", ...input });
         },
+        sessionDeleted: async (input: object) => {
+          lifecycleSignals.push({ type: "deleted", ...input });
+        },
       },
       clock: { now: () => now },
       ids: { nextSessionId: () => "session_archive" },
@@ -1042,6 +1047,9 @@ describe("SessionsApplicationService", () => {
         sessionStopped: async (input: object) => {
           lifecycleSignals.push(input);
         },
+        sessionDeleted: async (input: object) => {
+          lifecycleSignals.push(input);
+        },
       },
       clock: { now: () => new Date("2026-08-26T02:00:00.000Z") },
       ids: { nextSessionId: () => "session_delete" },
@@ -1071,6 +1079,8 @@ describe("SessionsApplicationService", () => {
         }),
         reason: "deleted",
       },
+      // Files and outputs go after the rows (docs/plans/crud-fixes.md, F1).
+      { workspaceId: "workspace_01", sessionId: "session_delete" },
     ]);
   });
 

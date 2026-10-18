@@ -95,12 +95,39 @@ function patchMetadata(
 export interface VaultsApplicationServiceDependencies {
   workspaceId: string;
   store: VaultStore;
-  /** Delete removes the credentials of the vault with it. */
+  /**
+   * Delete sweeps the credentials of the vault after the vault row is gone.
+   * On SQL the vault delete has already removed them; the in-memory
+   * adapters need the sweep.
+   */
   credentials?: CredentialStore;
   clock: { now(): Date };
   ids: { nextVaultId(): string };
   /** Archive and delete check dependencies with it (docs/plans/crud.md, 1.3). */
   dependencyCheck?: DependenciesApplicationPort;
+}
+
+function staleVaultRevision(
+  vaultId: string,
+  expectedRevision: number | undefined,
+  revision: number,
+): { type: "precondition_failed"; message: string } | null {
+  if (expectedRevision === undefined || expectedRevision === revision) return null;
+  return {
+    type: "precondition_failed",
+    message: `Vault ${vaultId} is at revision ${revision}, not ${expectedRevision}`,
+  };
+}
+
+/** The answer when the store refused a write guarded by the expected revision. */
+function revisionChanged(
+  vaultId: string,
+  actualRevision: number,
+): { type: "precondition_failed"; message: string } {
+  return {
+    type: "precondition_failed",
+    message: `Vault ${vaultId} changed concurrently at revision ${actualRevision}`,
+  };
 }
 
 export class VaultsApplicationService implements VaultsApplicationPort {
@@ -125,7 +152,7 @@ export class VaultsApplicationService implements VaultsApplicationPort {
         updatedAt: timestamp,
       },
     });
-    return { type: "created", vault: record.vault };
+    return { type: "created", vault: record.vault, revision: record.revision };
   }
 
   async retrieveVault(query: RetrieveVaultQuery): Promise<RetrieveVaultResult> {
@@ -135,7 +162,7 @@ export class VaultsApplicationService implements VaultsApplicationPort {
     });
     return record === null
       ? { type: "not_found" }
-      : { type: "found", vault: record.vault };
+      : { type: "found", vault: record.vault, revision: record.revision };
   }
 
   async updateVault(command: UpdateVaultCommand): Promise<UpdateVaultResult> {
@@ -173,7 +200,11 @@ export class VaultsApplicationService implements VaultsApplicationPort {
         message: `Vault changed concurrently at revision ${replaced.actualRevision}`,
       };
     }
-    return { type: "updated", vault: replaced.record.vault };
+    return {
+      type: "updated",
+      vault: replaced.record.vault,
+      revision: replaced.record.revision,
+    };
   }
 
   async listVaults(query: ListVaultsQuery): Promise<ListVaultsResult> {
@@ -207,32 +238,59 @@ export class VaultsApplicationService implements VaultsApplicationPort {
     };
   }
 
+  /**
+   * Deletes the vault row first and sweeps its credentials after it. A
+   * failed or refused vault delete keeps every credential. The sweep also
+   * removes a credential that a concurrent create added before it ran.
+   */
   async deleteVault(command: DeleteVaultCommand): Promise<DeleteVaultResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      vaultId: command.vaultId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleVaultRevision(
+      command.vaultId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
     const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
       kind: "vault",
       id: command.vaultId,
       operation: "delete",
     });
     if (conflict !== null) return conflict;
-    const found = await this.dependencies.store.find({
+    // The early check answers before the dependency queries. The store checks
+    // the revision again inside the write: an update after the read gives 412.
+    const result = await this.dependencies.store.delete({
       workspaceId: this.dependencies.workspaceId,
       vaultId: command.vaultId,
+      expectedRevision: command.expectedRevision,
     });
-    if (found === null) return { type: "not_found" };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return revisionChanged(command.vaultId, result.actualRevision);
+    }
     await this.dependencies.credentials?.deleteAllInVault({
       workspaceId: this.dependencies.workspaceId,
       vaultId: command.vaultId,
     });
-    const result = await this.dependencies.store.delete({
-      workspaceId: this.dependencies.workspaceId,
-      vaultId: command.vaultId,
-    });
-    return result.type === "not_found"
-      ? result
-      : { type: "deleted", vaultId: command.vaultId };
+    return { type: "deleted", vaultId: command.vaultId };
   }
 
   async archiveVault(command: ArchiveVaultCommand): Promise<ArchiveVaultResult> {
+    const current = await this.dependencies.store.find({
+      workspaceId: this.dependencies.workspaceId,
+      vaultId: command.vaultId,
+    });
+    if (current === null) return { type: "not_found" };
+    const stale = staleVaultRevision(
+      command.vaultId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
     const conflict = await dependencyConflictOf(this.dependencies.dependencyCheck, {
       kind: "vault",
       id: command.vaultId,
@@ -243,10 +301,17 @@ export class VaultsApplicationService implements VaultsApplicationPort {
       workspaceId: this.dependencies.workspaceId,
       vaultId: command.vaultId,
       archivedAt: this.dependencies.clock.now().toISOString(),
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? result
-      : { type: "archived", vault: result.record.vault };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return revisionChanged(command.vaultId, result.actualRevision);
+    }
+    return {
+      type: "archived",
+      vault: result.record.vault,
+      revision: result.record.revision,
+    };
   }
 
   async unarchiveVault(command: UnarchiveVaultCommand): Promise<UnarchiveVaultResult> {
@@ -255,8 +320,14 @@ export class VaultsApplicationService implements VaultsApplicationPort {
       vaultId: command.vaultId,
     });
     if (current === null) return { type: "not_found" };
+    const stale = staleVaultRevision(
+      command.vaultId,
+      command.expectedRevision,
+      current.revision,
+    );
+    if (stale !== null) return stale;
     if (current.vault.archivedAt === null) {
-      return { type: "unarchived", vault: current.vault };
+      return { type: "unarchived", vault: current.vault, revision: current.revision };
     }
     const replaced = await this.dependencies.store.replace({
       workspaceId: this.dependencies.workspaceId,
@@ -268,8 +339,14 @@ export class VaultsApplicationService implements VaultsApplicationPort {
         updatedAt: this.dependencies.clock.now().toISOString(),
       },
     });
-    return replaced.type === "replaced"
-      ? { type: "unarchived", vault: replaced.record.vault }
-      : { type: "not_found" };
+    if (replaced.type === "not_found") return { type: "not_found" };
+    if (replaced.type === "revision_conflict") {
+      return revisionChanged(command.vaultId, replaced.actualRevision);
+    }
+    return {
+      type: "unarchived",
+      vault: replaced.record.vault,
+      revision: replaced.record.revision,
+    };
   }
 }

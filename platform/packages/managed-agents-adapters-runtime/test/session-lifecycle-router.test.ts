@@ -174,7 +174,9 @@ describe("Environment-aware Session lifecycle router", () => {
     ]);
   });
 
-  it("runs deletion cleanup after stopping either runtime placement", async () => {
+  // A delete may still answer 412 after the stop (docs/plans/crud-fixes.md,
+  // F1), so the stop keeps the files and only sessionDeleted removes them.
+  it("cleans up on sessionDeleted, not on a stop for deletion", async () => {
     const calls: string[] = [];
     const router = new EnvironmentAwareSessionLifecycleRouter({
       environments: { find: async () => selfHostedEnvironment },
@@ -202,11 +204,37 @@ describe("Environment-aware Session lifecycle router", () => {
       session,
       reason: "deleted",
     });
+    expect(calls).toEqual(["self-hosted.stop"]);
 
+    await router.sessionDeleted({
+      workspaceId: "workspace_01",
+      sessionId: session.id,
+    });
     expect(calls).toEqual([
       "self-hosted.stop",
       `cleanup:workspace_01:${session.id}`,
     ]);
+  });
+
+  it("keeps a failed deletion cleanup out of the answer", async () => {
+    const router = new EnvironmentAwareSessionLifecycleRouter({
+      environments: { find: async () => selfHostedEnvironment },
+      runtime: {
+        sessionStarted: async () => {},
+        sessionStopped: async () => {},
+      },
+      selfHostedWork: {
+        enqueue: async () => ({ type: "queued", work: {} as never }),
+        stop: async () => ({ type: "not_found" }),
+      },
+      cleanupSession: async () => {
+        throw new Error("outputs are busy");
+      },
+    });
+
+    await expect(
+      router.sessionDeleted({ workspaceId: "workspace_01", sessionId: session.id }),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -240,6 +268,7 @@ describe("Session stop after its Environment was deleted", () => {
         router.sessionStopped({ workspaceId: "workspace_01", sessionId: session.id, session, reason }),
       ).resolves.toBeUndefined();
     }
+    await router.sessionDeleted({ workspaceId: "workspace_01", sessionId: session.id });
     expect(calls).toEqual(["runtime.stop", "runtime.stop", `cleanup:${session.id}`]);
   });
 });

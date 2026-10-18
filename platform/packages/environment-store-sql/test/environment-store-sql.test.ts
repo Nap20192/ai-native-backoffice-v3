@@ -64,4 +64,41 @@ describe("SqlEnvironmentStore", () => {
       environmentId: first.id,
     })).resolves.toEqual({ environment: first, revision: 1 });
   });
+
+  it("archive and delete with a stale revision change nothing", async () => {
+    const store = new SqlEnvironmentStore(client);
+    const first = environment("env_01", "2026-01-01T00:00:00.000Z");
+    await store.insert({ workspaceId: "workspace_a", environment: first });
+    await store.insert({ workspaceId: "workspace_b", environment: first });
+    const location = { workspaceId: "workspace_a", environmentId: first.id };
+    await store.replace({
+      ...location,
+      expectedRevision: 1,
+      next: { ...first, name: "edited" },
+    });
+
+    await expect(store.archive({
+      ...location,
+      archivedAt: "2026-01-03T00:00:00.000Z",
+      expectedRevision: 1,
+    })).resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.delete({ ...location, expectedRevision: 1 }))
+      .resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.find(location)).resolves.toMatchObject({
+      revision: 2,
+      environment: { name: "edited", archivedAt: null },
+    });
+
+    await expect(store.archive({
+      ...location,
+      archivedAt: "2026-01-03T00:00:00.000Z",
+      expectedRevision: 2,
+    })).resolves.toMatchObject({ type: "archived", record: { revision: 3 } });
+    await expect(store.delete({ ...location, expectedRevision: 3 }))
+      .resolves.toEqual({ type: "deleted" });
+    await expect(store.delete({ ...location, expectedRevision: 3 }))
+      .resolves.toEqual({ type: "not_found" });
+    await expect(store.find({ workspaceId: "workspace_b", environmentId: first.id }))
+      .resolves.toEqual({ environment: first, revision: 1 });
+  });
 });

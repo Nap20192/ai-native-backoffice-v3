@@ -405,8 +405,9 @@ export class DependenciesApplicationService implements DependenciesApplicationPo
         id: file.id,
         name: file.filename,
         status: null,
+        // Delete takes the output files along (docs/plans/crud-fixes.md, F4).
         note: query.operation === "delete"
-          ? "выходной файл сессии"
+          ? "файл удалится вместе с сессией, если его не подключила другая живая сессия или деплоймент"
           : "выходной файл останется",
       })),
       outputs.length >= SCAN_LIMIT,

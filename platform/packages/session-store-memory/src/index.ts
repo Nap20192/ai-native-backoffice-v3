@@ -1,6 +1,7 @@
 import type {
   ArchiveSessionRecord,
   ArchiveSessionRecordResult,
+  DeleteSessionRecord,
   DeleteSessionRecordResult,
   FindCurrentSessionRecord,
   InsertSessionRecord,
@@ -13,6 +14,17 @@ import type {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/** revision_conflict when an expected revision is set and differs, else null. */
+function staleRevision(
+  current: StoredSession,
+  expectedRevision: number | undefined,
+): { type: "revision_conflict"; actualRevision: number } | null {
+  if (expectedRevision === undefined || current.revision === expectedRevision) {
+    return null;
+  }
+  return { type: "revision_conflict", actualRevision: current.revision };
 }
 
 function compareSessions(
@@ -75,6 +87,8 @@ export class MemorySessionStore implements SessionStore {
     const records = this.records(input.workspaceId);
     const current = records?.get(input.sessionId);
     if (current === undefined) return { type: "not_found" };
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
     const record: StoredSession = {
       session: {
         ...clone(current.session),
@@ -88,12 +102,16 @@ export class MemorySessionStore implements SessionStore {
   }
 
   async deleteCurrent(
-    input: FindCurrentSessionRecord,
+    input: DeleteSessionRecord,
   ): Promise<DeleteSessionRecordResult> {
     const records = this.records(input.workspaceId);
-    if (records === undefined || !records.delete(input.sessionId)) {
+    const current = records?.get(input.sessionId);
+    if (records === undefined || current === undefined) {
       return { type: "not_found" };
     }
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
+    records.delete(input.sessionId);
     if (records.size === 0) this.workspaces.delete(input.workspaceId);
     return { type: "deleted" };
   }

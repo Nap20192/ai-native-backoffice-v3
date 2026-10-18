@@ -1,6 +1,7 @@
 import type {
   ArchiveEnvironmentRecord,
   ArchiveEnvironmentRecordResult,
+  DeleteEnvironmentRecord,
   DeleteEnvironmentRecordResult,
   EnvironmentLocation,
   EnvironmentRecord,
@@ -44,6 +45,16 @@ function toStoredEnvironment(row: EnvironmentRow): StoredEnvironment {
         : new Date(Number(row.archived_at)).toISOString(),
     },
   };
+}
+
+/** SQL condition and its parameter for an optional expected revision. */
+function revisionGuard(expectedRevision: number | undefined): {
+  condition: string;
+  parameters: number[];
+} {
+  return expectedRevision === undefined
+    ? { condition: "", parameters: [] }
+    : { condition: " AND revision = ?", parameters: [expectedRevision] };
 }
 
 export class SqlEnvironmentStore implements EnvironmentStore {
@@ -128,15 +139,22 @@ export class SqlEnvironmentStore implements EnvironmentStore {
     input: ArchiveEnvironmentRecord,
   ): Promise<ArchiveEnvironmentRecordResult> {
     const archivedAt = timestamp(input.archivedAt);
+    const guard = revisionGuard(input.expectedRevision);
     const result = await this.client
       .prepare(
         `UPDATE managed_environments
             SET archived_at = ?, updated_at = ?, revision = revision + 1
-          WHERE workspace_id = ? AND id = ?`,
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
       )
-      .bind(archivedAt, archivedAt, input.workspaceId, input.environmentId)
+      .bind(
+        archivedAt,
+        archivedAt,
+        input.workspaceId,
+        input.environmentId,
+        ...guard.parameters,
+      )
       .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     if (result.meta.changes !== 1) {
       throw new Error(`Environment archive affected ${result.meta.changes} rows`);
     }
@@ -145,21 +163,34 @@ export class SqlEnvironmentStore implements EnvironmentStore {
     return { type: "archived", record };
   }
 
+  /** The environment has no child rows, so one guarded statement deletes it. */
   async delete(
-    input: EnvironmentLocation,
+    input: DeleteEnvironmentRecord,
   ): Promise<DeleteEnvironmentRecordResult> {
+    const guard = revisionGuard(input.expectedRevision);
     const result = await this.client
       .prepare(
         `DELETE FROM managed_environments
-          WHERE workspace_id = ? AND id = ?`,
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
       )
-      .bind(input.workspaceId, input.environmentId)
+      .bind(input.workspaceId, input.environmentId, ...guard.parameters)
       .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     if (result.meta.changes !== 1) {
       throw new Error(`Environment deletion affected ${result.meta.changes} rows`);
     }
     return { type: "deleted" };
+  }
+
+  /** The answer of a guarded write that touched no row. */
+  private async unchanged(input: DeleteEnvironmentRecord): Promise<
+    { type: "not_found" } | { type: "revision_conflict"; actualRevision: number }
+  > {
+    if (input.expectedRevision === undefined) return { type: "not_found" };
+    const current = await this.find(input);
+    return current === null
+      ? { type: "not_found" }
+      : { type: "revision_conflict", actualRevision: current.revision };
   }
 
   async list(input: ListEnvironmentRecords): Promise<StoredEnvironment[]> {

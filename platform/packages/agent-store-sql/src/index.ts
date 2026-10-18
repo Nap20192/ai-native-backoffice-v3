@@ -5,6 +5,7 @@ import {
   type AgentRecord,
   type ArchiveAgentRecord,
   type ArchiveAgentRecordResult,
+  type DeleteAgentRecord,
   type DeleteAgentRecordResult,
   type FindAgentVersionRecord,
   type FindCurrentAgentRecord,
@@ -52,6 +53,16 @@ function toAgent(row: AgentRow): AgentRecord {
         ? null
         : new Date(Number(row.archived_at)).toISOString(),
   };
+}
+
+/** SQL condition and its parameter for an optional expected version. */
+function versionGuard(expectedVersion: number | undefined): {
+  condition: string;
+  parameters: number[];
+} {
+  return expectedVersion === undefined
+    ? { condition: "", parameters: [] }
+    : { condition: " AND version = ?", parameters: [expectedVersion] };
 }
 
 export class SqlAgentStore implements AgentStore {
@@ -192,15 +203,22 @@ export class SqlAgentStore implements AgentStore {
     input: ArchiveAgentRecord,
   ): Promise<ArchiveAgentRecordResult> {
     const archivedAt = timestamp(input.archivedAt);
+    const guard = versionGuard(input.expectedVersion);
     const result = await this.client
       .prepare(
         `UPDATE managed_agents
             SET archived_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND id = ?`,
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
       )
-      .bind(archivedAt, archivedAt, input.workspaceId, input.agentId)
+      .bind(
+        archivedAt,
+        archivedAt,
+        input.workspaceId,
+        input.agentId,
+        ...guard.parameters,
+      )
       .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     if (result.meta.changes !== 1) {
       throw new Error(`Agent archive affected ${result.meta.changes} rows`);
     }
@@ -275,15 +293,16 @@ export class SqlAgentStore implements AgentStore {
     input: UnarchiveAgentRecord,
   ): Promise<UnarchiveAgentRecordResult> {
     const updatedAt = timestamp(input.updatedAt);
+    const guard = versionGuard(input.expectedVersion);
     const result = await this.client
       .prepare(
         `UPDATE managed_agents
             SET archived_at = NULL, updated_at = ?
-          WHERE workspace_id = ? AND id = ?`,
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
       )
-      .bind(updatedAt, input.workspaceId, input.agentId)
+      .bind(updatedAt, input.workspaceId, input.agentId, ...guard.parameters)
       .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     const restored = await this.findCurrent({
       workspaceId: input.workspaceId,
       agentId: input.agentId,
@@ -292,29 +311,56 @@ export class SqlAgentStore implements AgentStore {
     return { type: "unarchived", agent: restored };
   }
 
+  /**
+   * The batch starts with the guarded parent row, so on Postgres it locks the
+   * row before the versions go. The versions go only when the parent row is
+   * gone: a stale version leaves the agent and its history as they were.
+   */
   async deleteCurrent(
-    input: FindCurrentAgentRecord,
+    input: DeleteAgentRecord,
   ): Promise<DeleteAgentRecordResult> {
+    const guard = versionGuard(input.expectedVersion);
     const results = await this.client.batch([
       this.client
         .prepare(
-          `DELETE FROM managed_agent_versions
-            WHERE workspace_id = ? AND agent_id = ?`,
+          `DELETE FROM managed_agents
+            WHERE workspace_id = ? AND id = ?${guard.condition}`,
         )
-        .bind(input.workspaceId, input.agentId),
+        .bind(input.workspaceId, input.agentId, ...guard.parameters),
       this.client
         .prepare(
-          `DELETE FROM managed_agents
-            WHERE workspace_id = ? AND id = ?`,
+          `DELETE FROM managed_agent_versions
+            WHERE workspace_id = ? AND agent_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM managed_agents WHERE workspace_id = ? AND id = ?
+              )`,
         )
-        .bind(input.workspaceId, input.agentId),
+        .bind(input.workspaceId, input.agentId, input.workspaceId, input.agentId),
     ]);
-    const changes = results[1]?.meta.changes;
-    if (changes === 0) return { type: "not_found" };
+    const changes = results[0]?.meta.changes;
+    if (changes === 0) return this.unchanged(input);
     if (changes !== 1) {
       throw new Error(`Agent deletion affected ${changes ?? "missing"} rows`);
     }
     return { type: "deleted" };
+  }
+
+  /** The answer of a guarded write that touched no row. */
+  private async unchanged(input: {
+    workspaceId: string;
+    agentId: string;
+    expectedVersion?: number;
+  }): Promise<
+    { type: "not_found" } | { type: "version_conflict"; actualVersion: number }
+  > {
+    if (input.expectedVersion === undefined) return { type: "not_found" };
+    const current = await this.findCurrent({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+    });
+    return current === null
+      ? { type: "not_found" }
+      : { type: "version_conflict", actualVersion: current.version };
   }
 
   /**

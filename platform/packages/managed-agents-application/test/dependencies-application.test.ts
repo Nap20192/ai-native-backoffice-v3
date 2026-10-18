@@ -136,6 +136,18 @@ describe("session", () => {
     expect(report.affected.find((entry) => entry.kind === "session")?.note).toBe("ход остановится");
   });
 
+  it("tells that delete takes the output file and archive keeps it", async () => {
+    await seed.session("sesn_out");
+    await seed.file("file_out", "sesn_out");
+    const note = async (operation: "archive" | "delete") =>
+      (await check("session", "sesn_out", operation)).affected
+        .find((entry) => entry.kind === "file")?.note;
+    await expect(note("delete")).resolves.toBe(
+      "файл удалится вместе с сессией, если его не подключила другая живая сессия или деплоймент",
+    );
+    await expect(note("archive")).resolves.toBe("выходной файл останется");
+  });
+
   it("lists nothing for an idle session without outputs", async () => {
     await seed.session("sesn_idle");
     await expect(check("session", "sesn_idle", "archive")).resolves.toEqual({

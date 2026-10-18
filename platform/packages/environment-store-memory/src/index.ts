@@ -1,6 +1,7 @@
 import type {
   ArchiveEnvironmentRecord,
   ArchiveEnvironmentRecordResult,
+  DeleteEnvironmentRecord,
   DeleteEnvironmentRecordResult,
   EnvironmentLocation,
   EnvironmentStore,
@@ -13,6 +14,17 @@ import type {
 
 function clone<Value>(value: Value): Value {
   return structuredClone(value);
+}
+
+/** revision_conflict when an expected revision is set and differs, else null. */
+function staleRevision(
+  current: StoredEnvironment,
+  expectedRevision: number | undefined,
+): { type: "revision_conflict"; actualRevision: number } | null {
+  if (expectedRevision === undefined || current.revision === expectedRevision) {
+    return null;
+  }
+  return { type: "revision_conflict", actualRevision: current.revision };
 }
 
 function compare(left: StoredEnvironment, right: StoredEnvironment): number {
@@ -70,6 +82,8 @@ export class MemoryEnvironmentStore implements EnvironmentStore {
     const records = this.records(input.workspaceId);
     const current = records?.get(input.environmentId);
     if (current === undefined) return { type: "not_found" };
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
     const record: StoredEnvironment = {
       environment: {
         ...clone(current.environment),
@@ -83,12 +97,16 @@ export class MemoryEnvironmentStore implements EnvironmentStore {
   }
 
   async delete(
-    input: EnvironmentLocation,
+    input: DeleteEnvironmentRecord,
   ): Promise<DeleteEnvironmentRecordResult> {
     const records = this.records(input.workspaceId);
-    if (records === undefined || !records.delete(input.environmentId)) {
+    const current = records?.get(input.environmentId);
+    if (records === undefined || current === undefined) {
       return { type: "not_found" };
     }
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
+    records.delete(input.environmentId);
     if (records.size === 0) this.workspaces.delete(input.workspaceId);
     return { type: "deleted" };
   }

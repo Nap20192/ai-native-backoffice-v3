@@ -4,7 +4,10 @@ import { createBetterSqlite3SqlClient } from "@open-managed-agents/sql-client";
 import type { SqlClient } from "@open-managed-agents/sql-client";
 import type {
   Agent,
+  DeleteFileCommand,
   Environment,
+  FilesApplicationPort,
+  ListFilesQuery,
   SessionLifecycleCommandPort,
 } from "@open-managed-agents/managed-agents-application";
 import {
@@ -116,7 +119,7 @@ describe("SqlManagedSessionsComposition", () => {
     const composition = new SqlManagedSessionsComposition({
       client, executionOutbox: true,
       environments: new SqlSessionEnvironmentSource(client),
-      lifecycle: { sessionStarted: async () => {}, sessionStopped: async () => {} },
+      lifecycle: { sessionStarted: async () => {}, sessionStopped: async () => {}, sessionDeleted: async () => {} },
       runtime: { sessionEventsAccepted: async () => {}, sessionThreadArchived: async () => {}, subscribe: () => (async function* () {})() },
       sealer: { seal: async value => value },
       clock: { now: () => new Date("2026-08-26T01:00:00.000Z") },
@@ -148,6 +151,7 @@ describe("SqlManagedSessionsComposition", () => {
       lifecycle: {
         sessionStarted: async (input) => { started.push(input.sessionId); },
         sessionStopped: async () => {},
+        sessionDeleted: async () => {},
       },
       runtime: {
         sessionEventsAccepted: async (input) => {
@@ -191,6 +195,7 @@ describe("SqlManagedSessionsComposition", () => {
       lifecycle: {
         sessionStarted: async () => {},
         sessionStopped: async () => {},
+        sessionDeleted: async () => {},
       },
       runtime: {
         sessionEventsAccepted: async () => {},
@@ -217,6 +222,74 @@ describe("SqlManagedSessionsComposition", () => {
     expect(other.sessions).not.toBe(first.sessions);
   });
 
+  it("reaches the files Port only when a delete needs it and deletes the output files", async () => {
+    await client.exec(`
+      CREATE TABLE managed_session_initial_events (session_id TEXT, workspace_id TEXT, sequence INTEGER, document TEXT);
+      CREATE TABLE managed_session_resource_secrets (workspace_id TEXT, session_id TEXT);
+      CREATE TABLE managed_session_memory_stores (workspace_id TEXT, session_id TEXT);
+    `);
+    const resolved: string[] = [];
+    const calls: string[] = [];
+    const files = {
+      listFiles: async (query: ListFilesQuery) => {
+        calls.push(`list:${query.scopeId}`);
+        return {
+          type: "page" as const,
+          page: {
+            files: calls.length === 1
+              ? [{ id: "file_out", createdAt: "2026-08-26T01:00:00.000Z", filename: "out.txt", mimeType: "text/plain", sizeBytes: 4 }]
+              : [],
+            hasMore: false,
+            firstId: null,
+            lastId: null,
+          },
+        };
+      },
+      deleteFile: async (command: DeleteFileCommand) => {
+        calls.push(`delete:${command.fileId}`);
+        return { type: "deleted" as const, fileId: command.fileId };
+      },
+    } as FilesApplicationPort;
+    const composition = new SqlManagedSessionsComposition({
+      client,
+      environments: new SqlSessionEnvironmentSource(client),
+      lifecycle: {
+        sessionStarted: async () => {},
+        sessionStopped: async () => {},
+        sessionDeleted: async () => {},
+      },
+      runtime: {
+        sessionEventsAccepted: async () => {},
+        sessionThreadArchived: async () => {},
+        subscribe: () => (async function* () {})(),
+      },
+      // The platform graph that owns files asks this composition for the
+      // Deployment launcher while it builds, so files resolve per call.
+      filesForWorkspace: (workspaceId) => {
+        resolved.push(workspaceId);
+        return files;
+      },
+      sealer: { seal: async (value) => value },
+      clock: { now: () => new Date("2026-08-26T01:00:00.000Z") },
+      ids: {
+        nextSessionId: () => "session_out",
+        nextEventId: () => "sevt_01",
+        nextOutcomeId: () => "outc_01",
+        nextResourceId: () => "sesrsc_01",
+      },
+    });
+
+    const ports = composition.portsFor("workspace_01");
+    await expect(ports.sessions.createSession({ agent: { type: "latest", agentId: agent.id }, environmentId: environment.id }))
+      .resolves.toMatchObject({ type: "created" });
+    expect(resolved).toEqual([]);
+    await expect(ports.sessions.deleteSession({ sessionId: "session_out" }))
+      .resolves.toEqual({ type: "deleted", sessionId: "session_out" });
+    expect(calls).toEqual(["list:session_out", "delete:file_out"]);
+    expect(new Set(resolved)).toEqual(new Set(["workspace_01"]));
+    await composition.stopAll();
+  });
+
   it("uses an explicitly composed event stream independently from runtime dispatch", async () => {
     const streamCalls: object[] = [];
     const composition = new SqlManagedSessionsComposition({
@@ -225,6 +298,7 @@ describe("SqlManagedSessionsComposition", () => {
       lifecycle: {
         sessionStarted: async () => {},
         sessionStopped: async () => {},
+        sessionDeleted: async () => {},
       },
       runtime: {
         sessionEventsAccepted: async () => {},
@@ -281,6 +355,7 @@ describe("SqlManagedSessionsComposition", () => {
         lifecycleStarts.push(structuredClone(input));
       },
       sessionStopped: async () => {},
+      sessionDeleted: async () => {},
     };
     const runtime: SqlManagedSessionsRuntime = {
       sessionEventsAccepted: async (input) => {
@@ -361,6 +436,7 @@ describe("SqlManagedSessionsComposition", () => {
       lifecycle: {
         sessionStarted: async () => {},
         sessionStopped: async () => {},
+        sessionDeleted: async () => {},
       },
       runtime: {
         sessionEventsAccepted: async () => {},

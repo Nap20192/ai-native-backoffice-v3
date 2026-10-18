@@ -20,6 +20,31 @@ CREATE TABLE managed_memory_stores (
 );
 CREATE INDEX idx_managed_memory_stores_workspace_created_id
   ON managed_memory_stores (workspace_id, created_at, id);
+CREATE TABLE managed_memories (
+  workspace_id text NOT NULL,
+  memory_store_id text NOT NULL,
+  id text NOT NULL,
+  document text NOT NULL,
+  revision integer NOT NULL,
+  path text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+);
+CREATE TABLE managed_memory_versions (
+  workspace_id text NOT NULL,
+  memory_store_id text NOT NULL,
+  id text NOT NULL,
+  memory_id text NOT NULL,
+  document text NOT NULL,
+  revision integer NOT NULL,
+  operation text NOT NULL,
+  actor_kind text NOT NULL,
+  actor_id text NOT NULL,
+  created_at integer NOT NULL,
+  redacted_at integer,
+  PRIMARY KEY (workspace_id, id)
+);
 `;
 
 const store = (

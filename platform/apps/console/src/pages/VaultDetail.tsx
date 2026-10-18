@@ -596,6 +596,7 @@ export function VaultDetail() {
         open={confirmOpen && pending?.kind === "archive-vault"}
         operation="archive"
         target={{ kind: "vault", id }}
+        etagPath={id ? `/v1/vaults/${id}` : undefined}
         title="Отправить хранилище в архив?"
         message="Хранилище и его учётные данные станут недоступны агентам."
         confirmLabel={t.common.archive}
@@ -607,6 +608,7 @@ export function VaultDetail() {
         open={confirmOpen && pending?.kind === "delete-vault"}
         operation="delete"
         target={{ kind: "vault", id }}
+        etagPath={id ? `/v1/vaults/${id}` : undefined}
         title="Удалить хранилище?"
         message="Хранилище и все его учётные данные будут удалены."
         run={(options) => managedApi.vaults.delete(id, options)}

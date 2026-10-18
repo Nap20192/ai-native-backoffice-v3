@@ -65,6 +65,42 @@ CREATE TABLE managed_session_memory_stores (
   memory_store_id text NOT NULL,
   PRIMARY KEY (session_id, memory_store_id)
 );
+CREATE TABLE managed_session_initial_events (
+  session_id text NOT NULL,
+  workspace_id text NOT NULL,
+  sequence integer NOT NULL,
+  document text NOT NULL,
+  PRIMARY KEY (session_id, sequence)
+);
+CREATE TABLE managed_session_resource_secrets (
+  workspace_id text NOT NULL,
+  session_id text NOT NULL,
+  resource_id text NOT NULL,
+  secret_type text NOT NULL,
+  sealed_value text NOT NULL,
+  updated_at integer NOT NULL,
+  PRIMARY KEY (workspace_id, session_id, resource_id)
+);
+CREATE TABLE managed_session_events (
+  workspace_id text NOT NULL,
+  session_id text NOT NULL,
+  id text NOT NULL,
+  type text NOT NULL,
+  document text NOT NULL,
+  processed_at integer NOT NULL,
+  thread_id text,
+  PRIMARY KEY (workspace_id, session_id, id)
+);
+CREATE TABLE managed_session_threads (
+  workspace_id text NOT NULL,
+  session_id text NOT NULL,
+  id text NOT NULL,
+  document text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  archived_at integer,
+  PRIMARY KEY (workspace_id, session_id, id)
+);
 CREATE TABLE managed_deployments (
   workspace_id text NOT NULL,
   id text NOT NULL,
@@ -132,6 +168,8 @@ interface Stores {
   deployments: DeploymentStore;
   memories: MemoryDocumentStore;
   credentials: CredentialStore;
+  /** The SQLite client, to seed and count rows no store port reaches. */
+  client?: SqlClient;
 }
 
 async function sqlStores(): Promise<Stores> {
@@ -143,6 +181,7 @@ async function sqlStores(): Promise<Stores> {
     deployments: new SqlDeploymentStore(client, identityCipher),
     memories: new SqlMemoryDocumentStore(client),
     credentials: new SqlCredentialStore(client, identityCipher),
+    client,
   };
 }
 
@@ -271,6 +310,69 @@ function credential(id: string, vaultId: string): Credential {
   } as Credential;
 }
 
+/** Tables that hold one session's rows, with the column of the session id. */
+const SESSION_TABLES = [
+  ["managed_sessions", "id"],
+  ["managed_session_events", "session_id"],
+  ["managed_session_threads", "session_id"],
+  ["managed_session_resource_secrets", "session_id"],
+  ["managed_session_initial_events", "session_id"],
+  ["managed_session_memory_stores", "session_id"],
+] as const;
+
+const ALL_SESSION_ROWS = Object.fromEntries(SESSION_TABLES.map(([table]) => [table, 1]));
+const NO_SESSION_ROWS = Object.fromEntries(SESSION_TABLES.map(([table]) => [table, 0]));
+
+/**
+ * A session with one row in every child table. The store writes the initial
+ * event, the resource secret and the memory store link. Events and threads
+ * belong to other stores, so on SQLite the test writes them directly.
+ */
+async function insertSessionWithRows(stores: Stores, sessionId: string): Promise<void> {
+  await stores.sessions.insert({
+    workspaceId: W,
+    session: session(sessionId, { resources: [{ type: "memory_store", memoryStoreId: "memstore_a" }] }),
+    initialEvents: [{ type: "user.message", content: [{ type: "text", text: "hi" }] }],
+    resourceSecrets: [{ type: "github_token", resourceId: `res_${sessionId}`, authorizationToken: "token" }],
+  });
+  if (stores.client === undefined) return;
+  await stores.client.batch([
+    stores.client
+      .prepare(
+        `INSERT INTO managed_session_events (workspace_id, session_id, id, type, document, processed_at)
+         VALUES (?, ?, ?, 'user.message', '{}', 0)`,
+      )
+      .bind(W, sessionId, `event_${sessionId}`),
+    stores.client
+      .prepare(
+        `INSERT INTO managed_session_threads (workspace_id, session_id, id, document, created_at, updated_at)
+         VALUES (?, ?, ?, '{}', 0, 0)`,
+      )
+      .bind(W, sessionId, `thread_${sessionId}`),
+  ]);
+}
+
+/**
+ * Row counts of one session per table. The memory store keeps no child rows,
+ * so there only the session row counts and the children follow it.
+ */
+async function sessionRows(stores: Stores, sessionId: string): Promise<Record<string, number>> {
+  const client = stores.client;
+  if (client === undefined) {
+    const found = await stores.sessions.findCurrent({ workspaceId: W, sessionId });
+    return found === null ? NO_SESSION_ROWS : ALL_SESSION_ROWS;
+  }
+  const counts: Record<string, number> = {};
+  for (const [table, column] of SESSION_TABLES) {
+    const row = await client
+      .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE workspace_id = ? AND ${column} = ?`)
+      .bind(W, sessionId)
+      .first<{ count: number }>();
+    counts[table] = Number(row?.count ?? 0);
+  }
+  return counts;
+}
+
 const factories: Array<[string, () => Promise<Stores> | Stores]> = [
   ["memory", memoryStores],
   ["SQLite", sqlStores],
@@ -378,6 +480,54 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
       await expect(stores.agents.deleteCurrent({ workspaceId: W, agentId: first.id }))
         .resolves.toEqual({ type: "not_found" });
     });
+
+    it("archive, restore and delete with a stale version change nothing", async () => {
+      const first = agent("agent_v");
+      await stores.agents.insert({ workspaceId: W, agent: first });
+      await stores.agents.replaceCurrent({
+        workspaceId: W, agentId: first.id, expectedVersion: 1,
+        next: { ...first, name: "two", version: 2 },
+      });
+      const current = () => stores.agents.findCurrent({ workspaceId: W, agentId: first.id });
+      const archivedAt = "2026-10-02T00:00:00.000Z";
+      const restoredAt = "2026-10-03T00:00:00.000Z";
+
+      await expect(stores.agents.archiveCurrent({
+        workspaceId: W, agentId: first.id, archivedAt, expectedVersion: 1,
+      })).resolves.toEqual({ type: "version_conflict", actualVersion: 2 });
+      await expect(current()).resolves.toMatchObject({ archivedAt: null, version: 2, updatedAt: T0 });
+      await expect(stores.agents.archiveCurrent({
+        workspaceId: W, agentId: first.id, archivedAt, expectedVersion: 2,
+      })).resolves.toMatchObject({ type: "archived", agent: { archivedAt, version: 2 } });
+
+      await expect(stores.agents.unarchiveCurrent({
+        workspaceId: W, agentId: first.id, updatedAt: restoredAt, expectedVersion: 1,
+      })).resolves.toEqual({ type: "version_conflict", actualVersion: 2 });
+      await expect(current()).resolves.toMatchObject({ archivedAt, version: 2 });
+      await expect(stores.agents.unarchiveCurrent({
+        workspaceId: W, agentId: first.id, updatedAt: restoredAt, expectedVersion: 2,
+      })).resolves.toMatchObject({ type: "unarchived", agent: { archivedAt: null, version: 2 } });
+
+      await expect(stores.agents.deleteCurrent({ workspaceId: W, agentId: first.id, expectedVersion: 1 }))
+        .resolves.toEqual({ type: "version_conflict", actualVersion: 2 });
+      await expect(current()).resolves.toMatchObject({ version: 2 });
+      await expect(stores.agents.findVersion({ workspaceId: W, agentId: first.id, version: 1 }))
+        .resolves.toMatchObject({ id: first.id, version: 1 });
+      await expect(stores.agents.deleteCurrent({ workspaceId: W, agentId: first.id, expectedVersion: 2 }))
+        .resolves.toEqual({ type: "deleted" });
+      await expect(current()).resolves.toBeNull();
+      await expect(stores.agents.findVersion({ workspaceId: W, agentId: first.id, version: 1 }))
+        .resolves.toBeNull();
+
+      await expect(stores.agents.archiveCurrent({
+        workspaceId: W, agentId: first.id, archivedAt, expectedVersion: 2,
+      })).resolves.toEqual({ type: "not_found" });
+      await expect(stores.agents.unarchiveCurrent({
+        workspaceId: W, agentId: first.id, updatedAt: restoredAt, expectedVersion: 2,
+      })).resolves.toEqual({ type: "not_found" });
+      await expect(stores.agents.deleteCurrent({ workspaceId: W, agentId: first.id, expectedVersion: 2 }))
+        .resolves.toEqual({ type: "not_found" });
+    });
   });
 
   describe("sessions", () => {
@@ -400,6 +550,45 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
       await expect(ids({ environmentId: "env_b" })).resolves.toEqual(["sesn_env_b"]);
       await expect(ids({ fileId: "file_a" })).resolves.toEqual(["sesn_file"]);
       await expect(ids({ vaultId: "vlt_a" })).resolves.toEqual(["sesn_vault"]);
+    });
+
+    it("archive and delete with a stale revision keep the session and its rows", async () => {
+      await insertSessionWithRows(stores, "sesn_r");
+      await insertSessionWithRows(stores, "sesn_other");
+      const first = await stores.sessions.findCurrent({ workspaceId: W, sessionId: "sesn_r" });
+      await stores.sessions.replaceCurrent({
+        workspaceId: W, sessionId: "sesn_r", expectedRevision: 1,
+        next: { ...first!.session, title: "two" },
+      });
+      const current = () => stores.sessions.findCurrent({ workspaceId: W, sessionId: "sesn_r" });
+      const rows = (sessionId: string) => sessionRows(stores, sessionId);
+      const archivedAt = "2026-10-02T00:00:00.000Z";
+      await expect(rows("sesn_r")).resolves.toEqual(ALL_SESSION_ROWS);
+
+      await expect(stores.sessions.archiveCurrent({
+        workspaceId: W, sessionId: "sesn_r", archivedAt, expectedRevision: 1,
+      })).resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+      await expect(current()).resolves.toMatchObject({ revision: 2, session: { archivedAt: null, title: "two" } });
+
+      await expect(stores.sessions.deleteCurrent({ workspaceId: W, sessionId: "sesn_r", expectedRevision: 1 }))
+        .resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+      await expect(current()).resolves.toMatchObject({ revision: 2 });
+      await expect(rows("sesn_r")).resolves.toEqual(ALL_SESSION_ROWS);
+
+      await expect(stores.sessions.archiveCurrent({
+        workspaceId: W, sessionId: "sesn_r", archivedAt, expectedRevision: 2,
+      })).resolves.toMatchObject({ type: "archived", record: { revision: 3, session: { archivedAt } } });
+      await expect(stores.sessions.deleteCurrent({ workspaceId: W, sessionId: "sesn_r", expectedRevision: 3 }))
+        .resolves.toEqual({ type: "deleted" });
+      await expect(current()).resolves.toBeNull();
+      await expect(rows("sesn_r")).resolves.toEqual(NO_SESSION_ROWS);
+      await expect(rows("sesn_other")).resolves.toEqual(ALL_SESSION_ROWS);
+
+      await expect(stores.sessions.archiveCurrent({
+        workspaceId: W, sessionId: "sesn_r", archivedAt, expectedRevision: 3,
+      })).resolves.toEqual({ type: "not_found" });
+      await expect(stores.sessions.deleteCurrent({ workspaceId: W, sessionId: "sesn_r", expectedRevision: 3 }))
+        .resolves.toEqual({ type: "not_found" });
     });
   });
 
@@ -461,5 +650,20 @@ describe.each(factories)("%s stores for archive, restore and delete", (_label, m
       await expect(stores.credentials.list({ workspaceId: W, vaultId: "vlt_b", limit: 10, includeArchived: true }))
         .resolves.toHaveLength(1);
     });
+  });
+});
+
+describe("SQLite session delete", () => {
+  it("keeps the session and its rows when a child delete fails", async () => {
+    const stores = await sqlStores();
+    const client = stores.client!;
+    await insertSessionWithRows(stores, "sesn_locked");
+    await client.exec(`
+      CREATE TRIGGER keep_session_threads BEFORE DELETE ON managed_session_threads
+      BEGIN SELECT RAISE(ABORT, 'threads are locked'); END;
+    `);
+    await expect(stores.sessions.deleteCurrent({ workspaceId: W, sessionId: "sesn_locked", expectedRevision: 1 }))
+      .rejects.toThrow("threads are locked");
+    await expect(sessionRows(stores, "sesn_locked")).resolves.toEqual(ALL_SESSION_ROWS);
   });
 });

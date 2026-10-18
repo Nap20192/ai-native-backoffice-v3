@@ -83,9 +83,19 @@ export type DeleteSkillVersionRecordResult =
   | { type: "not_found" }
   | { type: "revision_conflict"; actualRevision: number };
 
+export interface DeleteSkillRecord extends SkillLocation {
+  /**
+   * When set, the Skill and its Versions go only while the stored revision
+   * equals it. The check and the delete are one atomic step. Another revision
+   * gives revision_conflict and changes nothing.
+   */
+  expectedRevision?: number;
+}
+
 export type DeleteSkillRecordResult =
   | { type: "deleted" }
-  | { type: "not_found" };
+  | { type: "not_found" }
+  | { type: "revision_conflict"; actualRevision: number };
 
 export interface SkillStore {
   insertWithInitialVersion(
@@ -93,7 +103,7 @@ export interface SkillStore {
   ): Promise<InsertedSkillWithInitialVersion>;
   findSkill(input: SkillLocation): Promise<StoredSkill | null>;
   listSkills(input: ListSkillRecords): Promise<StoredSkill[]>;
-  deleteSkill(input: SkillLocation): Promise<DeleteSkillRecordResult>;
+  deleteSkill(input: DeleteSkillRecord): Promise<DeleteSkillRecordResult>;
   findVersion(input: SkillVersionLocation): Promise<StoredSkillVersion | null>;
   listVersions(input: ListSkillVersionRecords): Promise<StoredSkillVersion[]>;
   appendVersion(input: AppendSkillVersion): Promise<AppendSkillVersionResult>;

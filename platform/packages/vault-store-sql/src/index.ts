@@ -3,6 +3,7 @@ import type { SqlClient } from "@open-managed-agents/sql-client";
 import type {
   ArchiveVaultRecord,
   ArchiveVaultRecordResult,
+  DeleteVaultRecord,
   DeleteVaultRecordResult,
   InsertVault,
   ListVaultRecords,
@@ -46,6 +47,22 @@ function toStoredVault(row: VaultRow): StoredVault {
     },
   };
 }
+
+/** SQL condition and its parameter for an optional expected revision. */
+function revisionGuard(expectedRevision: number | undefined): {
+  condition: string;
+  parameters: number[];
+} {
+  return expectedRevision === undefined
+    ? { condition: "", parameters: [] }
+    : { condition: " AND revision = ?", parameters: [expectedRevision] };
+}
+
+/**
+ * Tables that hold the rows of one vault besides managed_vaults.
+ * SqlCredentialStore writes them.
+ */
+const VAULT_CHILD_TABLES = ["managed_credentials"] as const;
 
 export class SqlVaultStore implements VaultStore {
   constructor(private readonly client: SqlClient) {}
@@ -129,15 +146,22 @@ export class SqlVaultStore implements VaultStore {
 
   async archive(input: ArchiveVaultRecord): Promise<ArchiveVaultRecordResult> {
     const archivedAt = timestamp(input.archivedAt);
+    const guard = revisionGuard(input.expectedRevision);
     const result = await this.client
       .prepare(
         `UPDATE managed_vaults
             SET archived_at = ?, updated_at = ?, revision = revision + 1
-          WHERE workspace_id = ? AND id = ?`,
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
       )
-      .bind(archivedAt, archivedAt, input.workspaceId, input.vaultId)
+      .bind(
+        archivedAt,
+        archivedAt,
+        input.workspaceId,
+        input.vaultId,
+        ...guard.parameters,
+      )
       .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     if (result.meta.changes !== 1) {
       throw new Error(`Vault archive affected ${result.meta.changes} rows`);
     }
@@ -146,19 +170,56 @@ export class SqlVaultStore implements VaultStore {
     return { type: "archived", record };
   }
 
-  async delete(input: VaultLocation): Promise<DeleteVaultRecordResult> {
-    const result = await this.client
-      .prepare(
-        `DELETE FROM managed_vaults
-          WHERE workspace_id = ? AND id = ?`,
-      )
-      .bind(input.workspaceId, input.vaultId)
-      .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
-    if (result.meta.changes !== 1) {
-      throw new Error(`Vault deletion affected ${result.meta.changes} rows`);
+  /**
+   * One batch deletes the vault and its credentials. It starts with the
+   * guarded vault row, so on Postgres it locks the row before the
+   * credentials go. The credentials go only when the vault row is gone: a
+   * stale revision leaves the vault and its credentials as they were, and a
+   * failed credential delete rolls the vault row back.
+   */
+  async delete(input: DeleteVaultRecord): Promise<DeleteVaultRecordResult> {
+    const guard = revisionGuard(input.expectedRevision);
+    const results = await this.client.batch([
+      this.client
+        .prepare(
+          `DELETE FROM managed_vaults
+            WHERE workspace_id = ? AND id = ?${guard.condition}`,
+        )
+        .bind(input.workspaceId, input.vaultId, ...guard.parameters),
+      ...VAULT_CHILD_TABLES.map((table) =>
+        this.client
+          .prepare(
+            `DELETE FROM ${table}
+              WHERE workspace_id = ? AND vault_id = ?
+                AND NOT EXISTS (
+                  SELECT 1 FROM managed_vaults
+                   WHERE workspace_id = ? AND id = ?
+                )`,
+          )
+          .bind(
+            input.workspaceId,
+            input.vaultId,
+            input.workspaceId,
+            input.vaultId,
+          )),
+    ]);
+    const vaultChanges = results[0]?.meta.changes;
+    if (vaultChanges === 0) return this.unchanged(input);
+    if (vaultChanges !== 1) {
+      throw new Error(`Vault deletion affected ${vaultChanges ?? "missing"} rows`);
     }
     return { type: "deleted" };
+  }
+
+  /** The answer of a guarded write that touched no vault row. */
+  private async unchanged(input: DeleteVaultRecord): Promise<
+    { type: "not_found" } | { type: "revision_conflict"; actualRevision: number }
+  > {
+    if (input.expectedRevision === undefined) return { type: "not_found" };
+    const current = await this.find(input);
+    return current === null
+      ? { type: "not_found" }
+      : { type: "revision_conflict", actualRevision: current.revision };
   }
 
   async list(input: ListVaultRecords): Promise<StoredVault[]> {

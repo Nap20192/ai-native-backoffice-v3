@@ -3,6 +3,7 @@ import type {
   FindCurrentSessionRecord,
   ArchiveSessionRecord,
   ArchiveSessionRecordResult,
+  DeleteSessionRecord,
   DeleteSessionRecordResult,
   InsertSessionRecord,
   ListSessionRecords,
@@ -55,6 +56,25 @@ function toStoredSession(row: SessionRow): StoredSession {
     },
   };
 }
+
+/** SQL condition and its parameter for an optional expected revision. */
+function revisionGuard(expectedRevision: number | undefined): {
+  condition: string;
+  parameters: number[];
+} {
+  return expectedRevision === undefined
+    ? { condition: "", parameters: [] }
+    : { condition: " AND revision = ?", parameters: [expectedRevision] };
+}
+
+/** Tables that hold the rows of one Session besides managed_sessions. */
+const SESSION_CHILD_TABLES = [
+  "managed_session_events",
+  "managed_session_threads",
+  "managed_session_resource_secrets",
+  "managed_session_initial_events",
+  "managed_session_memory_stores",
+] as const;
 
 export class SqlSessionStore implements SessionStore {
   constructor(
@@ -231,15 +251,22 @@ export class SqlSessionStore implements SessionStore {
     input: ArchiveSessionRecord,
   ): Promise<ArchiveSessionRecordResult> {
     const archivedAt = timestamp(input.archivedAt);
+    const guard = revisionGuard(input.expectedRevision);
     const result = await this.client
       .prepare(
         `UPDATE managed_sessions
             SET archived_at = ?, updated_at = ?, revision = revision + 1
-          WHERE workspace_id = ? AND id = ?`,
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
       )
-      .bind(archivedAt, archivedAt, input.workspaceId, input.sessionId)
+      .bind(
+        archivedAt,
+        archivedAt,
+        input.workspaceId,
+        input.sessionId,
+        ...guard.parameters,
+      )
       .run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     if (result.meta.changes !== 1) {
       throw new Error(`Session archive affected ${result.meta.changes} rows`);
     }
@@ -251,55 +278,55 @@ export class SqlSessionStore implements SessionStore {
     return { type: "archived", record };
   }
 
+  /**
+   * The batch starts with the guarded Session row, so on Postgres it locks
+   * the row before the child rows go. The child rows go only when the
+   * Session row is gone: a stale revision leaves the Session, its events,
+   * threads and other rows as they were.
+   */
   async deleteCurrent(
-    input: FindCurrentSessionRecord,
+    input: DeleteSessionRecord,
   ): Promise<DeleteSessionRecordResult> {
+    const guard = revisionGuard(input.expectedRevision);
     const results = await this.client.batch([
       this.client
         .prepare(
-          `DELETE FROM managed_session_events
-            WHERE workspace_id = ? AND session_id = ?`,
-        )
-        .bind(input.workspaceId, input.sessionId),
-      this.client
-        .prepare(
-          `DELETE FROM managed_session_threads
-            WHERE workspace_id = ? AND session_id = ?`,
-        )
-        .bind(input.workspaceId, input.sessionId),
-      this.client
-        .prepare(
-          `DELETE FROM managed_session_resource_secrets
-            WHERE workspace_id = ? AND session_id = ?`,
-        )
-        .bind(input.workspaceId, input.sessionId),
-      this.client
-        .prepare(
-          `DELETE FROM managed_session_initial_events
-            WHERE workspace_id = ? AND session_id = ?`,
-        )
-        .bind(input.workspaceId, input.sessionId),
-      this.client
-        .prepare(
-          `DELETE FROM managed_session_memory_stores
-            WHERE workspace_id = ? AND session_id = ?`,
-        )
-        .bind(input.workspaceId, input.sessionId),
-      this.client
-        .prepare(
           `DELETE FROM managed_sessions
-            WHERE workspace_id = ? AND id = ?`,
+            WHERE workspace_id = ? AND id = ?${guard.condition}`,
         )
-        .bind(input.workspaceId, input.sessionId),
+        .bind(input.workspaceId, input.sessionId, ...guard.parameters),
+      ...SESSION_CHILD_TABLES.map((table) =>
+        this.client
+          .prepare(
+            `DELETE FROM ${table}
+              WHERE workspace_id = ? AND session_id = ?
+                AND NOT EXISTS (
+                  SELECT 1 FROM managed_sessions
+                   WHERE workspace_id = ? AND id = ?
+                )`,
+          )
+          .bind(input.workspaceId, input.sessionId, input.workspaceId, input.sessionId),
+      ),
     ]);
-    const sessionChanges = results[5]?.meta.changes;
-    if (sessionChanges === 0) return { type: "not_found" };
+    const sessionChanges = results[0]?.meta.changes;
+    if (sessionChanges === 0) return this.unchanged(input);
     if (sessionChanges !== 1) {
       throw new Error(
         `Session deletion affected ${sessionChanges ?? "missing"} rows`,
       );
     }
     return { type: "deleted" };
+  }
+
+  /** The answer of a guarded write that touched no Session row. */
+  private async unchanged(input: DeleteSessionRecord): Promise<
+    { type: "not_found" } | { type: "revision_conflict"; actualRevision: number }
+  > {
+    if (input.expectedRevision === undefined) return { type: "not_found" };
+    const current = await this.findCurrent(input);
+    return current === null
+      ? { type: "not_found" }
+      : { type: "revision_conflict", actualRevision: current.revision };
   }
 
   async listCurrent(input: ListSessionRecords): Promise<StoredSession[]> {

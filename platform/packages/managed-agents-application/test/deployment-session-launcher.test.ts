@@ -102,6 +102,7 @@ describe("Sessions deployment launcher", () => {
           lifecycleCalls.push(input);
         },
         sessionStopped: unexpected("sessionStopped"),
+        sessionDeleted: unexpected("sessionDeleted"),
       },
       clock: { now: () => new Date("2026-08-26T15:00:00.000Z") },
       ids: {

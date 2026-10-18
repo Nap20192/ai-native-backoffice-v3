@@ -63,6 +63,12 @@ export interface CredentialStore {
   archive(input: ArchiveCredentialRecord): Promise<ArchiveCredentialRecordResult>;
   delete(input: CredentialLocation): Promise<DeleteCredentialRecordResult>;
   list(input: ListCredentialRecords): Promise<StoredCredential[]>;
-  /** Deletes every credential of one vault, archived ones too. */
+  /**
+   * Deletes every credential of one vault, archived ones too. The vaults
+   * service calls it after the vault row is gone. On SQL the vault delete
+   * has already removed them and the call finds nothing; in memory it
+   * removes them. It also removes a credential that a concurrent create
+   * inserted before the call.
+   */
   deleteAllInVault(input: DeleteVaultCredentials): Promise<{ deleted: number }>;
 }

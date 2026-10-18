@@ -1,6 +1,7 @@
 import type {
   ArchiveMemoryStoreRecord,
   ArchiveMemoryStoreRecordResult,
+  DeleteMemoryStoreRecord,
   DeleteMemoryStoreRecordResult,
   InsertMemoryStore,
   ListMemoryStoreRecords,
@@ -13,6 +14,17 @@ import type {
 
 function clone<Value>(value: Value): Value {
   return structuredClone(value);
+}
+
+/** revision_conflict when an expected revision is set and differs, else null. */
+function staleRevision(
+  current: StoredMemoryStore,
+  expectedRevision: number | undefined,
+): { type: "revision_conflict"; actualRevision: number } | null {
+  if (expectedRevision === undefined || current.revision === expectedRevision) {
+    return null;
+  }
+  return { type: "revision_conflict", actualRevision: current.revision };
 }
 
 export class InMemoryMemoryStoreStore implements MemoryStoreStore {
@@ -78,6 +90,8 @@ export class InMemoryMemoryStoreStore implements MemoryStoreStore {
     const records = this.workspace(input.workspaceId, false);
     const current = records?.get(input.memoryStoreId);
     if (current === undefined) return { type: "not_found" };
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
     const record = {
       memoryStore: {
         ...clone(current.memoryStore),
@@ -90,13 +104,18 @@ export class InMemoryMemoryStoreStore implements MemoryStoreStore {
     return { type: "archived", record: clone(record) };
   }
 
+  /** Deletes only the row: the memories live in another adapter. */
   async delete(
-    input: MemoryStoreLocation,
+    input: DeleteMemoryStoreRecord,
   ): Promise<DeleteMemoryStoreRecordResult> {
     const records = this.workspace(input.workspaceId, false);
-    if (records?.delete(input.memoryStoreId) !== true) {
+    const current = records?.get(input.memoryStoreId);
+    if (records === undefined || current === undefined) {
       return { type: "not_found" };
     }
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
+    records.delete(input.memoryStoreId);
     return { type: "deleted" };
   }
 

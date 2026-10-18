@@ -64,6 +64,7 @@ async function fixture() {
     const lifecycle: SessionLifecycleCommandPort = {
       async sessionStarted(input) { starts.push(input.sessionId); await produced(input.sessionId, `bootstrap_${input.sessionId}`, 'initial'); },
       async sessionStopped() {},
+      async sessionDeleted() {},
     };
     // Only the execution boundary is controlled here. Every API operation,
     // admission, revision, history read and output commit uses real services.

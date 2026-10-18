@@ -8,8 +8,12 @@ import type { OpenAIAgentsOperationRequest } from "../../../openai-agents-api/sr
 import type { ResourceRuntimeFiles } from "../../src/resource-types";
 import { MemoryFileStore } from "../../../file-store-memory/src/index";
 import type { FileContentStore } from "../../../file-content-store/src/index";
+import type { DependenciesApplicationPort } from "../../../managed-agents-application/src/ports/dependencies";
 
-export function resourcesFixture(runtime?: ResourceRuntimeFiles) {
+export function resourcesFixture(
+  runtime?: ResourceRuntimeFiles,
+  options: { vaultDependencies?: DependenciesApplicationPort } = {},
+) {
   let sequence = 0;
   const shared = { workspaceId: "workspace_a", clock: { now: () => new Date(1_800_000_000_000 + sequence++ * 1000) } };
   const agentStore = new MemoryAgentStore();
@@ -17,7 +21,8 @@ export function resourcesFixture(runtime?: ResourceRuntimeFiles) {
   const credentialStore = new MemoryCredentialStore();
   const environmentStore = new MemoryEnvironmentStore();
   const agents = new AgentsApplicationService({ ...shared, store: agentStore, ids: { nextAgentId: () => `agent_${sequence++}` } });
-  const vaults = new VaultsApplicationService({ ...shared, store: vaultStore, ids: { nextVaultId: () => `vault_${sequence++}` } });
+  // As in main-node, vault delete takes its credentials along and checks dependencies.
+  const vaults = new VaultsApplicationService({ ...shared, store: vaultStore, credentials: credentialStore, ...(options.vaultDependencies && { dependencyCheck: options.vaultDependencies }), ids: { nextVaultId: () => `vault_${sequence++}` } });
   const credentials = new CredentialsApplicationService({ ...shared, store: credentialStore, vaults: { find: async input => (await vaultStore.find(input))?.vault ?? null }, ids: { nextCredentialId: () => `credential_${sequence++}` }, validation: { validate: async () => ({ hasRefreshToken: false, mcpProbe: null, refresh: null, status: "indeterminate" }) } });
   const environments = new EnvironmentsApplicationService({ ...shared, store: environmentStore, ids: { nextEnvironmentId: () => `environment_${sequence++}` } });
   const blobs = new Map<string, Uint8Array>();

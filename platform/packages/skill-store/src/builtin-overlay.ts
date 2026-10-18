@@ -6,6 +6,7 @@ import type {
 import type {
   AppendSkillVersion,
   AppendSkillVersionResult,
+  DeleteSkillRecord,
   DeleteSkillRecordResult,
   DeleteSkillVersionRecord,
   DeleteSkillVersionRecordResult,
@@ -132,7 +133,7 @@ export class BuiltinSkillOverlayStore implements SkillStore {
       .slice(0, input.limit);
   }
 
-  async deleteSkill(input: SkillLocation): Promise<DeleteSkillRecordResult> {
+  async deleteSkill(input: DeleteSkillRecord): Promise<DeleteSkillRecordResult> {
     if (this.catalog.has(input.skillId)) return { type: "not_found" };
     return this.inner.deleteSkill(input);
   }

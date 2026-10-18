@@ -355,4 +355,38 @@ describe("memory stores and vaults", () => {
     await expectDependencyConflict(await api.fetch(request("/v1/vaults/vlt_01/archive")));
     await expectDependencyConflict(await api.fetch(request("/v1/vaults/vlt_01", "DELETE")));
   });
+
+  it("vault archive, unarchive and delete pass If-Match, map 412 and carry ETag", async () => {
+    const commands: unknown[] = [];
+    const api = buildVaultsTestApi(makeVaultsPort({
+      archiveVault: async (command) => {
+        commands.push(command);
+        return { type: "archived", vault, revision: 2 };
+      },
+      unarchiveVault: async (command) => {
+        commands.push(command);
+        return { type: "precondition_failed", message: "stale" };
+      },
+      deleteVault: async (command) => {
+        commands.push(command);
+        return { type: "precondition_failed", message: "stale" };
+      },
+    }));
+    const archived = await api.fetch(request("/v1/vaults/vlt_01/archive", "POST", '"1"'));
+    expect(archived.status).toBe(200);
+    expect(archived.headers.get("etag")).toBe('"2"');
+    expect((await api.fetch(request("/v1/vaults/vlt_01/unarchive", "POST", '"3"'))).status).toBe(412);
+    const stale = await api.fetch(request("/v1/vaults/vlt_01", "DELETE", '"2"'));
+    expect(stale.status).toBe(412);
+    await expect(stale.json()).resolves.toEqual({
+      type: "error",
+      error: { type: "precondition_failed_error", message: "stale" },
+    });
+    expect((await api.fetch(request("/v1/vaults/vlt_01", "DELETE", "W/\"2\""))).status).toBe(400);
+    expect(commands).toEqual([
+      { vaultId: "vlt_01", expectedRevision: 1 },
+      { vaultId: "vlt_01", expectedRevision: 3 },
+      { vaultId: "vlt_01", expectedRevision: 2 },
+    ]);
+  });
 });

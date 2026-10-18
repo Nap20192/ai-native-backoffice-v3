@@ -93,6 +93,7 @@ function compose() {
       providePort(sessionLifecyclePort, {
         sessionStarted: async () => undefined,
         sessionStopped: async () => undefined,
+        sessionDeleted: async () => undefined,
       }),
       providePort(skillPackageCompilerPort, {} as never),
     ],
@@ -327,5 +328,31 @@ describe("vault", () => {
     expect((await call("/v1/vaults/vlt_a", "DELETE")).status).toBe(200);
     await expect(stores.credentials.list({ workspaceId: WORKSPACE, vaultId: "vlt_a", limit: 10, includeArchived: true }))
       .resolves.toEqual([]);
+  });
+
+  it("reads and writes carry ETag; archive, unarchive and delete answer 412 on a stale If-Match", async () => {
+    await seed.vault("vlt_a");
+    await seed.credential("vlt_a", "cred_1");
+    const read = await call("/v1/vaults/vlt_a", "GET");
+    expect(read.status).toBe(200);
+    expect(read.headers.get("etag")).toBe('"1"');
+    expect((await call("/v1/vaults/vlt_a/archive", "POST", 'W/"1"')).status).toBe(400);
+    expect((await call("/v1/vaults/vlt_a/archive", "POST", '"7"')).status).toBe(412);
+    const archived = await call("/v1/vaults/vlt_a/archive", "POST", '"1"');
+    expect(archived.status).toBe(200);
+    expect(archived.headers.get("etag")).toBe('"2"');
+    expect((await call("/v1/vaults/vlt_a/unarchive", "POST", '"1"')).status).toBe(412);
+    const restored = await call("/v1/vaults/vlt_a/unarchive", "POST", '"2"');
+    expect(restored.status).toBe(200);
+    expect(restored.headers.get("etag")).toBe('"3"');
+
+    const stale = await call("/v1/vaults/vlt_a", "DELETE", '"2"');
+    expect(stale.status).toBe(412);
+    await expect(stale.json()).resolves.toMatchObject({ error: { type: "precondition_failed_error" } });
+    await expect(stores.credentials.list({ workspaceId: WORKSPACE, vaultId: "vlt_a", limit: 10, includeArchived: true }))
+      .resolves.toHaveLength(1);
+    expect((await call("/v1/vaults/vlt_a", "DELETE", '"3"')).status).toBe(200);
+    expect((await call("/v1/vaults/vlt_a", "DELETE", '"3"')).status).toBe(404);
+    expect((await call("/v1/vaults/vlt_a/archive", "POST")).status).toBe(404);
   });
 });

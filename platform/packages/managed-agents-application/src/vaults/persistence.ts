@@ -2,6 +2,7 @@
 export type {
   ArchiveVaultRecord,
   ArchiveVaultRecordResult,
+  DeleteVaultRecord,
   DeleteVaultRecordResult,
   InsertVault,
   ListVaultRecords,

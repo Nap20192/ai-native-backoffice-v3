@@ -152,7 +152,13 @@ export interface MemoryDocumentStore {
   redactVersion(
     input: RedactMemoryVersionRecord,
   ): Promise<RedactMemoryVersionRecordResult>;
-  /** Deletes every memory and memory version of one memory store. */
+  /**
+   * Deletes every memory and memory version of one memory store. The memory
+   * stores service calls it after the store row is gone. On SQL the store
+   * delete has already removed them and the call finds nothing; in memory it
+   * removes them. It also removes a memory that a concurrent create inserted
+   * before the call.
+   */
   deleteAllInStore(
     input: DeleteMemoryStoreContents,
   ): Promise<DeletedMemoryStoreContents>;

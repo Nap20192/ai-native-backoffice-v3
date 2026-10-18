@@ -215,9 +215,8 @@ export function createResourcesHandler(deps: ResourceDependencies) {
       }
       case "vaults.delete": {
         result(await deps.vaults.retrieveVault({ vaultId }));
-        for (const credential of await credentialRows(vaultId)) {
-          result(await deps.credentials.deleteCredential({ vaultId, credentialId: credential.id }));
-        }
+        // The vault service deletes the credentials with the vault, and only
+        // when the vault itself goes (docs/plans/crud-fixes.md, F3).
         result(await deps.vaults.deleteVault({ vaultId }));
         return { body: { id: vaultId, object: "vault.deleted", deleted: true } };
       }

@@ -58,6 +58,7 @@ describe("SessionsApplicationService session metadata persistence", () => {
       lifecycle: {
         sessionStarted: async () => {},
         sessionStopped: async () => {},
+        sessionDeleted: async () => {},
       },
       clock: { now: () => new Date("2026-08-26T02:00:00.000Z") },
       ids: { nextSessionId: () => "session_meta" },

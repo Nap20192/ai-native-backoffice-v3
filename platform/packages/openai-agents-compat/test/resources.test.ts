@@ -202,6 +202,21 @@ describe("OpenAI resource compatibility using real application services", () => 
     await expect(f.run("vaults.credentials.list", {}, { vault_id: vault.id })).rejects.toMatchObject({ status: 404 });
   });
 
+  // docs/plans/crud-fixes.md, F3: a refused vault delete keeps every credential.
+  it("keeps the vault and its credentials when a live dependency refuses the delete", async () => {
+    const blocking = { kind: "deployment" as const, id: "depl_live", name: null, status: "active", note: null };
+    const f = fixture(undefined, {
+      vaultDependencies: {
+        checkDependencies: async () => ({ type: "report", report: { blocking: [blocking], affected: [], truncated: false } }),
+      },
+    });
+    const vault = await f.run("vaults.create");
+    const credential = await f.run("vaults.credentials.create", { name: "Bearer", auth: { type: "static_bearer", token: "keep-me", mcp_server_url: "https://api.example.com" } }, { vault_id: vault.id });
+    await expect(f.run("vaults.delete", {}, { vault_id: vault.id })).rejects.toMatchObject({ status: 409 });
+    expect(await f.credentialStore.find({ workspaceId: "workspace_a", vaultId: vault.id, credentialId: credential.id })).not.toBeNull();
+    expect(await f.run("vaults.retrieve", {}, { vault_id: vault.id })).toMatchObject({ id: vault.id });
+  });
+
   it("materializes binary bytes in the runtime and returns SDK TokenPage next/page cursors scoped to a directory", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openai-resource-files-"));
     const nativePath = (path: string) => join(directory, path.slice("/workspace/".length));

@@ -157,6 +157,17 @@ function staleEnvironmentRevision(
   };
 }
 
+/** The answer when the store refused a write guarded by the expected revision. */
+function revisionChanged(
+  environmentId: string,
+  actualRevision: number,
+): { type: "precondition_failed"; message: string } {
+  return {
+    type: "precondition_failed",
+    message: `Environment ${environmentId} changed concurrently at revision ${actualRevision}`,
+  };
+}
+
 export class EnvironmentsApplicationService
   implements EnvironmentsApplicationPort
 {
@@ -333,13 +344,18 @@ export class EnvironmentsApplicationService
       operation: "delete",
     });
     if (conflict !== null) return conflict;
+    // The early check answers before the dependency queries. The store checks
+    // the revision again inside the write: an update after the read gives 412.
     const result = await this.dependencies.store.delete({
       workspaceId: this.dependencies.workspaceId,
       environmentId: command.environmentId,
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : { type: "deleted", environmentId: command.environmentId };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return revisionChanged(command.environmentId, result.actualRevision);
+    }
+    return { type: "deleted", environmentId: command.environmentId };
   }
 
   async archiveEnvironment(
@@ -366,14 +382,17 @@ export class EnvironmentsApplicationService
       workspaceId: this.dependencies.workspaceId,
       environmentId: command.environmentId,
       archivedAt: this.dependencies.clock.now().toISOString(),
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : {
-          type: "archived",
-          environment: result.record.environment,
-          revision: result.record.revision,
-        };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return revisionChanged(command.environmentId, result.actualRevision);
+    }
+    return {
+      type: "archived",
+      environment: result.record.environment,
+      revision: result.record.revision,
+    };
   }
 
   async unarchiveEnvironment(
@@ -409,10 +428,7 @@ export class EnvironmentsApplicationService
     });
     if (replaced.type === "not_found") return { type: "not_found" };
     if (replaced.type === "revision_conflict") {
-      return {
-        type: "precondition_failed",
-        message: `Environment ${command.environmentId} changed concurrently at revision ${replaced.actualRevision}`,
-      };
+      return revisionChanged(command.environmentId, replaced.actualRevision);
     }
     return {
       type: "unarchived",

@@ -14,7 +14,6 @@ import type {
 } from "@open-managed-agents/session-runtime-contract/dispatch";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import type {
-  SessionLifecycleCommandPort,
   StartSessionExecution,
   StopSessionExecution,
 } from "@open-managed-agents/session-runtime-contract/lifecycle";
@@ -26,6 +25,7 @@ import {
   decodeRuntimeEvent,
   decodeRuntimeProducedSessionEvent,
   RuntimeEventStreamDecoder,
+  type SessionExecutionRuntimePort,
 } from "@open-managed-agents/managed-agents-adapters-runtime";
 import type {
   SessionRuntimeProjectionApplicationPort,
@@ -723,7 +723,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
 
 export class NodeManagedSessionRuntimeAdapter
   implements
-    SessionLifecycleCommandPort,
+    SessionExecutionRuntimePort,
     SessionEventDispatchPort,
     SessionThreadLifecycleCommandPort,
     SessionEventStreamPort,

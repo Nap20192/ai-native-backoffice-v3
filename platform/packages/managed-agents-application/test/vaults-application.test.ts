@@ -144,6 +144,7 @@ describe("VaultsApplicationService", () => {
         metadata: { owner: "runtime" },
         updatedAt: "2026-08-26T19:00:00.000Z",
       },
+      revision: 2,
     });
   });
 

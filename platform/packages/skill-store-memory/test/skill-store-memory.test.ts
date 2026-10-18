@@ -203,4 +203,36 @@ describe("MemorySkillStore", () => {
       limit: 10,
     })).resolves.toEqual([]);
   });
+
+  it("deletes a Skill only at the expected revision", async () => {
+    const store = new MemorySkillStore();
+    const first = version("1756202400000000", "skv_01", "2026-08-26T10:00:00.000Z");
+    await store.insertWithInitialVersion({
+      workspaceId: "workspace_01",
+      skill: skill(),
+      version: first,
+      archive: archive("first"),
+    });
+    const second = version("1756206000000000", "skv_02", "2026-08-26T11:00:00.000Z");
+    await store.appendVersion({
+      workspaceId: "workspace_01",
+      skillId: "skill_01",
+      expectedSkillRevision: 1,
+      nextSkill: { ...skill(), latestVersion: second.version, updatedAt: second.createdAt },
+      version: second,
+      archive: archive("second"),
+    });
+    const location = { workspaceId: "workspace_01", skillId: "skill_01" };
+
+    await expect(store.deleteSkill({ ...location, expectedRevision: 1 }))
+      .resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.findSkill(location)).resolves.toMatchObject({ revision: 2 });
+    await expect(store.listVersions({ ...location, limit: 10 }))
+      .resolves.toHaveLength(2);
+
+    await expect(store.deleteSkill({ ...location, expectedRevision: 2 }))
+      .resolves.toEqual({ type: "deleted" });
+    await expect(store.findSkill(location)).resolves.toBeNull();
+    await expect(store.listVersions({ ...location, limit: 10 })).resolves.toEqual([]);
+  });
 });

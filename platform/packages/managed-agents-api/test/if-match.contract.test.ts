@@ -13,6 +13,7 @@ import {
   skillVersionView,
   skillView,
 } from "./skill-fixtures";
+import { makeVaultsPort, vaultView } from "./vault-fixtures";
 import {
   buildDeploymentsTestApi,
   buildEnvironmentsTestApi,
@@ -20,6 +21,7 @@ import {
   buildSessionEventsTestApi,
   buildSessionsTestApi,
   buildSkillsTestApi,
+  buildVaultsTestApi,
 } from "./test-api";
 
 const BETAS =
@@ -122,6 +124,21 @@ describe("ETag on reads and writes", () => {
     const found = await api.fetch(request(`/v1/sessions/${sessionWire.id}`));
     expect(found.status).toBe(200);
     expect(found.headers.get("etag")).toBe('"5"');
+  });
+
+  it("vaults: create, retrieve and update carry the revision", async () => {
+    const api = buildVaultsTestApi(makeVaultsPort({
+      createVault: async () => ({ type: "created", vault: vaultView, revision: 1 }),
+      retrieveVault: async () => ({ type: "found", vault: vaultView, revision: 4 }),
+      updateVault: async () => ({ type: "updated", vault: vaultView, revision: 5 }),
+    }));
+    const created = await api.fetch(request("/v1/vaults", { body: { display_name: "Secrets" } }));
+    expect(created.status).toBe(201);
+    expect(created.headers.get("etag")).toBe('"1"');
+    const found = await api.fetch(request("/v1/vaults/vlt_01"));
+    expect(found.headers.get("etag")).toBe('"4"');
+    const updated = await api.fetch(request("/v1/vaults/vlt_01", { body: { display_name: "Next" } }));
+    expect(updated.headers.get("etag")).toBe('"5"');
   });
 
   it("a port without a revision gives no ETag", async () => {

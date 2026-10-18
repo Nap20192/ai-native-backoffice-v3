@@ -17,6 +17,17 @@ CREATE TABLE managed_vaults (
 );
 CREATE INDEX idx_managed_vaults_workspace_created_id
   ON managed_vaults (workspace_id, created_at, id);
+CREATE TABLE managed_credentials (
+  workspace_id text NOT NULL,
+  vault_id text NOT NULL,
+  id text NOT NULL,
+  sealed_document text NOT NULL,
+  revision integer NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  archived_at integer,
+  PRIMARY KEY (workspace_id, id)
+);
 `;
 
 const vault = (id: string, createdAt: string, displayName = "Production"): Vault => ({

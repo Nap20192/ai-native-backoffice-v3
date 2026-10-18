@@ -6,6 +6,7 @@ import type {
 import type {
   AppendSkillVersion,
   AppendSkillVersionResult,
+  DeleteSkillRecord,
   DeleteSkillRecordResult,
   DeleteSkillVersionRecord,
   DeleteSkillVersionRecordResult,
@@ -87,6 +88,16 @@ function validateMutationPair(skill: Skill, version: SkillVersion): void {
   if (skill.id !== version.skillId || skill.latestVersion !== version.version) {
     throw new Error("Skill and Skill Version mutation pair is inconsistent");
   }
+}
+
+/** SQL condition and its parameter for an optional expected revision. */
+function revisionGuard(expectedRevision: number | undefined): {
+  condition: string;
+  parameters: number[];
+} {
+  return expectedRevision === undefined
+    ? { condition: "", parameters: [] }
+    : { condition: " AND revision = ?", parameters: [expectedRevision] };
 }
 
 export class SqlSkillStore implements SkillStore {
@@ -183,25 +194,43 @@ export class SqlSkillStore implements SkillStore {
     return (rows.results ?? []).map(toStoredSkill);
   }
 
-  async deleteSkill(input: SkillLocation): Promise<DeleteSkillRecordResult> {
+  /**
+   * The batch starts with the guarded Skill row, so on Postgres it locks the
+   * row before the Versions go. The Versions go only when the Skill row is
+   * gone: a stale revision leaves the Skill and its Versions as they were.
+   */
+  async deleteSkill(input: DeleteSkillRecord): Promise<DeleteSkillRecordResult> {
+    const guard = revisionGuard(input.expectedRevision);
+    const skill = this.client.prepare(
+      `DELETE FROM managed_skills
+        WHERE workspace_id = ? AND id = ?${guard.condition}`,
+    ).bind(input.workspaceId, input.skillId, ...guard.parameters);
     const versions = this.client.prepare(
       `DELETE FROM managed_skill_versions
         WHERE workspace_id = ? AND skill_id = ?
-          AND EXISTS (
+          AND NOT EXISTS (
             SELECT 1 FROM managed_skills
              WHERE workspace_id = ? AND id = ?
           )`,
     ).bind(input.workspaceId, input.skillId, input.workspaceId, input.skillId);
-    const skill = this.client.prepare(
-      "DELETE FROM managed_skills WHERE workspace_id = ? AND id = ?",
-    ).bind(input.workspaceId, input.skillId);
-    const results = await this.client.batch([versions, skill]);
-    const changes = results[1]?.meta.changes;
-    if (changes === 0) return { type: "not_found" };
+    const results = await this.client.batch([skill, versions]);
+    const changes = results[0]?.meta.changes;
+    if (changes === 0) return this.unchanged(input);
     if (changes !== 1) {
       throw new Error(`Skill deletion affected ${changes ?? "missing"} rows`);
     }
     return { type: "deleted" };
+  }
+
+  /** The answer of a guarded delete that touched no Skill row. */
+  private async unchanged(input: DeleteSkillRecord): Promise<
+    { type: "not_found" } | { type: "revision_conflict"; actualRevision: number }
+  > {
+    if (input.expectedRevision === undefined) return { type: "not_found" };
+    const current = await this.findSkill(input);
+    return current === null
+      ? { type: "not_found" }
+      : { type: "revision_conflict", actualRevision: current.revision };
   }
 
   async findVersion(

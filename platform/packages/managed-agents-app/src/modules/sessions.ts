@@ -68,7 +68,10 @@ export function sessionsModule(): AppModule {
       sessionResourceResolverPort,
       sessionLifecyclePort,
     ],
-    setup({ port }) {
+    // Delete takes the output files of the Session along
+    // (docs/plans/crud-fixes.md, F4).
+    optional: [managedAgentsPortTokens.files],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const clock = port(clockPort);
       const ids = port(idGeneratorPort);
@@ -81,6 +84,7 @@ export function sessionsModule(): AppModule {
         environments: port(sessionEnvironmentSourcePort),
         resources: port(sessionResourceResolverPort),
         lifecycle: port(sessionLifecyclePort),
+        files: optionalPort(managedAgentsPortTokens.files),
       });
       return {
         ports: [

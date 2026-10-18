@@ -32,26 +32,47 @@ export interface ArchiveAgentRecord {
   workspaceId: string;
   agentId: string;
   archivedAt: string;
+  /**
+   * When set, the write happens only while the stored version equals it.
+   * The check and the write are one atomic step. Another version gives
+   * version_conflict and changes nothing.
+   */
+  expectedVersion?: number;
 }
 
 export type ArchiveAgentRecordResult =
   | { type: "archived"; agent: AgentRecord }
-  | { type: "not_found" };
+  | { type: "not_found" }
+  | { type: "version_conflict"; actualVersion: number };
 
 export interface UnarchiveAgentRecord {
   workspaceId: string;
   agentId: string;
   updatedAt: string;
+  /** Same guard as {@link ArchiveAgentRecord.expectedVersion}. */
+  expectedVersion?: number;
 }
 
 /** Restore keeps the version: it clears archivedAt and sets updatedAt. */
 export type UnarchiveAgentRecordResult =
   | { type: "unarchived"; agent: AgentRecord }
-  | { type: "not_found" };
+  | { type: "not_found" }
+  | { type: "version_conflict"; actualVersion: number };
+
+export interface DeleteAgentRecord {
+  workspaceId: string;
+  agentId: string;
+  /**
+   * Same guard as {@link ArchiveAgentRecord.expectedVersion}. On a conflict
+   * the current record and every stored version stay.
+   */
+  expectedVersion?: number;
+}
 
 export type DeleteAgentRecordResult =
   | { type: "deleted" }
-  | { type: "not_found" };
+  | { type: "not_found" }
+  | { type: "version_conflict"; actualVersion: number };
 
 /**
  * Agents that reference another object (docs/plans/crud.md, 1.3). Every set
@@ -98,8 +119,8 @@ export interface AgentStore {
   listCurrent(input: ListAgentRecords): Promise<AgentRecord[]>;
   listVersions(input: ListAgentVersionRecords): Promise<AgentRecord[]>;
   unarchiveCurrent(input: UnarchiveAgentRecord): Promise<UnarchiveAgentRecordResult>;
-  /** Deletes the current record and every stored version. */
-  deleteCurrent(input: FindCurrentAgentRecord): Promise<DeleteAgentRecordResult>;
+  /** Deletes the current record and every stored version in one atomic step. */
+  deleteCurrent(input: DeleteAgentRecord): Promise<DeleteAgentRecordResult>;
   listReferencing(input: ListReferencingAgentRecords): Promise<AgentRecord[]>;
 }
 

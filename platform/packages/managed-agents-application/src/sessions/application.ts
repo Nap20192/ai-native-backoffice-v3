@@ -9,6 +9,7 @@ import {
   validateMcpConfiguration,
 } from "../agents/definition-resolution";
 import type { AgentModelInput } from "../ports/agents";
+import type { FilesApplicationPort } from "../ports/files";
 import type {
   ArchiveSessionCommand,
   ArchiveSessionResult,
@@ -46,6 +47,8 @@ import type {
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
+/** Output files read per page when a deleted Session takes them along. */
+const OUTPUT_FILES_PAGE_SIZE = 100;
 
 function encodeCursorPart(value: string): string {
   return btoa(encodeURIComponent(value))
@@ -112,6 +115,12 @@ export interface SessionsApplicationServiceDependencies {
   lifecycle: SessionLifecycleCommandPort;
   clock: { now(): Date };
   ids: { nextSessionId(): string };
+  /**
+   * Delete removes the output files (scope id of the Session) with it
+   * (docs/plans/crud-fixes.md, F4). The files service keeps a file that
+   * another live Session or Deployment mounts. Without it the files stay.
+   */
+  files?: Pick<FilesApplicationPort, "listFiles" | "deleteFile">;
 }
 
 function snapshotThreadAgent(agent: Agent): SessionThreadAgent {
@@ -540,6 +549,17 @@ export class SessionsApplicationService
     return { type: "updated", session: replaced.record.session };
   }
 
+  /** The 412 answer when the store refused a write guarded by the revision. */
+  private revisionChanged(
+    sessionId: string,
+    actualRevision: number,
+  ): { type: "precondition_failed"; message: string } {
+    return {
+      type: "precondition_failed",
+      message: `Session ${sessionId} changed concurrently at revision ${actualRevision}`,
+    };
+  }
+
   /** The 412 answer when `If-Match` names another revision. */
   private staleRevision(
     sessionId: string,
@@ -577,18 +597,23 @@ export class SessionsApplicationService
       session: current.session,
       reason: "archived",
     });
+    // The early check answers before the stop. The store checks the revision
+    // again inside the write: an update after the read gives 412.
     const result = await this.dependencies.store.archiveCurrent({
       workspaceId: this.dependencies.workspaceId,
       sessionId: command.sessionId,
       archivedAt: this.dependencies.clock.now().toISOString(),
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : {
-          type: "archived",
-          session: result.record.session,
-          revision: result.record.revision,
-        };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return this.revisionChanged(command.sessionId, result.actualRevision);
+    }
+    return {
+      type: "archived",
+      session: result.record.session,
+      revision: result.record.revision,
+    };
   }
 
   async unarchiveSession(
@@ -620,10 +645,7 @@ export class SessionsApplicationService
     });
     if (replaced.type === "not_found") return { type: "not_found" };
     if (replaced.type === "revision_conflict") {
-      return {
-        type: "precondition_failed",
-        message: `Session ${command.sessionId} changed concurrently at revision ${replaced.actualRevision}`,
-      };
+      return this.revisionChanged(command.sessionId, replaced.actualRevision);
     }
     return {
       type: "unarchived",
@@ -632,7 +654,14 @@ export class SessionsApplicationService
     };
   }
 
-  /** Delete stops a turn in progress before the rows go. */
+  /**
+   * Delete stops a turn in progress before the rows go. Files, outputs and
+   * traces go after the rows (docs/plans/crud-fixes.md, F1): a delete that
+   * fails after the stop keeps a live Session with its files. With
+   * `If-Match` the rows go only at that revision. A failed output file
+   * delete still runs the cleanup and then fails the request; the files
+   * left stay listed under the scope id of the Session.
+   */
   async deleteSession(
     command: DeleteSessionCommand,
   ): Promise<DeleteSessionResult> {
@@ -656,10 +685,55 @@ export class SessionsApplicationService
     const result = await this.dependencies.store.deleteCurrent({
       workspaceId: this.dependencies.workspaceId,
       sessionId: command.sessionId,
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : { type: "deleted", sessionId: command.sessionId };
+    // A concurrent delete removed the rows first and cleans up itself.
+    if (result.type === "not_found") return { type: "not_found" };
+    // An update after the read keeps the Session, so its files stay too.
+    if (result.type === "revision_conflict") {
+      return this.revisionChanged(command.sessionId, result.actualRevision);
+    }
+    try {
+      await this.deleteOutputFiles(command.sessionId);
+    } finally {
+      await this.dependencies.lifecycle.sessionDeleted({
+        workspaceId: this.dependencies.workspaceId,
+        sessionId: command.sessionId,
+      });
+    }
+    return { type: "deleted", sessionId: command.sessionId };
+  }
+
+  /**
+   * Deletes the files whose scope id is the deleted Session, a page of 100
+   * at a time. A list position must name a file that still exists, so the
+   * next page starts after the last file kept; with none kept it starts from
+   * the top again, where the deleted files are gone. A page with no file
+   * seen before ends the sweep.
+   */
+  private async deleteOutputFiles(sessionId: string): Promise<void> {
+    const files = this.dependencies.files;
+    if (files === undefined) return;
+    const seen = new Set<string>();
+    let lastKept: string | undefined;
+    for (;;) {
+      const listed = await files.listFiles({
+        scopeId: sessionId,
+        pageSize: OUTPUT_FILES_PAGE_SIZE,
+        ...(lastKept !== undefined && { afterId: lastKept }),
+      });
+      if (listed.type !== "page") return;
+      const fresh = listed.page.files.filter((file) => !seen.has(file.id));
+      if (fresh.length === 0) return;
+      for (const file of fresh) {
+        seen.add(file.id);
+        const deleted = await files.deleteFile({ fileId: file.id });
+        // Another live Session or Deployment mounts the file
+        // (docs/plans/crud.md, 1.3).
+        if (deleted.type === "dependency_conflict") lastKept = file.id;
+      }
+      if (!listed.page.hasMore) return;
+    }
   }
 
   async listSessions(query: ListSessionsQuery): Promise<ListSessionsResult> {

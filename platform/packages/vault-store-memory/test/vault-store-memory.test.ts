@@ -91,4 +91,43 @@ describe("MemoryVaultStore", () => {
       },
     })).resolves.toMatchObject([{ vault: { id: "vlt_02" } }]);
   });
+
+  it("archive and delete with a stale revision change nothing", async () => {
+    const store = new MemoryVaultStore();
+    const initial = vault("vlt_01", "2026-08-26T10:00:00.000Z");
+    await store.insert({ workspaceId: "workspace_01", vault: initial });
+    await store.replace({
+      workspaceId: "workspace_01",
+      vaultId: "vlt_01",
+      expectedRevision: 1,
+      next: { ...initial, displayName: "Renamed" },
+    });
+
+    await expect(store.archive({
+      workspaceId: "workspace_01",
+      vaultId: "vlt_01",
+      archivedAt: "2026-08-26T12:00:00.000Z",
+      expectedRevision: 1,
+    })).resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.delete({
+      workspaceId: "workspace_01",
+      vaultId: "vlt_01",
+      expectedRevision: 1,
+    })).resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.find({
+      workspaceId: "workspace_01",
+      vaultId: "vlt_01",
+    })).resolves.toMatchObject({ revision: 2, vault: { archivedAt: null } });
+
+    await expect(store.delete({
+      workspaceId: "workspace_01",
+      vaultId: "vlt_01",
+      expectedRevision: 2,
+    })).resolves.toEqual({ type: "deleted" });
+    await expect(store.delete({
+      workspaceId: "workspace_01",
+      vaultId: "vlt_01",
+      expectedRevision: 2,
+    })).resolves.toEqual({ type: "not_found" });
+  });
 });

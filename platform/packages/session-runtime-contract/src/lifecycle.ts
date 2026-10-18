@@ -23,4 +23,9 @@ export interface StopSessionExecution extends SessionExecutionLocation {
 export interface SessionLifecycleCommandPort {
   sessionStarted(input: StartSessionExecution): Promise<void>;
   sessionStopped(input: StopSessionExecution): Promise<void>;
+  /**
+   * The Session rows are already deleted. Session-scoped files, outputs and
+   * traces go only now: a delete that fails after the stop keeps them.
+   */
+  sessionDeleted(input: SessionExecutionLocation): Promise<void>;
 }

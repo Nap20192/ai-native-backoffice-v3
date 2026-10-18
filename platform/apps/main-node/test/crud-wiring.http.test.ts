@@ -2,6 +2,7 @@
 // A15): the dependency route, archive and delete of agents, environments
 // and cards see the real session rows of the SQL store.
 import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import { nodeDefaults } from "../src/components";
 const API_KEY = "test-static-api-key";
 const created: NodeControlPlane[] = [];
 const dirs: string[] = [];
+const databases = new WeakMap<NodeControlPlane, string>();
 
 afterEach(async () => {
   await Promise.all(created.splice(0).map((cp) => cp.stop("test")));
@@ -39,6 +41,7 @@ async function boot(): Promise<NodeControlPlane> {
   };
   const cp = await createNodeControlPlane(await nodeDefaults(loadNodeConfig(env)));
   created.push(cp);
+  databases.set(cp, join(dir, "oma.db"));
   return cp;
 }
 
@@ -52,7 +55,7 @@ function call(cp: NodeControlPlane, method: string, path: string, body?: unknown
   }));
 }
 
-async function created201<T>(response: Promise<Response>): Promise<T> {
+async function created201<T>(response: Response | Promise<Response>): Promise<T> {
   const answer = await response;
   expect(answer.status, await answer.clone().text()).toBeLessThan(300);
   return answer.json() as Promise<T>;
@@ -70,6 +73,44 @@ async function world(cp: NodeControlPlane, model = "claude-sonnet-4-6") {
     agent: agent.id, environment_id: environment.id,
   }));
   return { environment, agent, session };
+}
+
+const filesHeaders = { ...headers, "anthropic-beta": "managed-agents-2026-04-01,files-api-2025-04-14" };
+
+function callFiles(cp: NodeControlPlane, method: string, path: string, body?: FormData) {
+  return cp.fetch(new Request(`http://cp/v1/files${path}`, {
+    method,
+    headers: filesHeaders,
+    ...(body === undefined ? {} : { body }),
+  }));
+}
+
+async function upload(cp: NodeControlPlane, filename: string): Promise<{ id: string }> {
+  const form = new FormData();
+  form.set("file", new File([new TextEncoder().encode(filename)], filename, { type: "text/plain" }));
+  return created201(callFiles(cp, "POST", "", form));
+}
+
+/**
+ * Puts the files under the scope id of the session, as the output
+ * publication does: a public upload carries no scope.
+ */
+function scopeToSession(cp: NodeControlPlane, fileIds: string[], sessionId: string): void {
+  const path = databases.get(cp);
+  if (path === undefined) throw new Error("unknown control plane");
+  const db = new Database(path);
+  try {
+    const scope = db.prepare(
+      `UPDATE managed_files
+          SET scope_id = ?, document = json_set(document, '$.scope', json(?))
+        WHERE id = ?`,
+    );
+    for (const fileId of fileIds) {
+      expect(scope.run(sessionId, JSON.stringify({ type: "session", id: sessionId }), fileId).changes).toBe(1);
+    }
+  } finally {
+    db.close();
+  }
 }
 
 describe("CRUD wiring on main-node", () => {
@@ -114,6 +155,37 @@ describe("CRUD wiring on main-node", () => {
     });
     expect((await call(cp, "POST", `/v1/oma/model_cards/${card.id}/archive`)).status).toBe(409);
     expect((await call(cp, "DELETE", `/v1/oma/model_cards/${card.id}`)).status).toBe(409);
+  });
+
+  it("a session delete takes its output files and keeps one another live session mounts", async () => {
+    const cp = await boot();
+    const { agent, session, environment } = await world(cp);
+    const output = await upload(cp, "output.txt");
+    const shared = await upload(cp, "shared.txt");
+    scopeToSession(cp, [output.id, shared.id], session.id);
+    const reader = await created201<{ id: string }>(call(cp, "POST", "/v1/sessions", {
+      agent: agent.id,
+      environment_id: environment.id,
+      resources: [{ type: "file", file_id: shared.id }],
+    }));
+    const listed = await callFiles(cp, "GET", `?scope_id=${session.id}`);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{}, {}] });
+
+    const report = await call(cp, "GET", `/v1/oma/dependencies/session/${session.id}?operation=delete`);
+    expect(report.status).toBe(200);
+    await expect(report.json()).resolves.toMatchObject({
+      affected: expect.arrayContaining([expect.objectContaining({
+        kind: "file",
+        id: output.id,
+        note: "файл удалится вместе с сессией, если его не подключила другая живая сессия или деплоймент",
+      })]),
+    });
+
+    expect((await call(cp, "DELETE", `/v1/sessions/${session.id}`)).status).toBe(200);
+    expect((await callFiles(cp, "GET", `/${output.id}`)).status).toBe(404);
+    expect((await callFiles(cp, "GET", `/${output.id}/content`)).status).toBe(404);
+    expect((await callFiles(cp, "GET", `/${shared.id}`)).status).toBe(200);
+    expect((await call(cp, "GET", `/v1/sessions/${reader.id}`)).status).toBe(200);
   });
 
   it("answers 400 for an unknown operation and 404 for a missing card", async () => {

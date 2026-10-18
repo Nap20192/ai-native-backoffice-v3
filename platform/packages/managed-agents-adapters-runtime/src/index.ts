@@ -55,6 +55,7 @@ export {
 export type {
   EnvironmentAwareSessionEventStreamRouterDependencies,
   EnvironmentExecutionAuthority,
+  SessionExecutionRuntimePort,
 } from "./session-lifecycle-router";
 export { LocalTunnelProvisioner } from "./local-tunnel-provisioner";
 export { WebCryptoMemoryContentDescriptor } from "./memory-content-descriptor";

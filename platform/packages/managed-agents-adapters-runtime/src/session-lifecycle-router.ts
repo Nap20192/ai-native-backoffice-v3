@@ -13,26 +13,29 @@ import type {
   SessionEventDispatchPort,
 } from "@open-managed-agents/session-runtime-contract/dispatch";
 import type {
+  SessionExecutionLocation,
   SessionLifecycleCommandPort,
   StartSessionExecution,
   StopSessionExecution,
 } from "@open-managed-agents/session-runtime-contract/lifecycle";
 
+/** The runtime only starts and stops turns; deletion cleanup is the router's. */
+export type SessionExecutionRuntimePort = Pick<
+  SessionLifecycleCommandPort,
+  "sessionStarted" | "sessionStopped"
+>;
+
 export interface EnvironmentAwareSessionLifecycleRouterDependencies {
   environments: EnvironmentWorkEnvironmentSourcePort;
-  runtime: SessionLifecycleCommandPort;
+  runtime: SessionExecutionRuntimePort;
   selfHostedWork: EnvironmentSessionWorkEnqueuerPort;
   /**
    * Remove session-scoped files and output artifacts after a managed session
    * is deleted. This is deliberately an adapter hook: providers own the
-   * storage implementation (R2, S3, or local FS), while the router owns the
-   * ordering relative to runtime shutdown.
+   * storage implementation (R2, S3, or local FS), while the application owns
+   * the ordering: stop, delete the rows, then `sessionDeleted`.
    */
-  cleanupSession?: (input: {
-    workspaceId: string;
-    sessionId: string;
-    reason: "deleted";
-  }) => Promise<void>;
+  cleanupSession?: (input: SessionExecutionLocation) => Promise<void>;
 }
 
 export type EnvironmentExecutionAuthority =
@@ -90,25 +93,27 @@ export class EnvironmentAwareSessionLifecycleRouter
       });
       if (result.type === "conflict") throw new Error(result.message);
     }
+  }
 
-    // The application stops the session before it deletes the rows
-    // (docs/plans/crud.md, 2.2). Cleanup is best-effort and must not turn a
-    // DELETE into a 500; operators can reconcile any provider-side orphan
-    // from its manifest.
-    if (input.reason === "deleted" && this.dependencies.cleanupSession) {
-      try {
-        await this.dependencies.cleanupSession({
-          workspaceId: input.workspaceId,
-          sessionId: input.sessionId,
-          reason: input.reason,
-        });
-      } catch (error) {
-        console.warn("[session-lifecycle] deletion cleanup failed", {
-          workspaceId: input.workspaceId,
-          sessionId: input.sessionId,
-          error,
-        });
-      }
+  /**
+   * The application calls this after the Session rows are deleted
+   * (docs/plans/crud-fixes.md, F1): a delete that answers 412 after the stop
+   * keeps its files. Cleanup is best-effort and must not turn a DELETE into
+   * a 500; operators can reconcile any provider-side orphan from its manifest.
+   */
+  async sessionDeleted(input: SessionExecutionLocation): Promise<void> {
+    if (!this.dependencies.cleanupSession) return;
+    try {
+      await this.dependencies.cleanupSession({
+        workspaceId: input.workspaceId,
+        sessionId: input.sessionId,
+      });
+    } catch (error) {
+      console.warn("[session-lifecycle] deletion cleanup failed", {
+        workspaceId: input.workspaceId,
+        sessionId: input.sessionId,
+        error,
+      });
     }
   }
 }

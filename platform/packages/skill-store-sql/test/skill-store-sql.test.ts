@@ -162,4 +162,62 @@ describe("SqlSkillStore", () => {
       },
     })).resolves.toMatchObject({ type: "deleted", skill: { revision: 3 } });
   });
+
+  it("deletes a Skill only at the expected revision, with only its own Versions", async () => {
+    const store = new SqlSkillStore(client);
+    const first = version("1756202400000000", "skv_01", "2026-08-26T10:00:00.000Z");
+    for (const workspaceId of ["workspace_01", "workspace_other"]) {
+      await store.insertWithInitialVersion({
+        workspaceId,
+        skill: skill(),
+        version: { ...first, id: `skv_01_${workspaceId}` },
+        archive: archive("first"),
+      });
+    }
+    const second = version("1756206000000000", "skv_02", "2026-08-26T11:00:00.000Z");
+    await store.appendVersion({
+      workspaceId: "workspace_01",
+      skillId: "skill_01",
+      expectedSkillRevision: 1,
+      nextSkill: { ...skill(), latestVersion: second.version, updatedAt: second.createdAt },
+      version: second,
+      archive: archive("second"),
+    });
+    const location = { workspaceId: "workspace_01", skillId: "skill_01" };
+
+    await expect(store.deleteSkill({ ...location, expectedRevision: 1 }))
+      .resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.findSkill(location)).resolves.toMatchObject({ revision: 2 });
+    await expect(store.listVersions({ ...location, limit: 10 }))
+      .resolves.toHaveLength(2);
+
+    await expect(store.deleteSkill({ ...location, expectedRevision: 2 }))
+      .resolves.toEqual({ type: "deleted" });
+    await expect(store.findSkill(location)).resolves.toBeNull();
+    await expect(store.listVersions({ ...location, limit: 10 })).resolves.toEqual([]);
+    await expect(store.deleteSkill({ ...location, expectedRevision: 2 }))
+      .resolves.toEqual({ type: "not_found" });
+    const other = { workspaceId: "workspace_other", skillId: "skill_01" };
+    await expect(store.findSkill(other)).resolves.toMatchObject({ revision: 1 });
+    await expect(store.listVersions({ ...other, limit: 10 })).resolves.toHaveLength(1);
+  });
+
+  it("keeps the Skill when its Versions cannot be deleted", async () => {
+    const store = new SqlSkillStore(client);
+    await store.insertWithInitialVersion({
+      workspaceId: "workspace_01",
+      skill: skill(),
+      version: version("1756202400000000", "skv_01", "2026-08-26T10:00:00.000Z"),
+      archive: archive("first"),
+    });
+    await client.exec(`
+      CREATE TRIGGER refuse_version_delete BEFORE DELETE ON managed_skill_versions
+      BEGIN SELECT RAISE(ABORT, 'version delete refused'); END;
+    `);
+    const location = { workspaceId: "workspace_01", skillId: "skill_01" };
+
+    await expect(store.deleteSkill({ ...location, expectedRevision: 1 }))
+      .rejects.toThrow("version delete refused");
+    await expect(store.findSkill(location)).resolves.toMatchObject({ revision: 1 });
+  });
 });

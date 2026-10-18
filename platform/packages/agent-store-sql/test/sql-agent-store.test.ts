@@ -116,4 +116,43 @@ describe("SqlAgentStore", () => {
       version: 1,
     });
   });
+
+  it("rolls the agent delete back when its versions cannot be deleted", async () => {
+    const store = new SqlAgentStore(client);
+    const agent = {
+      id: "agent-1",
+      archivedAt: null,
+      createdAt: "2026-08-26T00:00:00.000Z",
+      description: null,
+      mcpServers: [],
+      metadata: {},
+      model: { id: "claude-opus-5" },
+      multiagent: null,
+      name: "Agent One",
+      skills: [],
+      system: null,
+      tools: [],
+      updatedAt: "2026-08-26T00:00:00.000Z",
+      version: 1,
+    };
+    await store.insert({ workspaceId: "workspace-a", agent });
+    await store.replaceCurrent({
+      workspaceId: "workspace-a",
+      agentId: agent.id,
+      expectedVersion: 1,
+      next: { ...agent, name: "Agent Two", version: 2 },
+    });
+    await client.exec(`CREATE TRIGGER keep_versions BEFORE DELETE ON managed_agent_versions
+      BEGIN SELECT RAISE(ABORT, 'versions are locked'); END;`);
+
+    await expect(store.deleteCurrent({
+      workspaceId: "workspace-a",
+      agentId: agent.id,
+      expectedVersion: 2,
+    })).rejects.toThrow("versions are locked");
+    await expect(store.findCurrent({ workspaceId: "workspace-a", agentId: agent.id }))
+      .resolves.toMatchObject({ name: "Agent Two", version: 2 });
+    await expect(store.findVersion({ workspaceId: "workspace-a", agentId: agent.id, version: 1 }))
+      .resolves.toMatchObject({ name: "Agent One", version: 1 });
+  });
 });

@@ -18,7 +18,13 @@ import {
   dependencyConflict,
   invalidRequest,
   notFound,
+  preconditionFailed,
 } from "../errors";
+import {
+  expectedRevisionOf,
+  readRevisionIfMatch,
+  setRevisionETag,
+} from "../if-match";
 import {
   toArchiveVaultCommand,
   toCreateVaultCommand,
@@ -65,6 +71,7 @@ export function buildVaultRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid vault"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 201);
   });
 
@@ -105,6 +112,7 @@ export function buildVaultRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid vault"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 
@@ -136,15 +144,24 @@ export function buildVaultRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid vault"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 
   app.delete("/:vaultId", async (c) => {
-    const result = await resolveApplicationPort(source, c).deleteVault(
-      toDeleteVaultCommand(c.req.param("vaultId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).deleteVault({
+      ...toDeleteVaultCommand(c.req.param("vaultId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(notFound(`Vault ${c.req.param("vaultId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     if (result.type === "dependency_conflict") {
       return c.json(dependencyConflict(result), 409);
@@ -160,25 +177,42 @@ export function buildVaultRoutes(
   });
 
   app.post("/:vaultId/unarchive", async (c) => {
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
     const result = await resolveApplicationPort(source, c).unarchiveVault({
       vaultId: c.req.param("vaultId"),
+      ...expectedRevisionOf(precondition),
     });
     if (result.type === "not_found") {
       return c.json(notFound(`Vault ${c.req.param("vaultId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     const response = vaultResponseSchema.safeParse(toVaultResponse(result.vault));
     if (!response.success) {
       return c.json(apiError("Application returned an invalid vault"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 
   app.post("/:vaultId/archive", async (c) => {
-    const result = await resolveApplicationPort(source, c).archiveVault(
-      toArchiveVaultCommand(c.req.param("vaultId")),
-    );
+    const precondition = readRevisionIfMatch(c.req.header("If-Match"));
+    if (precondition.type === "invalid") {
+      return c.json(invalidRequest(precondition.message), 400);
+    }
+    const result = await resolveApplicationPort(source, c).archiveVault({
+      ...toArchiveVaultCommand(c.req.param("vaultId")),
+      ...expectedRevisionOf(precondition),
+    });
     if (result.type === "not_found") {
       return c.json(notFound(`Vault ${c.req.param("vaultId")} was not found`), 404);
+    }
+    if (result.type === "precondition_failed") {
+      return c.json(preconditionFailed(result.message), 412);
     }
     if (result.type === "dependency_conflict") {
       return c.json(dependencyConflict(result), 409);
@@ -189,6 +223,7 @@ export function buildVaultRoutes(
     if (!response.success) {
       return c.json(apiError("Application returned an invalid vault"), 500);
     }
+    setRevisionETag(c, result.revision);
     return c.json(response.data, 200);
   });
 

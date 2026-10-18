@@ -116,7 +116,11 @@ function patchMetadata(
 export interface MemoryStoresApplicationServiceDependencies {
   workspaceId: string;
   store: MemoryStoreStore;
-  /** Delete removes the memories and their versions with it. */
+  /**
+   * Delete sweeps the memories and their versions after the store row is
+   * gone. On SQL the store delete has already removed them; the in-memory
+   * adapters need the sweep.
+   */
   memories?: MemoryDocumentStore;
   clock: { now(): Date };
   ids: { nextMemoryStoreId(): string };
@@ -133,6 +137,17 @@ function staleMemoryStoreRevision(
   return {
     type: "precondition_failed",
     message: `Memory store ${memoryStoreId} is at revision ${revision}, not ${expectedRevision}`,
+  };
+}
+
+/** The answer when the store refused a write guarded by the expected revision. */
+function revisionChanged(
+  memoryStoreId: string,
+  actualRevision: number,
+): { type: "precondition_failed"; message: string } {
+  return {
+    type: "precondition_failed",
+    message: `Memory store ${memoryStoreId} changed concurrently at revision ${actualRevision}`,
   };
 }
 
@@ -316,7 +331,11 @@ export class MemoryStoresApplicationService
     };
   }
 
-  /** Deletes the memories and versions first: a retry finds an empty store. */
+  /**
+   * Deletes the store row first and sweeps its memories after it. A failed
+   * or refused store delete keeps every memory. The sweep also removes a
+   * memory that a concurrent create added before it ran.
+   */
   async deleteMemoryStore(
     command: DeleteMemoryStoreCommand,
   ): Promise<DeleteMemoryStoreResult> {
@@ -337,17 +356,22 @@ export class MemoryStoresApplicationService
       operation: "delete",
     });
     if (conflict !== null) return conflict;
+    // The early check answers before the dependency queries. The store checks
+    // the revision again inside the write: an update after the read gives 412.
+    const result = await this.dependencies.store.delete({
+      workspaceId: this.dependencies.workspaceId,
+      memoryStoreId: command.memoryStoreId,
+      expectedRevision: command.expectedRevision,
+    });
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return revisionChanged(command.memoryStoreId, result.actualRevision);
+    }
     await this.dependencies.memories?.deleteAllInStore({
       workspaceId: this.dependencies.workspaceId,
       memoryStoreId: command.memoryStoreId,
     });
-    const result = await this.dependencies.store.delete({
-      workspaceId: this.dependencies.workspaceId,
-      memoryStoreId: command.memoryStoreId,
-    });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : { type: "deleted", memoryStoreId: command.memoryStoreId };
+    return { type: "deleted", memoryStoreId: command.memoryStoreId };
   }
 
   async archiveMemoryStore(
@@ -374,14 +398,17 @@ export class MemoryStoresApplicationService
       workspaceId: this.dependencies.workspaceId,
       memoryStoreId: command.memoryStoreId,
       archivedAt: this.dependencies.clock.now().toISOString(),
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? { type: "not_found" }
-      : {
-          type: "archived",
-          memoryStore: result.record.memoryStore,
-          revision: result.record.revision,
-        };
+    if (result.type === "not_found") return { type: "not_found" };
+    if (result.type === "revision_conflict") {
+      return revisionChanged(command.memoryStoreId, result.actualRevision);
+    }
+    return {
+      type: "archived",
+      memoryStore: result.record.memoryStore,
+      revision: result.record.revision,
+    };
   }
 
   async unarchiveMemoryStore(
@@ -417,10 +444,7 @@ export class MemoryStoresApplicationService
     });
     if (replaced.type === "not_found") return { type: "not_found" };
     if (replaced.type === "revision_conflict") {
-      return {
-        type: "precondition_failed",
-        message: `Memory store ${command.memoryStoreId} changed concurrently at revision ${replaced.actualRevision}`,
-      };
+      return revisionChanged(command.memoryStoreId, replaced.actualRevision);
     }
     return {
       type: "unarchived",

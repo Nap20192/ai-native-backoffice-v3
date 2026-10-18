@@ -71,6 +71,7 @@ beforeEach(() => {
       operations.push(new URL(request.url).searchParams.get("operation") ?? "");
       return HttpResponse.json(dependencies);
     }),
+    http.get("*/v1/vaults/:id", () => HttpResponse.json(store(), { headers: { ETag: '"3"' } })),
   );
 });
 
@@ -110,13 +111,13 @@ describe("VaultsList: архив и удаление", () => {
     expect(managed.vaults.archive).not.toHaveBeenCalled();
   });
 
-  it("архив без зависимостей без If-Match: у хранилищ секретов ревизии нет", async () => {
+  it("архив без зависимостей шлёт If-Match из ETag", async () => {
     await userEvent.click(await openMenu("В архив"));
     const dialog = await screen.findByRole("dialog", { name: "Отправить хранилище в архив?" });
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "В архив" })).toBeEnabled());
     await userEvent.click(within(dialog).getByRole("button", { name: "В архив" }));
     await waitFor(() =>
-      expect(managed.vaults.archive).toHaveBeenCalledWith("vault_1", {}),
+      expect(managed.vaults.archive).toHaveBeenCalledWith("vault_1", { ifMatch: '"3"' }),
     );
   });
 
@@ -133,7 +134,7 @@ describe("VaultsList: архив и удаление", () => {
     expect(await within(dialog).findByText("Затронет")).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Удалить" }));
     await waitFor(() =>
-      expect(managed.vaults.delete).toHaveBeenCalledWith("vault_1", {}),
+      expect(managed.vaults.delete).toHaveBeenCalledWith("vault_1", { ifMatch: '"3"' }),
     );
   });
 

@@ -4,6 +4,7 @@ import {
   type AgentStore,
   type ArchiveAgentRecord,
   type ArchiveAgentRecordResult,
+  type DeleteAgentRecord,
   type DeleteAgentRecordResult,
   type FindAgentVersionRecord,
   type FindCurrentAgentRecord,
@@ -31,6 +32,17 @@ function versionKey(
 
 function clone(record: AgentRecord): AgentRecord {
   return structuredClone(record);
+}
+
+/** version_conflict when an expected version is set and differs, else null. */
+function staleVersion(
+  current: AgentRecord,
+  expectedVersion: number | undefined,
+): { type: "version_conflict"; actualVersion: number } | null {
+  if (expectedVersion === undefined || current.version === expectedVersion) {
+    return null;
+  }
+  return { type: "version_conflict", actualVersion: current.version };
 }
 
 function compareCurrent(left: AgentRecord, right: AgentRecord): number {
@@ -95,6 +107,8 @@ export class MemoryAgentStore implements AgentStore {
     const key = currentKey(input.workspaceId, input.agentId);
     const current = this.current.get(key);
     if (current === undefined) return { type: "not_found" };
+    const stale = staleVersion(current, input.expectedVersion);
+    if (stale !== null) return stale;
     const archived = clone({
       ...current,
       archivedAt: input.archivedAt,
@@ -149,6 +163,8 @@ export class MemoryAgentStore implements AgentStore {
     const key = currentKey(input.workspaceId, input.agentId);
     const current = this.current.get(key);
     if (current === undefined) return { type: "not_found" };
+    const stale = staleVersion(current, input.expectedVersion);
+    if (stale !== null) return stale;
     const restored = clone({
       ...current,
       archivedAt: null,
@@ -159,10 +175,14 @@ export class MemoryAgentStore implements AgentStore {
   }
 
   async deleteCurrent(
-    input: FindCurrentAgentRecord,
+    input: DeleteAgentRecord,
   ): Promise<DeleteAgentRecordResult> {
     const key = currentKey(input.workspaceId, input.agentId);
-    if (!this.current.delete(key)) return { type: "not_found" };
+    const current = this.current.get(key);
+    if (current === undefined) return { type: "not_found" };
+    const stale = staleVersion(current, input.expectedVersion);
+    if (stale !== null) return stale;
+    this.current.delete(key);
     for (const versionKeyValue of [...this.versions.keys()]) {
       if (versionKeyValue.startsWith(`${key}\u0000`)) {
         this.versions.delete(versionKeyValue);

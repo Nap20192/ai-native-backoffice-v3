@@ -1,6 +1,7 @@
 import type {
   ArchiveVaultRecord,
   ArchiveVaultRecordResult,
+  DeleteVaultRecord,
   DeleteVaultRecordResult,
   InsertVault,
   ListVaultRecords,
@@ -13,6 +14,17 @@ import type {
 
 function clone<Value>(value: Value): Value {
   return structuredClone(value);
+}
+
+/** revision_conflict when an expected revision is set and differs, else null. */
+function staleRevision(
+  current: StoredVault,
+  expectedRevision: number | undefined,
+): { type: "revision_conflict"; actualRevision: number } | null {
+  if (expectedRevision === undefined || current.revision === expectedRevision) {
+    return null;
+  }
+  return { type: "revision_conflict", actualRevision: current.revision };
 }
 
 export class MemoryVaultStore implements VaultStore {
@@ -70,6 +82,8 @@ export class MemoryVaultStore implements VaultStore {
     const records = this.workspace(input.workspaceId, false);
     const current = records?.get(input.vaultId);
     if (current === undefined) return { type: "not_found" };
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
     const record = {
       vault: {
         ...clone(current.vault),
@@ -82,10 +96,17 @@ export class MemoryVaultStore implements VaultStore {
     return { type: "archived", record: clone(record) };
   }
 
-  async delete(input: VaultLocation): Promise<DeleteVaultRecordResult> {
-    return this.workspace(input.workspaceId, false)?.delete(input.vaultId)
-      ? { type: "deleted" }
-      : { type: "not_found" };
+  /** Deletes only the row: the credentials live in another adapter. */
+  async delete(input: DeleteVaultRecord): Promise<DeleteVaultRecordResult> {
+    const records = this.workspace(input.workspaceId, false);
+    const current = records?.get(input.vaultId);
+    if (records === undefined || current === undefined) {
+      return { type: "not_found" };
+    }
+    const stale = staleRevision(current, input.expectedRevision);
+    if (stale !== null) return stale;
+    records.delete(input.vaultId);
+    return { type: "deleted" };
   }
 
   async list(input: ListVaultRecords): Promise<StoredVault[]> {

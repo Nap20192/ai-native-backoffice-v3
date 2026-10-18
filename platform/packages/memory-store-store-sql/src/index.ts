@@ -3,6 +3,7 @@ import type { MemoryStore } from "@open-managed-agents/domain/memory-stores";
 import type {
   ArchiveMemoryStoreRecord,
   ArchiveMemoryStoreRecordResult,
+  DeleteMemoryStoreRecord,
   DeleteMemoryStoreRecordResult,
   InsertMemoryStore,
   ListMemoryStoreRecords,
@@ -45,6 +46,26 @@ function toStoredMemoryStore(row: MemoryStoreRow): StoredMemoryStore {
     },
   };
 }
+
+/** SQL condition and its parameter for an optional expected revision. */
+function revisionGuard(expectedRevision: number | undefined): {
+  condition: string;
+  parameters: number[];
+} {
+  return expectedRevision === undefined
+    ? { condition: "", parameters: [] }
+    : { condition: " AND revision = ?", parameters: [expectedRevision] };
+}
+
+/**
+ * Tables that hold the rows of one memory store besides managed_memory_stores.
+ * SqlMemoryDocumentStore writes them; versions go first, as in its
+ * deleteAllInStore.
+ */
+const MEMORY_STORE_CHILD_TABLES = [
+  "managed_memory_versions",
+  "managed_memories",
+] as const;
 
 export class SqlMemoryStoreStore implements MemoryStoreStore {
   constructor(private readonly client: SqlClient) {}
@@ -119,17 +140,19 @@ export class SqlMemoryStoreStore implements MemoryStoreStore {
     input: ArchiveMemoryStoreRecord,
   ): Promise<ArchiveMemoryStoreRecordResult> {
     const archivedAt = timestamp(input.archivedAt);
+    const guard = revisionGuard(input.expectedRevision);
     const result = await this.client.prepare(
       `UPDATE managed_memory_stores
           SET archived_at = ?, updated_at = ?, revision = revision + 1
-        WHERE workspace_id = ? AND id = ?`,
+        WHERE workspace_id = ? AND id = ?${guard.condition}`,
     ).bind(
       archivedAt,
       archivedAt,
       input.workspaceId,
       input.memoryStoreId,
+      ...guard.parameters,
     ).run();
-    if (result.meta.changes === 0) return { type: "not_found" };
+    if (result.meta.changes === 0) return this.unchanged(input);
     if (result.meta.changes !== 1) {
       throw new Error(`Memory store archive affected ${result.meta.changes} rows`);
     }
@@ -138,18 +161,56 @@ export class SqlMemoryStoreStore implements MemoryStoreStore {
     return { type: "archived", record };
   }
 
+  /**
+   * One batch deletes the memory store, its memory versions and memories.
+   * It starts with the guarded store row, so on Postgres it locks the row
+   * before the child rows go. The child rows go only when the store row is
+   * gone: a stale revision leaves the store, its memories and versions as
+   * they were, and a failed child delete rolls the store row back.
+   */
   async delete(
-    input: MemoryStoreLocation,
+    input: DeleteMemoryStoreRecord,
   ): Promise<DeleteMemoryStoreRecordResult> {
-    const result = await this.client.prepare(
-      `DELETE FROM managed_memory_stores
-        WHERE workspace_id = ? AND id = ?`,
-    ).bind(input.workspaceId, input.memoryStoreId).run();
-    if (result.meta.changes === 0) return { type: "not_found" };
-    if (result.meta.changes !== 1) {
-      throw new Error(`Memory store deletion affected ${result.meta.changes} rows`);
+    const guard = revisionGuard(input.expectedRevision);
+    const results = await this.client.batch([
+      this.client.prepare(
+        `DELETE FROM managed_memory_stores
+          WHERE workspace_id = ? AND id = ?${guard.condition}`,
+      ).bind(input.workspaceId, input.memoryStoreId, ...guard.parameters),
+      ...MEMORY_STORE_CHILD_TABLES.map((table) =>
+        this.client.prepare(
+          `DELETE FROM ${table}
+            WHERE workspace_id = ? AND memory_store_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM managed_memory_stores
+                 WHERE workspace_id = ? AND id = ?
+              )`,
+        ).bind(
+          input.workspaceId,
+          input.memoryStoreId,
+          input.workspaceId,
+          input.memoryStoreId,
+        )),
+    ]);
+    const storeChanges = results[0]?.meta.changes;
+    if (storeChanges === 0) return this.unchanged(input);
+    if (storeChanges !== 1) {
+      throw new Error(
+        `Memory store deletion affected ${storeChanges ?? "missing"} rows`,
+      );
     }
     return { type: "deleted" };
+  }
+
+  /** The answer of a guarded write that touched no memory store row. */
+  private async unchanged(input: DeleteMemoryStoreRecord): Promise<
+    { type: "not_found" } | { type: "revision_conflict"; actualRevision: number }
+  > {
+    if (input.expectedRevision === undefined) return { type: "not_found" };
+    const current = await this.find(input);
+    return current === null
+      ? { type: "not_found" }
+      : { type: "revision_conflict", actualRevision: current.revision };
   }
 
   async list(input: ListMemoryStoreRecords): Promise<StoredMemoryStore[]> {

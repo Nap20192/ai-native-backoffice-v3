@@ -36,7 +36,7 @@ export function VaultsList() {
 
   // Архив и удаление идут через DangerDialog со списком зависимостей. Цель
   // не сбрасываем при закрытии, чтобы текст окна не пропадал на время
-  // анимации ухода. У хранилищ секретов нет ревизии, поэтому If-Match не шлём.
+  // анимации ухода. Окно читает ETag хранилища и шлёт его в If-Match.
   const [pending, setPending] = useState<PendingAction | null>(null);
 
   // Server-driven filter state. Any change to these flows into vaultParams
@@ -280,6 +280,7 @@ export function VaultsList() {
         open={pending?.kind === "archive"}
         operation="archive"
         target={pending?.kind === "archive" ? { kind: "vault", id: pending.vault.id } : null}
+        etagPath={pending?.kind === "archive" ? `/v1/vaults/${pending.vault.id}` : undefined}
         title="Отправить хранилище в архив?"
         message={`Хранилище «${pendingName}» и его учётные данные станут недоступны агентам.`}
         confirmLabel={t.common.archive}
@@ -294,6 +295,7 @@ export function VaultsList() {
         open={pending?.kind === "delete"}
         operation="delete"
         target={pending?.kind === "delete" ? { kind: "vault", id: pending.vault.id } : null}
+        etagPath={pending?.kind === "delete" ? `/v1/vaults/${pending.vault.id}` : undefined}
         title={`Удалить хранилище «${pendingName}»?`}
         message="Хранилище и все его учётные данные будут удалены."
         run={(options) => managedApi.vaults.delete(pending!.vault.id, options)}

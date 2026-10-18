@@ -65,7 +65,10 @@ beforeEach(() => {
   managed.vaults.archive.mockReset().mockResolvedValue({});
   managed.vaults.unarchive.mockReset().mockResolvedValue(vault());
   managed.vaults.delete.mockReset().mockResolvedValue({});
-  server.use(http.get("*/v1/oma/dependencies/vault/:id", () => HttpResponse.json(dependencies)));
+  server.use(
+    http.get("*/v1/oma/dependencies/vault/:id", () => HttpResponse.json(dependencies)),
+    http.get("*/v1/vaults/:id", () => HttpResponse.json(vault(), { headers: { ETag: '"3"' } })),
+  );
 });
 
 function renderPage() {
@@ -84,7 +87,7 @@ function renderPage() {
 }
 
 describe("VaultDetail: архив и удаление", () => {
-  it("архив показывает «Затронет» и ведёт к списку", async () => {
+  it("архив показывает «Затронет», шлёт If-Match из ETag и ведёт к списку", async () => {
     dependencies = {
       blocking: [],
       affected: [{ kind: "session", id: "sesn_1", name: null, status: "idle", note: "потеряет доступ" }],
@@ -98,7 +101,7 @@ describe("VaultDetail: архив и удаление", () => {
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "В архив" })).toBeEnabled());
     await userEvent.click(within(dialog).getByRole("button", { name: "В архив" }));
 
-    await waitFor(() => expect(managed.vaults.archive).toHaveBeenCalledWith("vault_1", {}));
+    await waitFor(() => expect(managed.vaults.archive).toHaveBeenCalledWith("vault_1", { ifMatch: '"3"' }));
     expect(await screen.findByText("Список хранилищ")).toBeInTheDocument();
   });
 
@@ -115,6 +118,18 @@ describe("VaultDetail: архив и удаление", () => {
     expect(within(dialog).getByText(/Это нельзя отменить/)).toBeInTheDocument();
     expect(await within(dialog).findByText("Мешает")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Удалить" })).toBeDisabled();
+  });
+
+  it("удаление шлёт If-Match из ETag и ведёт к списку", async () => {
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Удалить" }));
+    const dialog = await screen.findByRole("dialog", { name: "Удалить хранилище?" });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Удалить" })).toBeEnabled());
+    await userEvent.click(within(dialog).getByRole("button", { name: "Удалить" }));
+
+    await waitFor(() => expect(managed.vaults.delete).toHaveBeenCalledWith("vault_1", { ifMatch: '"3"' }));
+    expect(await screen.findByText("Список хранилищ")).toBeInTheDocument();
   });
 
   it("архивное хранилище возвращается кнопкой «Вернуть из архива»", async () => {

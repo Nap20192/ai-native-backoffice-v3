@@ -39,15 +39,31 @@ export type ReplaceSessionRecordResult =
 
 export interface ArchiveSessionRecord extends FindCurrentSessionRecord {
   archivedAt: string;
+  /**
+   * When set, the write happens only while the stored revision equals it.
+   * The check and the write are one atomic step. Another revision gives
+   * revision_conflict and changes nothing.
+   */
+  expectedRevision?: number;
 }
 
 export type ArchiveSessionRecordResult =
   | { type: "archived"; record: StoredSession }
-  | { type: "not_found" };
+  | { type: "not_found" }
+  | { type: "revision_conflict"; actualRevision: number };
+
+export interface DeleteSessionRecord extends FindCurrentSessionRecord {
+  /**
+   * Same guard as {@link ArchiveSessionRecord.expectedRevision}. A stale
+   * revision keeps the Session with its events, threads and other rows.
+   */
+  expectedRevision?: number;
+}
 
 export type DeleteSessionRecordResult =
   | { type: "deleted" }
-  | { type: "not_found" };
+  | { type: "not_found" }
+  | { type: "revision_conflict"; actualRevision: number };
 
 export interface SessionListPosition {
   createdAt: string;
@@ -83,6 +99,6 @@ export interface SessionStore {
   findCurrent(input: FindCurrentSessionRecord): Promise<StoredSession | null>;
   replaceCurrent(input: ReplaceSessionRecord): Promise<ReplaceSessionRecordResult>;
   archiveCurrent(input: ArchiveSessionRecord): Promise<ArchiveSessionRecordResult>;
-  deleteCurrent(input: FindCurrentSessionRecord): Promise<DeleteSessionRecordResult>;
+  deleteCurrent(input: DeleteSessionRecord): Promise<DeleteSessionRecordResult>;
   listCurrent(input: ListSessionRecords): Promise<StoredSession[]>;
 }

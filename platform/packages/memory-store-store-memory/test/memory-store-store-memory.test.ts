@@ -115,4 +115,41 @@ describe("InMemoryMemoryStoreStore", () => {
       memoryStoreId: memoryStore.id,
     })).resolves.toBeNull();
   });
+  it("archive and delete with a stale revision change nothing", async () => {
+    const store = new InMemoryMemoryStoreStore();
+    await store.insert({ workspaceId: "workspace_01", memoryStore });
+    await store.replace({
+      workspaceId: "workspace_01",
+      memoryStoreId: memoryStore.id,
+      expectedRevision: 1,
+      next: { ...memoryStore, name: "Renamed memory" },
+    });
+
+    await expect(store.archive({
+      workspaceId: "workspace_01",
+      memoryStoreId: memoryStore.id,
+      archivedAt: "2026-08-26T11:00:00.000Z",
+      expectedRevision: 1,
+    })).resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.delete({
+      workspaceId: "workspace_01",
+      memoryStoreId: memoryStore.id,
+      expectedRevision: 1,
+    })).resolves.toEqual({ type: "revision_conflict", actualRevision: 2 });
+    await expect(store.find({
+      workspaceId: "workspace_01",
+      memoryStoreId: memoryStore.id,
+    })).resolves.toMatchObject({ revision: 2, memoryStore: { archivedAt: null } });
+
+    await expect(store.delete({
+      workspaceId: "workspace_01",
+      memoryStoreId: memoryStore.id,
+      expectedRevision: 2,
+    })).resolves.toEqual({ type: "deleted" });
+    await expect(store.delete({
+      workspaceId: "workspace_01",
+      memoryStoreId: memoryStore.id,
+      expectedRevision: 2,
+    })).resolves.toEqual({ type: "not_found" });
+  });
 });

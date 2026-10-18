@@ -776,6 +776,8 @@ export async function createManagedNodeRuntime(
     environments: nodeManagedEnvironments,
     lifecycle: managedSessionLifecycle,
     runtime: managedSessionRuntime,
+    // Session delete takes the output files (docs/plans/crud-fixes.md, F4).
+    filesForWorkspace: workspaceId => managedPlatform.app({ workspaceId }).port(managedAgentsPortTokens.files),
     eventDispatch: new EnvironmentAwareSessionEventDispatchRouter({
       runtime: managedSessionRuntime,
     }),

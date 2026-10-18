@@ -31,26 +31,32 @@ export interface VaultsPage {
 
 export interface DeleteVaultCommand {
   vaultId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export interface ArchiveVaultCommand {
   vaultId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export interface UnarchiveVaultCommand {
   vaultId: string;
+  /** The revision from ETag (`If-Match`). Another revision gives precondition_failed. */
+  expectedRevision?: number;
 }
 
 export type CreateVaultResult =
-  | { type: "created"; vault: VaultView }
+  | { type: "created"; vault: VaultView; revision?: number }
   | { type: "invalid_request"; message: string };
 
 export type RetrieveVaultResult =
-  | { type: "found"; vault: VaultView }
+  | { type: "found"; vault: VaultView; revision?: number }
   | { type: "not_found" };
 
 export type UpdateVaultResult =
-  | { type: "updated"; vault: VaultView }
+  | { type: "updated"; vault: VaultView; revision?: number }
   | { type: "invalid_request"; message: string }
   | { type: "version_conflict"; message: string }
   | { type: "not_found" };
@@ -61,16 +67,19 @@ export type ListVaultsResult =
 
 export type DeleteVaultResult =
   | { type: "deleted"; vaultId: string }
+  | { type: "precondition_failed"; message: string }
   | DependencyConflict
   | { type: "not_found" };
 
 export type ArchiveVaultResult =
-  | { type: "archived"; vault: VaultView }
+  | { type: "archived"; vault: VaultView; revision?: number }
+  | { type: "precondition_failed"; message: string }
   | DependencyConflict
   | { type: "not_found" };
 
 export type UnarchiveVaultResult =
-  | { type: "unarchived"; vault: VaultView }
+  | { type: "unarchived"; vault: VaultView; revision?: number }
+  | { type: "precondition_failed"; message: string }
   | { type: "not_found" };
 
 export interface VaultsApplicationPort {

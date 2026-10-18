@@ -2,6 +2,7 @@ import type { Skill, SkillVersion } from "@open-managed-agents/domain/skills";
 import type {
   AppendSkillVersion,
   AppendSkillVersionResult,
+  DeleteSkillRecord,
   DeleteSkillRecordResult,
   DeleteSkillVersionRecord,
   DeleteSkillVersionRecordResult,
@@ -114,9 +115,16 @@ export class MemorySkillStore implements SkillStore {
       .map(clone);
   }
 
-  async deleteSkill(input: SkillLocation): Promise<DeleteSkillRecordResult> {
+  async deleteSkill(input: DeleteSkillRecord): Promise<DeleteSkillRecordResult> {
     const key = this.skillKey(input);
-    if (!this.skills.has(key)) return { type: "not_found" };
+    const current = this.skills.get(key);
+    if (current === undefined) return { type: "not_found" };
+    if (
+      input.expectedRevision !== undefined
+      && current.revision !== input.expectedRevision
+    ) {
+      return { type: "revision_conflict", actualRevision: current.revision };
+    }
     this.skills.delete(key);
     const prefix = `${input.workspaceId}\u0000${input.skillId}\u0000`;
     for (const versionKey of this.versions.keys()) {

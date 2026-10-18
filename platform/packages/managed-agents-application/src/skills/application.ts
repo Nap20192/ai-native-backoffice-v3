@@ -183,12 +183,20 @@ export class SkillsApplicationService implements SkillsApplicationPort {
       operation: "delete",
     });
     if (conflict !== null) return conflict;
+    // The early check answers before the dependency queries. The store checks
+    // the revision again inside the delete: a new version after the read gives 412.
     const result = await this.dependencies.store.deleteSkill({
       workspaceId: this.dependencies.workspaceId,
       skillId: command.skillId,
+      expectedRevision: command.expectedRevision,
     });
-    return result.type === "not_found"
-      ? result
-      : { type: "deleted", skillId: command.skillId };
+    if (result.type === "not_found") return result;
+    if (result.type === "revision_conflict") {
+      return {
+        type: "precondition_failed",
+        message: `Skill ${command.skillId} changed concurrently at revision ${result.actualRevision}`,
+      };
+    }
+    return { type: "deleted", skillId: command.skillId };
   }
 }

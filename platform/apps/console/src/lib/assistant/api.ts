@@ -368,7 +368,15 @@ export type DecisionReason =
 
 export type DecisionOutcome =
   | { ok: true }
-  | { ok: false; reason: DecisionReason; status: number; message: string };
+  | {
+      ok: false;
+      reason: DecisionReason;
+      status: number;
+      /** Текст для человека, уже переведённый консолью. */
+      message: string;
+      /** Причина 409 так, как её прислал сервер (у platform-mcp она по-русски). Пусто, если сервер её не дал. */
+      serverReason?: string;
+    };
 
 const CONFLICT_REASONS: readonly DecisionReason[] = [
   "stale",
@@ -378,13 +386,18 @@ const CONFLICT_REASONS: readonly DecisionReason[] = [
   "not_pending",
 ];
 
-function reasonFromError(err: unknown): { reason: DecisionReason; status: number; message: string } {
+function reasonFromError(err: unknown): {
+  reason: DecisionReason;
+  status: number;
+  message: string;
+  serverReason?: string;
+} {
   if (err instanceof ApiError) {
     if (err.status === 404) return { reason: "not_found", status: 404, message: err.message };
     if (err.status === 403) return { reason: "forbidden", status: 403, message: err.message };
     if (err.status === 409) {
       const hit = CONFLICT_REASONS.find((r) => r === err.code);
-      return { reason: hit ?? "other", status: 409, message: err.message };
+      return { reason: hit ?? "other", status: 409, message: err.message, serverReason: err.serverMessage.trim() };
     }
     return { reason: "other", status: err.status, message: err.message };
   }

@@ -102,8 +102,25 @@ describe("blockFromDecision", () => {
       operations: [{ index: 0, tool: "update_deployment", kind: "deployment", target_id: "depl_1", class: "edit" }],
     });
     const reason = "Объект в архиве. В первой версии ассистент его не меняет";
-    const b = blockFromDecision({ ok: false, reason: "class", status: 409, message: reason }, card, "update_deployment");
+    const b = blockFromDecision(
+      { ok: false, reason: "class", status: 409, message: "Конфликт", serverReason: reason },
+      card,
+      "update_deployment",
+    );
     expect(b).toEqual({ reason: "class", text: reason });
+  });
+  it("409 class без причины сервера: свой текст карточки, а не общая фраза консоли", () => {
+    const card = normalizePreview({
+      tool: "update_deployment",
+      preview_digest: "d1",
+      operations: [{ index: 0, tool: "update_deployment", kind: "deployment", target_id: "depl_1", class: "edit" }],
+    });
+    const b = blockFromDecision(
+      { ok: false, reason: "class", status: 409, message: "Конфликт", serverReason: "" },
+      card,
+      "update_deployment",
+    );
+    expect(b).toEqual({ reason: "class", text: "Деплоймент работает. В первой версии ассистент меняет только деплоймент на паузе" });
   });
   it("stale и other не блокируют", () => {
     expect(blockFromDecision({ ok: false, reason: "stale", status: 409, message: "" }, p, "update_agent")).toBeNull();

@@ -68,7 +68,8 @@ describe("MessageProposalCard", () => {
 
   it("409 class: причина про первое сообщение, кнопка выключена", async () => {
     const user = userEvent.setup();
-    mockPlatformMcp([PREVIEW], () => ({ status: 409, body: errorBody("class") }));
+    // Сервер без причины: карточка берёт свой текст. Причину сервера проверяет confirm.test.ts (c9c247e).
+    mockPlatformMcp([PREVIEW], () => ({ status: 409, body: errorBody("class", "") }));
     renderInRouter(<MessageProposalCard item={item} sessionId="s1" />);
     await user.click(await screen.findByRole("button", { name: "Отправить" }));
     expect(

@@ -80,8 +80,10 @@ export function blockFromDecision(
   switch (outcome.reason) {
     case "class": {
       // Карточка на экране собрана до смены состояния. Причину по новому состоянию пишет сервер в ответе 409.
+      // Берём его исходный текст, а не переведённый консолью: в переведённом всегда есть общая фраза.
       const out = preview?.operations.find((o) => o.class === "out_of_v1");
-      return { reason: "class", text: classText(out?.tool || tool, out?.outOfV1Reason ?? (outcome.message || null)) };
+      const serverReason = outcome.serverReason || null;
+      return { reason: "class", text: classText(out?.tool || tool, out?.outOfV1Reason ?? serverReason) };
     }
     case "secret":
       return { reason: "secret", text: SECRET_TEXT };

@@ -179,7 +179,8 @@ describe("ProposalCard: правка", () => {
 
   it("409 class выключает кнопку и называет причину", async () => {
     const user = userEvent.setup();
-    mockPlatformMcp([AGENT_EDIT_PREVIEW], () => ({ status: 409, body: errorBody("class") }));
+    // Сервер без причины: карточка берёт свой текст. Причину сервера проверяет confirm.test.ts (c9c247e).
+    mockPlatformMcp([AGENT_EDIT_PREVIEW], () => ({ status: 409, body: errorBody("class", "") }));
     renderInRouter(<ProposalCard item={proposalItem({ tool: "update_deployment" })} sessionId={SID} />);
     await user.click(await screen.findByRole("button", { name: "Применить" }));
     expect(

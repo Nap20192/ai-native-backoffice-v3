@@ -22,8 +22,15 @@
 // входом. Ход 2 (tool_result есть): текст «VERIFY_TOOL_DONE_<n>», если в результате есть
 // «VERIFY_TOOL_OK_<n>», иначе «VERIFY_TOOL_NOT_OK_<n>: ...» (так выглядит ответ после отказа).
 //
-// В журнал пишутся user-agent, sha256 ключа (12 знаков, не сам ключ), версия anthropic-beta
-// и инструменты запроса.
+// Сценарий multiagent (journey-multiagent.mjs): маркер «VERIFY_DELEGATE nonce=<n>» и строки
+// «Агент: <id>» и «Команда субагента: <команда>». Ход 1: tool_use call_agent_<id> с сообщением
+// «VERIFY_AGENT_RUN nonce=<n>» и этой командой, дальше субагент идёт по ветке VERIFY_AGENT_RUN.
+// Ответ основного агента: «VERIFY_DELEGATE_WAITING_<n>», пока субагент ждёт человека,
+// «VERIFY_DELEGATE_DONE_<n>» на ответ субагента в результате call_agent и
+// «VERIFY_DELEGATE_REPORT_<n>» на отчёт, пришедший отдельным сообщением (decideDelegate).
+//
+// В журнал пишутся user-agent, sha256 ключа (12 знаков, не сам ключ), версия anthropic-beta,
+// инструменты запроса и начало последнего сообщения пользователя (last_user_text).
 // У каждого запроса в журнале есть thinking (тип thinking из тела) и effort
 // (output_config.effort): так видно, дошло ли усилие агента до модели.
 //
@@ -135,11 +142,83 @@ function decideTool(body) {
   };
 }
 
+const DELEGATE_MARKER = /VERIFY_DELEGATE nonce=([a-z0-9]+)/;
+const DELEGATE_AGENT = /^Агент: (\S+)$/m;
+const DELEGATE_COMMAND = /^Команда субагента: (.+)$/m;
+// Текст, который блокирующий call_agent_<id> возвращает, пока субагент ждёт человека
+// (SUBAGENT_WAITING_FOR_CONFIRMATION в apps/main-node/src/lib/node-managed-session-runner.ts).
+const SUBAGENT_WAITING = "waiting for a tool confirmation";
+
+/**
+ * Маркер VERIFY_DELEGATE (сценарий multiagent, journey-multiagent.mjs): основной агент передаёт
+ * задачу субагенту. Ход 1: tool_use call_agent_<id> (id из строки «Агент:», иначе первый
+ * call_agent_*) с сообщением «VERIFY_AGENT_RUN nonce=<n>» и строкой «Команда:» из строки
+ * «Команда субагента:». Запрос субагента несёт только VERIFY_AGENT_RUN и идёт по общей ветке.
+ * Ход 2 (результат call_agent есть): «VERIFY_DELEGATE_WAITING_<n>», если субагент ждёт человека,
+ * «VERIFY_DELEGATE_DONE_<n>», если в результате его ответ с VERIFY_DONE_<n>. Отчёт субагента
+ * после подтверждения приходит отдельным сообщением пользователя: на него ответ
+ * «VERIFY_DELEGATE_REPORT_<n>», если в отчёте есть VERIFY_DONE_<n>.
+ */
+function decideDelegate(body) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  let start = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user" && !hasToolResult(m) && DELEGATE_MARKER.test(textOf(m.content))) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return null;
+  const toolNames = (Array.isArray(body.tools) ? body.tools : []).map((t) => t?.name);
+  const prompt = textOf(messages[start].content);
+  const nonce = prompt.match(DELEGATE_MARKER)[1];
+  const base = { kind: "DELEGATE", nonce, toolNames };
+  const after = messages.slice(start + 1);
+  const reports = after.filter((m) => m?.role === "user" && !hasToolResult(m)).map((m) => textOf(m.content));
+  const results = after.filter(hasToolResult).map((m) => textOf(m.content)).join("\n");
+  const done = `VERIFY_DONE_${nonce}`;
+  if (reports.length > 0) {
+    const ok = reports.some((text) => text.includes(done));
+    return {
+      ...base,
+      decision: "report_read",
+      toolResultHasMarker: ok,
+      toolResultExcerpt: reports.join("\n").slice(0, 500),
+      reply: { text: ok ? `VERIFY_DELEGATE_REPORT_${nonce}` : `VERIFY_DELEGATE_REPORT_NOT_OK_${nonce}: в отчёте нет ${done}` },
+    };
+  }
+  if (!results) {
+    const agentId = prompt.match(DELEGATE_AGENT)?.[1];
+    const wanted = agentId ? `call_agent_${agentId.replace(/[^a-zA-Z0-9_]/g, "_")}` : null;
+    const tool = toolNames.find((name) => (wanted ? name === wanted : String(name).startsWith("call_agent_")));
+    if (!tool) return { ...base, decision: "no_call_agent", reply: { text: `VERIFY_FAIL_${nonce}: в запросе нет инструмента ${wanted ?? "call_agent_*"}` } };
+    const command = prompt.match(DELEGATE_COMMAND)?.[1]?.trim();
+    if (!command) return { ...base, decision: "no_command", reply: { text: `VERIFY_FAIL_${nonce}: в сообщении нет строки «Команда субагента: …»` } };
+    return { ...base, decision: "tool_use", reply: { tool, input: { message: `VERIFY_AGENT_RUN nonce=${nonce}\nКоманда: ${command}` } } };
+  }
+  const waiting = results.includes(SUBAGENT_WAITING);
+  const ok = results.includes(done);
+  return {
+    ...base,
+    decision: "final_text",
+    toolResultHasMarker: ok,
+    toolResultExcerpt: results.slice(0, 500),
+    reply: {
+      text: waiting ? `VERIFY_DELEGATE_WAITING_${nonce}`
+        : ok ? `VERIFY_DELEGATE_DONE_${nonce}`
+        : `VERIFY_DELEGATE_NOT_OK_${nonce}: в результате call_agent нет ${done}`,
+    },
+  };
+}
+
 function decide(body) {
   const builder = decideBuilder(body, { canaryFile: args["canary-file"], oracleFile: args["oracle-file"] });
   if (builder) return builder;
   const tool = decideTool(body);
   if (tool) return tool;
+  const delegate = decideDelegate(body);
+  if (delegate) return delegate;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   let start = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -212,6 +291,17 @@ function sse(model, n, reply) {
     { type: "message_stop" },
   ];
   return events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+}
+
+// Текст последнего сообщения пользователя без tool_result, первые 300 знаков. По нему
+// видно, что модель прочла, например отчёт субагента после подтверждения.
+function lastUserText(body) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user" && !hasToolResult(m)) return textOf(m.content).slice(0, 300);
+  }
+  return null;
 }
 
 function record(entry) {
@@ -308,6 +398,7 @@ const server = createServer(async (req, res) => {
     reply_text: d.reply.text ?? null,
     tools: d.toolNames,
     messages: Array.isArray(body.messages) ? body.messages.length : 0,
+    last_user_text: lastUserText(body),
     ...reasoning,
     ...client,
   });

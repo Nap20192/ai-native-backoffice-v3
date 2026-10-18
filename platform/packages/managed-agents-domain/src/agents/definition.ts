@@ -41,10 +41,48 @@ export type AgentMultiagentRosterEntryInput =
   | { type: "self" }
   | { model: string; type: "advisor" };
 
-export interface AgentMultiagentInput {
+export interface AgentCoordinatorMultiagentInput {
   agents: AgentMultiagentRosterEntryInput[];
   type: "coordinator";
 }
+
+/** An entry of `predefined_agents` in a `multiagent_20261001` block. */
+export type AgentPredefinedAgentInput =
+  | string
+  | { agentId: string; type: "agent"; version?: number }
+  | { type: "self" };
+
+/**
+ * `subagents` or `workflows` of a `multiagent_20261001` block. A field left
+ * out or sent as null takes its default: inline agents on, an empty list.
+ */
+export type AgentMultiagentSettingInput =
+  | {
+      type: "enabled";
+      inlineAgents?: boolean | null;
+      predefinedAgents?: AgentPredefinedAgentInput[] | null;
+    }
+  | { type: "disabled" };
+
+export type AgentMultiagentAdvisorInput =
+  | { model: string; type: "enabled" }
+  | { type: "disabled" };
+
+/**
+ * The CMA block that SDK 0.120 does not know (docs/plans/multiagent.md, 3.2).
+ * A setting left out or sent as null takes its default: subagents and
+ * workflows on, the advisor off.
+ */
+export interface AgentMultiagent20261001Input {
+  type: "multiagent_20261001";
+  subagents?: AgentMultiagentSettingInput | null;
+  workflows?: AgentMultiagentSettingInput | null;
+  advisor?: AgentMultiagentAdvisorInput | null;
+}
+
+export type AgentMultiagentInput =
+  | AgentCoordinatorMultiagentInput
+  | AgentMultiagent20261001Input;
 
 export interface AgentToolDefaultConfigInput {
   enabled?: boolean | null;
@@ -141,14 +179,45 @@ export type AgentSkill =
   | { skillId: string; type: "anthropic"; version: string }
   | { skillId: string; type: "custom"; version: string };
 
+/** A listed agent pinned to the version resolved when the block was saved. */
+export interface AgentPinnedAgent {
+  agentId: string;
+  type: "agent";
+  version: number;
+}
+
 export type AgentMultiagentRosterEntry =
-  | { agentId: string; type: "agent"; version: number }
+  | AgentPinnedAgent
   | { model: string; type: "advisor" };
 
-export interface AgentMultiagent {
+export interface AgentCoordinatorMultiagent {
   agents: AgentMultiagentRosterEntry[];
   type: "coordinator";
 }
+
+export type AgentMultiagentSetting =
+  | {
+      type: "enabled";
+      inlineAgents: boolean;
+      predefinedAgents: AgentPinnedAgent[];
+    }
+  | { type: "disabled" };
+
+export type AgentMultiagentAdvisor =
+  | { model: string; type: "enabled" }
+  | { type: "disabled" };
+
+/** A `multiagent_20261001` block with every default filled in. */
+export interface AgentMultiagent20261001 {
+  type: "multiagent_20261001";
+  subagents: AgentMultiagentSetting;
+  workflows: AgentMultiagentSetting;
+  advisor: AgentMultiagentAdvisor;
+}
+
+export type AgentMultiagent =
+  | AgentCoordinatorMultiagent
+  | AgentMultiagent20261001;
 
 export interface AgentToolDefaultConfig {
   enabled: boolean;

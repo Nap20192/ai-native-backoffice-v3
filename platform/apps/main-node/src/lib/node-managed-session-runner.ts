@@ -12,6 +12,7 @@ import type {
   Environment,
   Session,
   SessionEventView,
+  SessionLimitsSourcePort,
   SpanModelUsageView,
   ToolResultContentBlock,
 } from "@open-managed-agents/managed-agents-application";
@@ -28,20 +29,111 @@ import {
 } from "./node-managed-session-runtime.js";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
-import { nodeManagedStopReason, pendingConfirmations } from "./node-managed-stop-reason.js";
+import { nodeManagedStopReason, pendingConfirmations, waitingCalls } from "./node-managed-stop-reason.js";
 import type { WorkspaceBinding, WorkspacePersistencePort, RuntimeResourceScope } from "@open-managed-agents/runtime-resource-contract";
 import type { NodeManagedWorkspaceCheckpoints } from "./node-managed-workspace-checkpoints.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
 import {
   ManagedNodeSubagents,
   managedEventThread,
+  type ManagedNodeCallAnswer,
   type ManagedNodeCreateSubagent,
   type ManagedNodeSubagentControl,
   type ManagedNodeSubagentPolicy,
   type ManagedNodeSubagentThreads,
+  type ManagedNodeSubagentTurn,
 } from "./node-managed-subagents.js";
+import {
+  childTurnLimitReached,
+  isSessionLimitContinuation,
+  isSessionLimitError,
+  lastSessionStop,
+  tokenLimitReached,
+  type SessionLimitGate,
+} from "./node-session-limits.js";
 
 export type { ManagedNodeSubagentControl } from "./node-managed-subagents.js";
+
+/** What a blocking subagent call returns while the subagent waits for a
+ * person (plan multiagent, 3.1). The report comes after the confirmation. */
+export const SUBAGENT_WAITING_FOR_CONFIRMATION =
+  "The subagent is waiting for a tool confirmation. Its report will arrive as a separate message.";
+
+/** What a blocking subagent call returns when the Session limit stopped the
+ * subagent (plan multiagent, 3.Б). The coordinator stops at its next request. */
+export const SUBAGENT_STOPPED_AT_LIMIT = "The subagent stopped: the session limit is reached.";
+
+/** What the coordinator reads when a subagent turn that went on after a
+ * confirmation failed: the turn sends no report of its own (plan
+ * multiagent, 3.1). */
+export const SUBAGENT_FAILED = "The subagent failed: its turn ended with an error.";
+
+/**
+ * The message a subagent turn after a confirmation leaves the coordinator:
+ * its answer, or a note when the limit stopped it or it failed. An
+ * interrupted turn and a turn that waits for a person again leave none.
+ */
+function subagentTurnReport(turn: ManagedNodeSubagentTurn): string | undefined {
+  if (turn.status === "completed") return turn.output ?? "(sub-agent produced no text output)";
+  if (turn.status === "budget_reached") return SUBAGENT_STOPPED_AT_LIMIT;
+  if (turn.status === "failed") return SUBAGENT_FAILED;
+  return undefined;
+}
+
+/**
+ * The turn of a subagent thread after its call got a result (plan
+ * multiagent, 3.1). A confirmation of such a call is a replay after a crash
+ * or a second confirmation sent before the first one ran. Either way the
+ * turn runs once and reports once: a turn that did not end yet still runs,
+ * a turn that ended without its report in the primary thread gets only the
+ * report, and a reported turn gets nothing.
+ */
+function answeredThreadTurn(
+  events: readonly SessionEventView[],
+  threadId: string,
+  toolUseId: string,
+):
+  | { type: "not_run" }
+  | { type: "reported" }
+  | { type: "unreported"; turn: ManagedNodeSubagentTurn } {
+  let result = -1;
+  events.forEach((event, index) => {
+    if (
+      (event.type === "agent.tool_result" && event.toolUseId === toolUseId) ||
+      (event.type === "agent.mcp_tool_result" && event.mcpToolUseId === toolUseId)
+    ) result = index;
+  });
+  const idleAt = result < 0 ? -1 : events.findIndex((event, index) =>
+    index > result && event.type === "session.thread_status_idle" && managedEventThread(event) === threadId);
+  const idle = events[idleAt];
+  if (idle?.type !== "session.thread_status_idle") return { type: "not_run" };
+  const reported = events.some((event, index) =>
+    index > idleAt &&
+    event.type === "agent.thread_message_received" &&
+    event.fromSessionThreadId === threadId &&
+    managedEventThread(event) === "sthr_primary");
+  if (reported) return { type: "reported" };
+  const answer = findLastMatching(
+    events.slice(result, idleAt),
+    (event) => event.type === "agent.message" && managedEventThread(event) === threadId,
+  );
+  const status: ManagedNodeSubagentTurn["status"] = idle.interrupted ? "interrupted"
+    : idle.stopReason.type === "requires_action" ? "requires_action"
+    : idle.stopReason.type === "budget_reached" ? "budget_reached"
+    : idle.stopReason.type === "retries_exhausted" ? "failed"
+    : "completed";
+  return {
+    type: "unreported",
+    turn: {
+      threadId,
+      agentName: idle.agentName,
+      status,
+      ...(answer?.type === "agent.message" && {
+        output: answer.content.filter((block) => block.type === "text").map((block) => block.text).join(""),
+      }),
+    },
+  };
+}
 
 interface ManagedRunnerSubagentContext {
   subagents?: ManagedNodeSubagentControl;
@@ -130,6 +222,9 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
    * Default: 3 attempts, backoff min(30s, 2s * 2^(n-1)).
    */
   harnessRetry?: { attempts: number; delayMs(attempt: number): number };
+  /** The Session limit (plan multiagent, 3.Б): every model request of every
+   * thread and every subagent turn asks it first. Without it nothing stops. */
+  sessionLimits?: SessionLimitsSourcePort;
   subagentThreads?: ManagedNodeSubagentThreads;
   subagentPolicy?(input: ManagedRunnerContext): ManagedNodeSubagentPolicy | Promise<ManagedNodeSubagentPolicy>;
   resolveSubagentSession?(input: ManagedRunnerContext & { request: ManagedNodeCreateSubagent }): Promise<Session>;
@@ -427,10 +522,17 @@ export class DefaultNodeManagedSessionRunner
       input.events,
       (candidate) => candidate.type !== "system.message",
     );
-    if (event === undefined) {
+    // A raise of the Session limit continues the turn that stopped at it,
+    // from the log and without a new message (plan multiagent, 3.Б). The
+    // turn goes on only while the Session still stands where it stopped:
+    // a turn that ran since the raise already did the work.
+    const continuation = event === undefined && isSessionLimitContinuation(input.events);
+    if (continuation && lastSessionStop(input.historyEvents)?.type !== "budget_reached") return;
+    if (event === undefined && !continuation) {
       throw new Error("Managed Node runner received no actionable event");
     }
     if (
+      event !== undefined &&
       event.type !== "user.message" &&
       event.type !== "user.custom_tool_result" &&
       event.type !== "user.tool_result" &&
@@ -477,6 +579,8 @@ export class DefaultNodeManagedSessionRunner
       : withSandboxExecutionGuard(rawSandbox, {
           signal: abortController.signal,
         });
+    let subagents: ManagedNodeSubagents | undefined;
+    const limits = this.sessionLimitGate(input, () => runtime, () => subagents);
     const runtime = new ManagedNodeHarnessRuntime({
       initialEvents: input.initialEvents,
       events: input.historyEvents.filter((event) => managedEventThread(event) === "sthr_primary"),
@@ -485,76 +589,16 @@ export class DefaultNodeManagedSessionRunner
       output: input.output,
       clock: this.dependencies.clock,
       ids: this.dependencies.ids,
+      ...(limits !== undefined && { limits }),
     });
     runtime.broadcastProducedEvent({ type: "session.status_running" });
     let turnTools: HarnessContext["tools"] | undefined;
     let runFailed = false;
+    // The primary thread or the grader stopped at the Session limit.
+    let stoppedAtLimit = false;
     // Confirmations of this run that came after their call's result.
     const repeated = new Set<string>();
     try {
-      if (event.type === "user.tool_confirmation") {
-        // Every confirmation of this run, in order: two calls that waited in
-        // one turn may be confirmed together. A call that already has a
-        // result (in the history of all threads, or earlier in this run) never
-        // runs again, so a repeated allow executes nothing.
-        const waiting = new Set(pendingConfirmations(runtime.history.getEvents()));
-        const answered = answeredToolUses(input.historyEvents);
-        for (const confirmation of input.events) {
-          if (confirmation.type !== "user.tool_confirmation") continue;
-          const toolUse = findLastMatching(
-            input.historyEvents,
-            (candidate): candidate is ManagedNodeConfirmableToolUse =>
-              (candidate.type === "agent.tool_use" ||
-                candidate.type === "agent.mcp_tool_use") &&
-              candidate.id === confirmation.toolUseId,
-          );
-          if (toolUse === undefined) {
-            throw new Error(
-              `Tool use ${confirmation.toolUseId} was not found in session history`,
-            );
-          }
-          const key = answerKey(toolUse.type, toolUse.id);
-          if (answered.has(key)) {
-            if (repeatsAnsweredCall(input.historyEvents, confirmation.id, key)) {
-              repeated.add(confirmation.id);
-            }
-            continue;
-          }
-          if (!waiting.has(toolUse.id) && confirmation !== event) continue;
-          waiting.delete(toolUse.id);
-          answered.add(key);
-          const result = confirmation.result === "deny"
-            ? {
-                content: [{
-                  type: "text" as const,
-                  text: `Denied: ${confirmation.denyMessage ?? "Tool execution was denied by the user."}`,
-                }],
-                isError: true,
-              }
-            : await this.dependencies.confirmedTools.execute({
-                workspaceId: input.workspaceId,
-                session: input.session,
-                environment: input.environment,
-                sandbox,
-                confirmation,
-                toolUse,
-                abortSignal: abortController.signal,
-              });
-          runtime.broadcastProducedEvent(
-            toolUse.type === "agent.mcp_tool_use"
-              ? {
-                  type: "agent.mcp_tool_result",
-                  mcpToolUseId: toolUse.id,
-                  ...result,
-                }
-              : {
-                  type: "agent.tool_result",
-                  toolUseId: toolUse.id,
-                  ...result,
-                },
-          );
-        }
-      }
       const context = {
         workspaceId: input.workspaceId,
         session: input.session,
@@ -563,7 +607,7 @@ export class DefaultNodeManagedSessionRunner
       const policy = await this.dependencies.subagentPolicy?.(context);
       let subagentContext: ManagedRunnerSubagentContext = {};
       if (policy?.enabled && this.dependencies.subagentThreads !== undefined) {
-        const subagents = new ManagedNodeSubagents({
+        const control = new ManagedNodeSubagents({
           ...context,
           parentThreadId: "sthr_primary",
           sandbox,
@@ -592,17 +636,141 @@ export class DefaultNodeManagedSessionRunner
           output: input.output,
           clock: this.dependencies.clock,
           ids: this.dependencies.ids,
+          ...(limits !== undefined && { limits }),
         });
-        this.subagentExecutions.set(input, subagents);
+        subagents = control;
+        this.subagentExecutions.set(input, control);
         subagentContext = {
-          subagents,
+          subagents: control,
           delegateToAgent: async (agentId, message) => {
-            const child = await subagents.create({ agentId, message });
-            const result = (await subagents.wait({ threadIds: [child.threadId] })).subagents[0]!;
+            const child = await control.create({ agentId, message });
+            const result = (await control.wait({ threadIds: [child.threadId] })).subagents[0]!;
             if (result.status === "failed") throw new Error(`Subagent ${child.threadId} failed`);
+            if (result.status === "requires_action") return SUBAGENT_WAITING_FOR_CONFIRMATION;
+            if (result.status === "budget_reached") return SUBAGENT_STOPPED_AT_LIMIT;
             return result.output ?? "(sub-agent produced no text output)";
           },
         };
+      }
+      // Confirmations of this run for calls of subagent threads, and the
+      // threads whose turn goes on after them (plan multiagent, 3.1).
+      const threadConfirmations = new Set<string>();
+      const answeredThreads = new Set<string>();
+      // Turns that ended after their answer while their report never
+      // reached the primary thread: a crash came between the two.
+      const unreportedTurns = new Map<string, ManagedNodeSubagentTurn>();
+      if (event?.type === "user.tool_confirmation") {
+        // Every confirmation of this run, in order: two calls that waited in
+        // one turn may be confirmed together, in the primary thread or in a
+        // subagent thread. A call that already has a result (in the history
+        // of all threads, or earlier in this run) never runs again, so a
+        // repeated allow executes nothing.
+        const waiting = new Set([
+          ...pendingConfirmations(runtime.history.getEvents()),
+          ...waitingCalls(input.historyEvents),
+        ]);
+        const answered = answeredToolUses(input.historyEvents);
+        for (const confirmation of input.events) {
+          if (confirmation.type !== "user.tool_confirmation") continue;
+          const toolUse = findLastMatching(
+            input.historyEvents,
+            (candidate): candidate is ManagedNodeConfirmableToolUse =>
+              (candidate.type === "agent.tool_use" ||
+                candidate.type === "agent.mcp_tool_use") &&
+              candidate.id === confirmation.toolUseId,
+          );
+          if (toolUse === undefined) {
+            throw new Error(
+              `Tool use ${confirmation.toolUseId} was not found in session history`,
+            );
+          }
+          const threadId = managedEventThread(toolUse);
+          const inSubagentThread = threadId !== "sthr_primary";
+          if (inSubagentThread) threadConfirmations.add(confirmation.id);
+          const key = answerKey(toolUse.type, toolUse.id);
+          if (answered.has(key)) {
+            if (repeatsAnsweredCall(input.historyEvents, confirmation.id, key)) {
+              repeated.add(confirmation.id);
+            } else if (inSubagentThread) {
+              // A replay after a crash, or a second confirmation sent before
+              // the first one ran: the turn of the thread runs and reports once.
+              const turn = answeredThreadTurn(input.historyEvents, threadId, toolUse.id);
+              if (turn.type === "not_run") answeredThreads.add(threadId);
+              if (turn.type === "unreported") unreportedTurns.set(threadId, turn.turn);
+            }
+            continue;
+          }
+          if (!waiting.has(toolUse.id) && confirmation !== event) continue;
+          waiting.delete(toolUse.id);
+          answered.add(key);
+          if (inSubagentThread && subagents === undefined) {
+            throw new Error(
+              `Tool use ${toolUse.id} belongs to subagent thread ${threadId}, and subagents are off for this session`,
+            );
+          }
+          // The call runs with the agent and tools of its own thread.
+          const callSession = inSubagentThread
+            ? await subagents!.threadSession(threadId)
+            : input.session;
+          const result = confirmation.result === "deny"
+            ? {
+                content: [{
+                  type: "text" as const,
+                  text: `Denied: ${confirmation.denyMessage ?? "Tool execution was denied by the user."}`,
+                }],
+                isError: true,
+              }
+            : await this.dependencies.confirmedTools.execute({
+                workspaceId: input.workspaceId,
+                session: callSession,
+                environment: input.environment,
+                sandbox,
+                confirmation,
+                toolUse,
+                abortSignal: abortController.signal,
+              });
+          const answer: ManagedNodeCallAnswer = toolUse.type === "agent.mcp_tool_use"
+            ? {
+                type: "agent.mcp_tool_result",
+                mcpToolUseId: toolUse.id,
+                ...result,
+              }
+            : {
+                type: "agent.tool_result",
+                toolUseId: toolUse.id,
+                ...result,
+              };
+          if (inSubagentThread) {
+            await subagents!.answer(threadId, answer);
+            answeredThreads.add(threadId);
+          } else {
+            runtime.broadcastProducedEvent(answer);
+          }
+        }
+      }
+      // A subagent thread goes on from its answered calls. Its report comes
+      // to the primary thread as a message, and the coordinator reads it as a
+      // user message on its next turn. A turn the limit stopped or that
+      // failed leaves a note instead, so the coordinator still learns of it.
+      let reported = false;
+      const turns = subagents !== undefined && answeredThreads.size > 0
+        ? await subagents.continueAnswered([...answeredThreads])
+        : [];
+      for (const [threadId, turn] of unreportedTurns) {
+        if (!answeredThreads.has(threadId)) turns.push(turn);
+      }
+      for (const turn of turns) {
+        const text = subagentTurnReport(turn);
+        if (text === undefined) continue;
+        runtime.broadcastProducedEvent({
+          type: "agent.thread_message_received",
+          fromSessionThreadId: turn.threadId,
+          fromAgentName: turn.agentName,
+          content: [{ type: "text", text }],
+        });
+        // At the limit the coordinator would stop at its first request: it
+        // reads the note on the turn that a raise continues.
+        if (turn.status !== "budget_reached") reported = true;
       }
       const toolsPromise = this.dependencies
         .buildTools({ ...context, ...subagentContext, sandbox, broadcastEvent: runtime.broadcast })
@@ -633,6 +801,13 @@ export class DefaultNodeManagedSessionRunner
             return;
           } catch (error) {
             if (!(error instanceof Error)) throw error;
+            // Pi stops at the Session limit with its own error. The turn ends
+            // on budget_reached: no retry and no session.error (plan
+            // multiagent, 3.Б).
+            if (isSessionLimitError(error) || runtime.limitReached) {
+              stoppedAtLimit = true;
+              return;
+            }
             const sideEffectFree = runtime.agentEventCount === agentEventsBefore;
             if (
               !sideEffectFree
@@ -660,17 +835,34 @@ export class DefaultNodeManagedSessionRunner
       // would see a tool call without a result, so it resumes only after the
       // last one (docs/plans/builder-agent.md, 2.5). A run that only repeats
       // handled confirmations wakes no model: its turn already ran
-      // (plan cma-wave-1, 3.1, decision 4).
+      // (plan cma-wave-1, 3.1, decision 4). A run that only answered calls of
+      // subagent threads wakes the coordinator for a report and for nothing
+      // else: its turn ended on the waiting text (plan multiagent, 3.1).
       const onlyRepeats = input.events.every((accepted) =>
         accepted.type === "system.message" || repeated.has(accepted.id),
       );
-      if (
-        event.type !== "user.tool_confirmation" ||
-        (!onlyRepeats && pendingConfirmations(runtime.history.getEvents()).length === 0)
+      const onlySubagentCalls = input.events.every((accepted) =>
+        accepted.type === "system.message" || repeated.has(accepted.id) ||
+        threadConfirmations.has(accepted.id),
+      );
+      // A continuation runs the model only for a turn that stopped before a
+      // request. A turn that stopped in the outcome grader already has its
+      // answer: the grading does not go on (plan multiagent, 3.Б, slice 3).
+      if (continuation) {
+        if (
+          pendingConfirmations(runtime.history.getEvents()).length === 0 &&
+          awaitsModel(runtime.history.getEvents())
+        ) {
+          await runHarness();
+        }
+      } else if (
+        event?.type !== "user.tool_confirmation" ||
+        (!onlyRepeats && (!onlySubagentCalls || reported) &&
+          pendingConfirmations(runtime.history.getEvents()).length === 0)
       ) {
         await runHarness();
       }
-      if (event.type === "user.define_outcome") {
+      if (event?.type === "user.define_outcome") {
         const maxIterations = Math.min(
           20,
           Math.max(1, event.maxIterations ?? 3),
@@ -679,6 +871,13 @@ export class DefaultNodeManagedSessionRunner
           // A call of the turn waits for the user: the work is not finished,
           // so the session stops on requires_action without an evaluation.
           if (pendingConfirmations(runtime.history.getEvents()).length > 0) break;
+          // The grader is a model request too: it waits for a raise.
+          if (stoppedAtLimit) break;
+          await runtime.beforeModelRequest();
+          if (runtime.limitReached) {
+            stoppedAtLimit = true;
+            break;
+          }
           const evaluationHistory = runtime.getApplicationHistoryEvents();
           const startId = runtime.broadcastProducedEvent({
             type: "span.outcome_evaluation_start",
@@ -839,10 +1038,18 @@ export class DefaultNodeManagedSessionRunner
         });
       }
       if (!leaseLost) {
-        runtime.broadcastProducedEvent({
-          type: "session.status_idle",
-          stopReason: nodeManagedStopReason(runtime.history.getEvents(), runFailed || finalizationError !== undefined),
-        });
+        // The session waits while one of its threads waits for a person.
+        const threads = await this.subagentThreadEvents(input, subagents?.events() ?? input.historyEvents);
+        const stopReason = nodeManagedStopReason(
+          runtime.history.getEvents(),
+          runFailed || finalizationError !== undefined,
+          threads,
+          stoppedAtLimit || runtime.limitReached || subagents?.limitReached === true,
+        );
+        // At the limit CMA writes session.usage between the stopped threads
+        // and the idle Session.
+        if (stopReason.type === "budget_reached") runtime.publishUsage();
+        runtime.broadcastProducedEvent({ type: "session.status_idle", stopReason });
       }
       try {
         await runtime.drain();
@@ -870,14 +1077,95 @@ export class DefaultNodeManagedSessionRunner
     }
   }
 
+  /**
+   * Events of the subagent threads, for the stop reason of the
+   * session (plan multiagent, 3.1). Only a thread with a call on `ask` can
+   * wait. An archived thread waits for nobody, so its events are left out.
+   * A thread whose record cannot be read stays in: a lost confirmation is
+   * worse than an extra one.
+   */
+  private async subagentThreadEvents(
+    input: { workspaceId: string; sessionId: string },
+    events: readonly SessionEventView[],
+  ): Promise<SessionEventView[]> {
+    const byThread = new Map<string, SessionEventView[]>();
+    const asking = new Set<string>();
+    for (const event of events) {
+      const threadId = managedEventThread(event);
+      if (threadId === "sthr_primary") continue;
+      const threadEvents = byThread.get(threadId) ?? [];
+      threadEvents.push(event);
+      byThread.set(threadId, threadEvents);
+      if (
+        (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
+        event.evaluatedPermission === "ask"
+      ) asking.add(threadId);
+    }
+    const kept = await Promise.all([...byThread].filter(([threadId]) => asking.has(threadId)).map(async ([threadId, threadEvents]) => {
+      const thread = await this.dependencies.subagentThreads?.find({
+        workspaceId: input.workspaceId, sessionId: input.sessionId, threadId,
+      }).catch(() => null);
+      return thread?.archivedAt != null ? [] : threadEvents;
+    }));
+    return kept.flat();
+  }
+
   async archiveThread(
     input: ArchiveNodeManagedSessionThread,
   ): Promise<void> {
     await this.subagentExecutions.get(input)?.archiveThread(input.threadId);
   }
+
+  /**
+   * The Session limit of one execution (plan multiagent, 3.Б). The row is
+   * read after the frames of the primary thread were written. A subagent
+   * turn the limit kept from starting stops the other threads too: the
+   * Session as a whole stands at its limit.
+   */
+  private sessionLimitGate(
+    scope: { workspaceId: string; sessionId: string },
+    primary: () => ManagedNodeHarnessRuntime,
+    subagents: () => ManagedNodeSubagents | undefined,
+  ): SessionLimitGate | undefined {
+    const source = this.dependencies.sessionLimits;
+    if (source === undefined) return undefined;
+    const read = async () => {
+      await primary().drain().catch(() => undefined);
+      return source.read({ workspaceId: scope.workspaceId, sessionId: scope.sessionId });
+    };
+    return {
+      modelRequest: async () => subagents()?.limitReached === true || tokenLimitReached(await read()),
+      childTurn: async () => {
+        const limits = await read();
+        return tokenLimitReached(limits) || childTurnLimitReached(limits);
+      },
+    };
+  }
 }
 
-/** Non-retryable harness failures use ConfigError (detected by error.name). */
+/** Events of the primary thread that carry the conversation. */
+const CONVERSATION_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "user.message",
+  "user.tool_result",
+  "user.custom_tool_result",
+  "agent.message",
+  "agent.tool_use",
+  "agent.tool_result",
+  "agent.mcp_tool_use",
+  "agent.mcp_tool_result",
+  "agent.custom_tool_use",
+  "agent.thread_message_received",
+]);
+
+/** True when the conversation does not end on an answer of the agent: the
+ * next step of the turn is a model request. */
+function awaitsModel(events: readonly { type: string }[]): boolean {
+  const last = findLastMatching(events, (event) => CONVERSATION_EVENT_TYPES.has(event.type));
+  return last !== undefined && last.type !== "agent.message";
+}
+
+/** Non-retryable harness failures use ConfigError (detected by error.name).
+ * The runner stops on a SessionLimitError before it asks this. */
 function isNonRetryableHarnessError(error: Error): boolean {
-  return error.name === "ConfigError";
+  return error.name === "ConfigError" || isSessionLimitError(error);
 }

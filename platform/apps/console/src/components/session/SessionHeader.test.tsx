@@ -84,9 +84,11 @@ function props(overrides: Partial<SessionHeaderProps> = {}): SessionHeaderProps 
     session,
     environment,
     status: "idle",
+    stopReason: null,
     totals,
     lastActivityMs: LAST,
     onRename: vi.fn().mockResolvedValue(undefined),
+    onRaiseLimit: vi.fn().mockResolvedValue(undefined),
     onInterrupt: vi.fn(),
     onDefineOutcome: vi.fn(),
     onArchive: vi.fn(),
@@ -423,6 +425,57 @@ describe("SessionHeader: меню «⋮»", () => {
       "Горячие клавиши",
     ]);
     expect(screen.queryByRole("menuitem", { name: "Траектория" })).toBeNull();
+  });
+});
+
+describe("SessionHeader: предел работы сессии (план multiagent 3.Б, срез 4)", () => {
+  const limitNote = () => screen.queryByText(/Предел работы сессии исчерпан/);
+  // Занятая кнопка добавляет к имени спиннер «Загрузка», поэтому имя по шаблону.
+  const raiseButton = () => screen.queryByRole("button", { name: /Поднять предел/ });
+
+  it("ход встал с budget_reached: шапка пишет заметку и даёт поднять предел", async () => {
+    const { props: p } = renderHeader({ status: "idle", stopReason: "budget_reached" });
+
+    expect(limitNote()).toBeInTheDocument();
+    expect(limitNote()?.closest('[role="status"]')).toHaveClass("callout-warning");
+    await userEvent.click(raiseButton()!);
+
+    await waitFor(() => expect(p.onRaiseLimit).toHaveBeenCalledOnce());
+  });
+
+  it("пока предел поднимается, кнопка занята и второй клик правку не шлёт", async () => {
+    let finish: () => void = () => {};
+    const onRaiseLimit = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    renderHeader({ status: "idle", stopReason: "budget_reached", onRaiseLimit });
+
+    await userEvent.click(raiseButton()!);
+    expect(raiseButton()).toHaveAttribute("aria-busy", "true");
+    await userEvent.click(raiseButton()!);
+    expect(onRaiseLimit).toHaveBeenCalledOnce();
+
+    await act(async () => finish());
+    expect(raiseButton()).not.toHaveAttribute("aria-busy");
+  });
+
+  it("другая причина остановки или работающий ход заметки не дают", () => {
+    const { rerender, props: p } = renderHeader({ status: "idle", stopReason: "end_turn" });
+    expect(limitNote()).toBeNull();
+    expect(raiseButton()).toBeNull();
+
+    rerender(
+      <MemoryRouter>
+        <SessionHeader {...p} status="running" stopReason="budget_reached" />
+      </MemoryRouter>,
+    );
+    expect(limitNote()).toBeNull();
+    expect(raiseButton()).toBeNull();
+  });
+
+  it("заметка без чисел, токенов и денег", () => {
+    renderHeader({ status: "idle", stopReason: "budget_reached" });
+
+    const note = limitNote()!.closest('[role="status"]')!;
+    expect(note).not.toHaveTextContent(/\d|токен|стоимост|бюджет|\$/i);
   });
 });
 

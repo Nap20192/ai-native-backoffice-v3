@@ -16,6 +16,10 @@ import type {
   ToolResultContentBlock,
   UserMessageContentBlock,
 } from "@open-managed-agents/managed-agents-application";
+import {
+  effectiveMultiagent,
+  listedSubagents,
+} from "@open-managed-agents/managed-agents-application/agents/multiagent";
 
 export { AnthropicMessagesDreamCurator } from "./anthropic-messages-dream-curator";
 export { ApplicationDreamMemoryWorkspace } from "./application-dream-memory-workspace";
@@ -727,12 +731,13 @@ function runtimeAgentTool(tool: AgentTool): RuntimeAgentTool {
 
 function runtimeAgentSnapshot(input: StartSessionExecution): RuntimeAgentSnapshot {
   const { agent } = input.session;
-  const roster = agent.multiagent?.agents ?? [];
-  const callableAgents = roster.flatMap((member) =>
-    member.type === "agent"
-      ? [{ type: member.type, id: member.id, version: member.version }]
-      : [],
-  );
+  // Both block types read through one view (docs/plans/multiagent.md, 3.2).
+  const multiagent = effectiveMultiagent(agent.multiagent);
+  const callableAgents = listedSubagents(agent.multiagent).map((member) => ({
+    type: member.type,
+    id: member.id,
+    version: member.version,
+  }));
   return {
     id: agent.id,
     name: agent.name,
@@ -760,14 +765,15 @@ function runtimeAgentSnapshot(input: StartSessionExecution): RuntimeAgentSnapsho
     created_at: input.session.createdAt,
     updated_at: input.session.updatedAt,
     ...(callableAgents.length > 0 && { callable_agents: callableAgents }),
-    ...(agent.multiagent !== null && {
+    ...(multiagent !== null && {
       multiagent: {
-        type: agent.multiagent.type,
-        agents: roster.map((member) =>
-          member.type === "advisor"
-            ? { type: member.type, model: member.model }
-            : { type: member.type, id: member.id, version: member.version },
-        ),
+        type: "coordinator" as const,
+        agents: [
+          ...callableAgents,
+          ...(multiagent.advisor.type === "enabled"
+            ? [{ type: "advisor" as const, model: multiagent.advisor.model }]
+            : []),
+        ],
       },
     }),
   };

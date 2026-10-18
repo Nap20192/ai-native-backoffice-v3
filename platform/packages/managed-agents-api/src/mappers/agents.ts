@@ -14,7 +14,7 @@ import type {
 } from "../ports";
 import {
   fromAgentMcpServerInput,
-  fromAgentMultiagentInput,
+  fromAgentMultiagent,
   fromAgentSkillInput,
   fromAgentToolInput,
   toAgentMcpServerInput,
@@ -196,7 +196,7 @@ export function toAgentResponse(agent: AgentView): object {
     multiagent:
       agent.multiagent === null
         ? null
-        : fromAgentMultiagentInput(agent.multiagent),
+        : fromAgentMultiagent(agent.multiagent),
     name: agent.name,
     ...(publicOpenMa !== undefined &&
       Object.keys(publicOpenMa).length > 0 && {

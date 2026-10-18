@@ -174,6 +174,16 @@ export interface HarnessRuntime {
     status: "completed" | "aborted",
   ) => Promise<void>;
   reportUsage?: (input_tokens: number, output_tokens: number) => Promise<void>;
+  /**
+   * Checks the Session limit before a model request
+   * (docs/plans/multiagent.md, 3.Б). At the limit it sets `limitReached`.
+   * The harness then sends no request, writes no span for it and throws
+   * `SessionLimitError`. A throw inside Pi's `streamFn` alone would lose its
+   * type and come back as a retried model error, hence the flag.
+   */
+  beforeModelRequest?: () => Promise<void>;
+  /** Set by `beforeModelRequest` once the Session spent its limit. */
+  limitReached?: boolean;
   pendingConfirmations?: string[];
   /** Release a completed runner callback from the existing pending-action
    * state after the execution host acknowledges its response. */

@@ -1,9 +1,10 @@
 import { decodeSessionEventDocument, encodeSessionEventDocument } from '@open-managed-agents/session-runtime-contract/history';
-import type { SqlClient } from "@open-managed-agents/sql-client";
+import type { SqlClient, SqlStatement } from "@open-managed-agents/sql-client";
 import type {
   FindRuntimeProjectionSession,
   ProjectSessionRuntimeState,
   ProjectSessionRuntimeStateResult,
+  RuntimeProducedSessionEvent,
   SessionRuntimeProjectionPersistencePort,
   SessionThread,
 } from "@open-managed-agents/managed-agents-application";
@@ -34,16 +35,35 @@ function storedSession(row: ProjectionSessionRow): StoredSession {
   };
 }
 
+/**
+ * Writes that commit in the batch of the projected events, such as the
+ * counters of the session limits (docs/plans/multiagent.md, 3.Б). `guard`
+ * is the condition of that batch, the Session revision and the execution
+ * fence, as SQL with its bindings. Every statement must carry it, so a batch
+ * that loses its revision or fence changes nothing. An exact replay of
+ * events already written gets no statements.
+ */
+export interface SqlRuntimeProjectionEffect {
+  statements(input: {
+    workspaceId: string;
+    sessionId: string;
+    events: readonly RuntimeProducedSessionEvent[];
+    guard: { sql: string; bindings: ReadonlyArray<string | number> };
+  }): Promise<SqlStatement[]>;
+}
+
 export class SqlSessionRuntimeProjectionPersistence
   implements SessionRuntimeProjectionPersistencePort
 {
   readonly #now: () => Date;
+  readonly #effects: readonly SqlRuntimeProjectionEffect[];
 
   constructor(
     private readonly client: SqlClient,
-    options: { now?: () => Date } = {},
+    options: { now?: () => Date; effects?: readonly SqlRuntimeProjectionEffect[] } = {},
   ) {
     this.#now = options.now ?? (() => new Date());
+    this.#effects = options.effects ?? [];
   }
 
   async findCurrent(
@@ -203,6 +223,22 @@ export class SqlSessionRuntimeProjectionPersistence
     ).bind(JSON.stringify(thread), timestamp(thread.updatedAt), input.workspaceId,
       input.sessionId, thread.id, input.workspaceId, input.sessionId,
       input.expectedRevision, ...fenceBindings));
+    const guard = {
+      sql: `EXISTS (
+          SELECT 1 FROM managed_sessions
+           WHERE workspace_id = ? AND id = ? AND revision = ?
+        ) ${fenceSql}`,
+      bindings: [input.workspaceId, input.sessionId, input.expectedRevision, ...fenceBindings],
+    };
+    const effectStatements: SqlStatement[] = [];
+    for (const effect of this.#effects) {
+      effectStatements.push(...await effect.statements({
+        workspaceId: input.workspaceId,
+        sessionId: input.sessionId,
+        events: input.events,
+        guard,
+      }));
+    }
     const next = input.next;
     const update = this.client.prepare(
         `UPDATE managed_sessions
@@ -231,7 +267,9 @@ export class SqlSessionRuntimeProjectionPersistence
       `UPDATE managed_sessions SET revision = revision
         WHERE workspace_id = ? AND id = ? AND revision = ? ${fenceSql}`,
     ).bind(input.workspaceId, input.sessionId, input.expectedRevision, ...fenceBindings);
-    const results = await this.client.batch([revisionGuard, ...eventStatements, ...threadStatements, update]);
+    // The Session update stays last: its row count tells a lost revision or
+    // fence, and the statements before it still see the old revision.
+    const results = await this.client.batch([revisionGuard, ...eventStatements, ...threadStatements, ...effectStatements, update]);
     const updateResult = results[results.length - 1];
     if (updateResult === undefined) {
       throw new Error("Runtime projection batch returned no update result");

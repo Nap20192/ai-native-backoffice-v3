@@ -1,5 +1,5 @@
 import type { AgentCreateParams } from "@anthropic-ai/sdk/resources/beta/agents/agents";
-import type { AgentCreateBody } from "../src/contracts/agents";
+import type { AgentCreateBody, AgentMultiagentBody } from "../src/contracts/agents";
 
 type OfficialAgentCreateBody = Omit<AgentCreateParams, "betas">;
 type Equal<Left, Right> =
@@ -12,8 +12,16 @@ type Equal<Left, Right> =
     : false;
 
 const agentCreateBodyMatchesOfficialContract: Equal<
-  Omit<AgentCreateBody, "_oma" | "mcp_servers">,
-  Omit<OfficialAgentCreateBody, "mcp_servers">
+  Omit<AgentCreateBody, "_oma" | "mcp_servers" | "multiagent">,
+  Omit<OfficialAgentCreateBody, "mcp_servers" | "multiagent">
 > = true;
 
+// The multiagent wire adds `multiagent_20261001` and keeps every SDK form
+// (API_LAYER.md, "Multiagent block").
+type OfficialMultiagent = Exclude<OfficialAgentCreateBody["multiagent"], null | undefined>;
+const officialMultiagentStillAccepted: OfficialMultiagent extends AgentMultiagentBody
+  ? true
+  : false = true;
+
 void agentCreateBodyMatchesOfficialContract;
+void officialMultiagentStillAccepted;

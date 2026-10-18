@@ -28,10 +28,11 @@ import {
   resolveCompactionWireInput,
 } from "./compaction-wire";
 import type { AgentStore } from "@open-managed-agents/agent-store";
-import type {
-  AgentMultiagent,
-  AgentMultiagentInput,
-} from "../domain/agent-definition";
+import {
+  mergeMultiagentUpdate,
+  reservedToolNameProblem,
+  resolveMultiagentInput,
+} from "./multiagent";
 import {
   resolveAgentSkills,
   resolveAgentTools,
@@ -350,85 +351,6 @@ function validateMetadata(metadata: Record<string, string>): string | null {
   return null;
 }
 
-type ResolveMultiagentResult =
-  | { type: "resolved"; multiagent: AgentMultiagent | null }
-  | { type: "invalid_request"; message: string };
-
-async function resolveMultiagent(
-  store: AgentStore,
-  workspaceId: string,
-  input: AgentMultiagentInput | null | undefined,
-  self: { agentId: string; version: number },
-): Promise<ResolveMultiagentResult> {
-  if (input === null || input === undefined) {
-    return { type: "resolved", multiagent: input ?? null };
-  }
-  if (input.agents.length < 1 || input.agents.length > 20) {
-    return {
-      type: "invalid_request",
-      message: "Multiagent roster must contain 1 to 20 entries",
-    };
-  }
-  const agents: AgentMultiagent["agents"] = [];
-  const referencedAgentIds = new Set<string>();
-  let selfCount = 0;
-  for (const entry of input.agents) {
-    if (typeof entry !== "string" && entry.type === "advisor") {
-      agents.push({ type: entry.type, model: entry.model });
-      continue;
-    }
-    if (typeof entry !== "string" && entry.type === "self") {
-      selfCount += 1;
-      if (selfCount > 1 || referencedAgentIds.has(self.agentId)) {
-        return {
-          type: "invalid_request",
-          message: "Multiagent roster agents must be distinct and may contain at most one self",
-        };
-      }
-      referencedAgentIds.add(self.agentId);
-      agents.push({ type: "agent", ...self });
-      continue;
-    }
-    const agentId = typeof entry === "string" ? entry : entry.agentId;
-    if (referencedAgentIds.has(agentId)) {
-      return {
-        type: "invalid_request",
-        message: "Multiagent roster agents must be distinct",
-      };
-    }
-    referencedAgentIds.add(agentId);
-    const requestedVersion =
-      typeof entry === "string" ? undefined : entry.version;
-    const current = await store.findCurrent({ workspaceId, agentId });
-    const referenced =
-      requestedVersion === undefined || current?.version === requestedVersion
-        ? current
-        : await store.findVersion({
-            workspaceId,
-            agentId,
-            version: requestedVersion,
-          });
-    if (referenced === null || referenced.archivedAt !== null) {
-      return {
-        type: "invalid_request",
-        message: `Multiagent roster agent ${agentId} was not found`,
-      };
-    }
-    if (referenced.multiagent !== null) {
-      return {
-        type: "invalid_request",
-        message: `Multiagent roster agent ${agentId} cannot be a coordinator`,
-      };
-    }
-    agents.push({
-      type: "agent",
-      agentId: referenced.id,
-      version: referenced.version,
-    });
-  }
-  return { type: "resolved", multiagent: { type: input.type, agents } };
-}
-
 export interface AgentsApplicationServiceDependencies {
   workspaceId: string;
   store: AgentStore;
@@ -485,14 +407,19 @@ export class AgentsApplicationService implements AgentsApplicationPort {
     }
     const timestamp = this.dependencies.clock.now().toISOString();
     const agentId = this.dependencies.ids.nextAgentId();
-    const resolvedMultiagent = await resolveMultiagent(
+    const resolvedMultiagent = await resolveMultiagentInput(
       this.dependencies.store,
       this.dependencies.workspaceId,
       command.multiagent,
-      { agentId, version: 1 },
+      { agentId, version: 1, name: command.name },
     );
     if (resolvedMultiagent.type === "invalid_request") {
       return resolvedMultiagent;
+    }
+    const tools = resolveAgentTools(command.tools ?? []);
+    const reservedTool = reservedToolNameProblem(resolvedMultiagent.multiagent, tools);
+    if (reservedTool !== null) {
+      return { type: "invalid_request", message: reservedTool };
     }
     const invalidCompaction = validateCompactionWire(command.openma, normalizedModel);
     if (invalidCompaction !== null) {
@@ -514,7 +441,7 @@ export class AgentsApplicationService implements AgentsApplicationPort {
         ...(openma !== undefined && { openma }),
         skills: resolveAgentSkills(command.skills ?? []),
         system: command.system ?? null,
-        tools: resolveAgentTools(command.tools ?? []),
+        tools,
         updatedAt: timestamp,
         version: 1,
       },
@@ -580,15 +507,17 @@ export class AgentsApplicationService implements AgentsApplicationPort {
     if (invalidMcpConfiguration !== null) {
       return { type: "invalid_request", message: invalidMcpConfiguration };
     }
-    const resolvedMultiagent =
-      command.multiagent === undefined
-        ? { type: "resolved" as const, multiagent: current.multiagent }
-        : await resolveMultiagent(
-            this.dependencies.store,
-            this.dependencies.workspaceId,
-            command.multiagent,
-            { agentId: current.id, version: current.version + 1 },
-          );
+    const resolvedMultiagent = await mergeMultiagentUpdate(
+      this.dependencies.store,
+      this.dependencies.workspaceId,
+      current.multiagent,
+      command.multiagent,
+      {
+        agentId: current.id,
+        version: current.version + 1,
+        name: command.name ?? current.name,
+      },
+    );
     if (resolvedMultiagent.type === "invalid_request") {
       return resolvedMultiagent;
     }
@@ -645,6 +574,10 @@ export class AgentsApplicationService implements AgentsApplicationPort {
     const invalidModel = validateAgentModelCapacity(next.model);
     if (invalidModel !== null) {
       return { type: "invalid_request", message: invalidModel };
+    }
+    const reservedTool = reservedToolNameProblem(next.multiagent, next.tools);
+    if (reservedTool !== null) {
+      return { type: "invalid_request", message: reservedTool };
     }
 
     const result = await this.dependencies.store.replaceCurrent({

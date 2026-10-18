@@ -668,7 +668,12 @@ describe("main-node official Managed Agents route", () => {
       title: "Node managed session",
       status: "idle",
     });
-    expect(retrievedSession).toEqual(createdSession);
+    // Retrieve adds the OpenMA counters of the session limits, create does
+    // not (API_LAYER.md, "Session limits"; docs/plans/multiagent.md, 3.Б).
+    expect(retrievedSession).toEqual({
+      ...createdSession,
+      _oma: { limits: { max_tokens: 1_000_000, max_child_turns: 20, used_tokens: 0, used_child_turns: 0 } },
+    });
 
     const statsResponse = await fetch(
       `http://127.0.0.1:${handle.port}/v1/oma/stats`,

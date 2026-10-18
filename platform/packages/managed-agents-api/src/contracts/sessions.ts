@@ -19,6 +19,17 @@ import {
 } from "./session-event-inputs";
 import { sessionResourceResponseSchema } from "./session-resources";
 
+/**
+ * OpenMA extension of a Session create or update body (API_LAYER.md,
+ * "Session limits"): the limits in tokens and subagent turns.
+ */
+export interface SessionOpenMaBody {
+  limits?: {
+    max_tokens?: number;
+    max_child_turns?: number;
+  };
+}
+
 type OfficialSessionCreateBody = Omit<SessionCreateParams, "betas">;
 type OfficialSessionAgent = Exclude<OfficialSessionCreateBody["agent"], string>;
 type OfficialSessionAgentOverride = Extract<
@@ -26,6 +37,7 @@ type OfficialSessionAgentOverride = Extract<
   { type: "agent_with_overrides" }
 >;
 export type SessionCreateBody = Omit<OfficialSessionCreateBody, "agent"> & {
+  _oma?: SessionOpenMaBody;
   agent:
     | string
     | Exclude<OfficialSessionAgent, { type: "agent_with_overrides" }>
@@ -36,6 +48,7 @@ export type SessionCreateBody = Omit<OfficialSessionCreateBody, "agent"> & {
 export type SessionListQuery = Omit<SessionListParams, "betas">;
 type OfficialSessionUpdateBody = Omit<SessionUpdateParams, "betas">;
 export type SessionUpdateBody = Omit<OfficialSessionUpdateBody, "agent"> & {
+  _oma?: SessionOpenMaBody;
   agent?: Omit<NonNullable<OfficialSessionUpdateBody["agent"]>, "mcp_servers"> & {
     mcp_servers?: OpenMaMcpServerBody[];
   };
@@ -114,6 +127,22 @@ export const budgetSchema = z
   })
   .strict();
 
+/** A limit is a positive whole number. At least one is given. */
+const sessionLimitsInputSchema = z
+  .object({
+    max_tokens: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+    max_child_turns: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  })
+  .strict()
+  .refine(
+    (limits) => limits.max_tokens !== undefined || limits.max_child_turns !== undefined,
+    { message: "_oma.limits needs max_tokens or max_child_turns" },
+  );
+
+const sessionOpenMaBodySchema = z
+  .object({ limits: sessionLimitsInputSchema.optional() })
+  .strict();
+
 export const sessionCreateBodySchema: z.ZodType<SessionCreateBody> = z
   .object({
     agent: z.union([
@@ -135,6 +164,7 @@ export const sessionCreateBodySchema: z.ZodType<SessionCreateBody> = z
     resources: z.array(sessionResourceInputSchema).optional(),
     title: z.string().nullable().optional(),
     vault_ids: z.array(z.string().min(1)).optional(),
+    _oma: sessionOpenMaBodySchema.optional(),
   })
   .strict();
 
@@ -154,6 +184,7 @@ export const sessionUpdateBodySchema: z.ZodType<SessionUpdateBody> = z
       .optional(),
     title: z.string().nullable().optional(),
     vault_ids: z.array(z.string().min(1)).optional(),
+    _oma: sessionOpenMaBodySchema.optional(),
   })
   .strict();
 
@@ -214,6 +245,20 @@ export const sessionUsageResponseSchema = z
   })
   .strict();
 
+/** OpenMA extension of the Session resource (API_LAYER.md, "Session limits"). */
+const sessionOpenMaResponseSchema = z
+  .object({
+    limits: z
+      .object({
+        max_tokens: z.number().int().min(1),
+        max_child_turns: z.number().int().min(1),
+        used_tokens: z.number().int().min(0),
+        used_child_turns: z.number().int().min(0),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const sessionResponseSchema = z
   .object({
     id: z.string().min(1),
@@ -243,6 +288,7 @@ export const sessionResponseSchema = z
     usage: sessionUsageResponseSchema,
     vault_ids: z.array(z.string()),
     deployment_id: z.string().nullable().optional(),
+    _oma: sessionOpenMaResponseSchema.optional(),
   })
   .strict();
 

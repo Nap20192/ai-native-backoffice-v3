@@ -7,6 +7,7 @@ import {
   CopyIcon,
   EllipsisVerticalIcon,
   MessageCircleQuestionIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 
@@ -21,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { PlainButton } from "@/components/ui/plain-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAsyncAction } from "@/hooks/useAsyncAction";
 import type { SessionTotals } from "../../lib/session-stats";
 import { useOptionalAssistant } from "../assistant/AssistantProvider";
 import { AgentChip, EnvironmentChip } from "../../pages/session-detail/Panels";
@@ -39,16 +41,22 @@ import {
  * правкой по месту, статус и чипы состава и времени. Три ряда на десктопе.
  * На узком экране чипы идут двумя строками: агент и окружение, длительность
  * и активность. Токенов, стоимости и бюджета в шапке нет, потому что модели
- * внутренние.
+ * внутренние. Ход, вставший на пределе работы сессии, даёт четвёртый ряд:
+ * заметку и кнопку «Поднять предел».
  */
 
 export interface SessionHeaderProps {
   session: BetaManagedAgentsSession | null;
   environment: BetaEnvironment | null;
   status: string;
+  /** Причина последней остановки хода из `session.status_idle`. По
+   *  `budget_reached` шапка пишет, что предел работы исчерпан. */
+  stopReason: string | null;
   totals: SessionTotals;
   lastActivityMs: number | null;
   onRename(title: string): Promise<void>;
+  /** Поднимает предел работы сессии. Ошибку показывает сам запрос. */
+  onRaiseLimit(): Promise<void>;
   onInterrupt(): void;
   onDefineOutcome(): void;
   onArchive(): void;
@@ -261,6 +269,29 @@ function SessionTitle({
   );
 }
 
+/** Заметка о пределе работы сессии (docs/plans/multiagent.md, 3.Б). Чисел в
+ *  ней нет: кнопка поднимает оба предела вдвое. */
+function SessionLimitNote({ onRaiseLimit }: { onRaiseLimit(): Promise<void> }) {
+  const raise = useAsyncAction(onRaiseLimit);
+  return (
+    <div role="status" data-session-note="limit" className="callout-warning flex-wrap items-center gap-x-3 gap-y-2">
+      <TriangleAlertIcon aria-hidden="true" className="size-4 flex-none" />
+      {/* basis-52 переносит кнопку на вторую строку на узком экране, иначе
+          текст сжимается до слова в строке. ml-7 ставит её под текст. */}
+      <p className="m-0 min-w-0 flex-1 basis-52">Предел работы сессии исчерпан, агент остановился.</p>
+      <Button
+        variant="outline"
+        size="xs"
+        className="flex-none max-sm:ml-7"
+        loading={raise.loading}
+        onClick={() => void raise.run().catch(() => {})}
+      >
+        Поднять предел
+      </Button>
+    </div>
+  );
+}
+
 function HeaderSkeleton() {
   return (
     <div className="shrink-0 space-y-3" role="status" aria-busy="true">
@@ -281,9 +312,11 @@ export function SessionHeader({
   session,
   environment,
   status,
+  stopReason,
   totals,
   lastActivityMs,
   onRename,
+  onRaiseLimit,
   onInterrupt,
   onDefineOutcome,
   onArchive,
@@ -303,6 +336,7 @@ export function SessionHeader({
     Number.isFinite(createdMs) && endMs !== null && endMs >= createdMs ? endMs - createdMs : null;
   const running = status === "running" || status === "rescheduling";
   const archived = Boolean(session.archived_at);
+  const limitReached = status === "idle" && stopReason === "budget_reached";
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -396,6 +430,7 @@ export function SessionHeader({
             )}
           </div>
         </div>
+        {limitReached && <SessionLimitNote onRaiseLimit={onRaiseLimit} />}
       </header>
     </TooltipProvider>
   );

@@ -53,6 +53,7 @@ import {
   newMcpEntry,
   parseAgentConfigText,
   prepareCodePayload,
+  writesMultiagent20261001,
   type FormState,
   type McpEntry,
   type McpPermission,
@@ -261,7 +262,10 @@ export function AgentFormDialog({
     setCreateError("");
     setSaving(true);
     try {
-      const payload = mergeFormIntoConfig(form, preservedConfig, { forUpdate: isEdit });
+      const payload = mergeFormIntoConfig(form, preservedConfig, {
+        forUpdate: isEdit,
+        ownId: editingAgent?.id,
+      });
       if (isEdit && editingAgent) {
         const updated = await persistAgent(payload);
         closeCreate();
@@ -310,6 +314,11 @@ export function AgentFormDialog({
   };
 
   const addCallable = (agentId: string) => {
+    // Сам агент в списке это пункт «Сам агент», сервер не примет его id.
+    if (agentId === editingAgent?.id) {
+      setForm({ ...form, selfCallable: true });
+      return;
+    }
     if (form.callableAgents.find((c) => c.id === agentId)) return;
     setForm({
       ...form,
@@ -341,7 +350,7 @@ export function AgentFormDialog({
 
   // Convert current form state to a config object (lossless vs preservedConfig).
   const formToConfig = () =>
-    mergeFormIntoConfig(form, preservedConfig, { forUpdate: isEdit });
+    mergeFormIntoConfig(form, preservedConfig, { forUpdate: isEdit, ownId: editingAgent?.id });
 
   // Switch between form/yaml/json modes
   const switchMode = (mode: "form" | "yaml" | "json") => {
@@ -360,7 +369,7 @@ export function AgentFormDialog({
           ? materializeAgentUpdate(preservedConfig ?? {}, parsed)
           : parsed;
         setPreservedConfig(config);
-        setForm(configToForm(config));
+        setForm(configToForm(config, editingAgent?.id));
       } catch (error) {
         setCreateError(error instanceof Error ? error.message : "Некорректная конфигурация");
         return;
@@ -433,17 +442,18 @@ export function AgentFormDialog({
       ? t.agents.editingVersion.replace("{version}", String(editingAgent?.version ?? ""))
       : "Настройте агента в форме или опишите его в YAML или JSON.";
 
+  const listedAgents = form.callableAgents.length + (form.selfCallable ? 1 : 0);
   const tabCounts: Record<TabId, number> = {
     basic: 0,
     tools: Object.keys(form.toolOverrides).length,
     skills: form.skills.length,
     mcp: form.mcpServers.length,
-    agents: form.callableAgents.length,
+    agents: listedAgents,
   };
   const summary = [
     form.skills.length > 0 && `Навыки: ${form.skills.length}`,
     form.mcpServers.length > 0 && `MCP: ${form.mcpServers.length}`,
-    form.callableAgents.length > 0 && `Агенты: ${form.callableAgents.length}`,
+    listedAgents > 0 && `Агенты: ${listedAgents}`,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -655,6 +665,13 @@ export function AgentFormDialog({
                     form={form}
                     setForm={setForm}
                     allAgents={allAgents}
+                    ownId={editingAgent?.id}
+                    writesNewType={writesMultiagent20261001(preservedConfig)}
+                    catalog={{
+                      options,
+                      optionsLoading: modelsQuery.isLoading,
+                      optionsError: modelsQuery.isError,
+                    }}
                     addCallable={addCallable}
                     removeCallable={removeCallable}
                   />
@@ -1450,19 +1467,73 @@ function McpPermissionFields({
   );
 }
 
+/** Флажок с подписью и пояснением под ней. Имя флажка это только подпись. */
+function CheckboxRow({
+  label,
+  hint,
+  checked,
+  disabled,
+  onCheckedChange,
+  className,
+}: {
+  label: string;
+  hint: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  className?: string;
+}) {
+  const id = useId();
+  return (
+    <div className={cn("flex items-start gap-3", className)}>
+      <Checkbox
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={`${id}-hint`}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+        className="mt-0.5"
+      />
+      <div className="min-w-0">
+        <Label htmlFor={id} className="text-sm leading-5 font-medium text-ddc-heading">
+          {label}
+        </Label>
+        <p id={`${id}-hint`} className="mt-0.5 text-xs leading-4 text-ddc-text-muted">
+          {hint}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Вкладка «Мультиагентность» (docs/plans/multiagent.md, 3.2, срез 4): список
+ * субагентов с пунктом «Сам агент», переключатель inline-агентов, советник из
+ * карточек моделей и строка про фоновые запуски. Форма пишет `coordinator`, а
+ * агенту с блоком `multiagent_20261001` пишет его же тип. Inline-агентов у
+ * `coordinator` нет, поэтому переключатель у него выключен.
+ */
 function AgentsTab({
   form,
   setForm,
   allAgents,
+  ownId,
+  writesNewType,
+  catalog,
   addCallable,
   removeCallable,
 }: {
   form: FormState;
   setForm: FormSetter;
   allAgents: Agent[];
+  ownId: string | undefined;
+  writesNewType: boolean;
+  catalog: CatalogState;
   addCallable: (agentId: string) => void;
   removeCallable: (i: number) => void;
 }) {
+  // Советник выбирается из карточек моделей, модели ключа сервера в список не идут.
+  const advisorOptions = catalog.options?.filter((option) => option.source === "card");
   return (
     <div className="space-y-4">
       <div>
@@ -1472,6 +1543,14 @@ function AgentsTab({
           <span className="font-mono">call_agent_&lt;id&gt;</span>.
         </p>
       </div>
+
+      <CheckboxRow
+        label="Сам агент"
+        hint="Агент передаёт задачу своей копии в отдельном потоке."
+        checked={form.selfCallable}
+        onCheckedChange={(selfCallable) => setForm({ ...form, selfCallable })}
+        className="rounded-xl border border-ddc-border p-3"
+      />
 
       {form.callableAgents.map((ca, i) => {
         const agentInfo = allAgents.find((a) => a.id === ca.id);
@@ -1537,7 +1616,10 @@ function AgentsTab({
           )}
           getTextLabel={(a) => `${a.name} (${a.id})`}
           placeholder="Выберите агента…"
-          excludeIds={form.callableAgents.map((c) => c.id)}
+          excludeIds={[
+            ...form.callableAgents.map((c) => c.id),
+            ...(ownId !== undefined ? [ownId] : []),
+          ]}
         />
       </GroupField>
 
@@ -1546,6 +1628,40 @@ function AgentsTab({
           Сначала создайте других агентов, чтобы включить делегирование.
         </p>
       )}
+
+      <CheckboxRow
+        label="Агенты, которых описывает сам агент"
+        hint={
+          writesNewType
+            ? "Агент сам описывает помощника, когда передаёт задачу. Запускать таких помощников ход начнёт позже."
+            : "Появятся позже. Пока агент передаёт задачи только агентам из списка."
+        }
+        checked={form.inlineAgents}
+        disabled={!writesNewType}
+        onCheckedChange={(inlineAgents) => setForm({ ...form, inlineAgents })}
+      />
+
+      <Field
+        label="Советник"
+        hint="Модель, у которой агент спрашивает совета по ходу работы. Звать советника ход начнёт позже."
+      >
+        <ModelPicker
+          id="agent-advisor"
+          value={form.advisorModel}
+          options={advisorOptions}
+          loading={catalog.optionsLoading}
+          emptyLabel="Нет"
+          onChange={(option) => setForm({ ...form, advisorModel: option?.handle ?? "" })}
+        />
+      </Field>
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl bg-ddc-surface-muted p-3">
+        <span className="text-sm font-medium text-ddc-heading">Фоновые запуски</span>
+        <Badge variant="neutral">появятся позже</Badge>
+        <p className="basis-full text-xs leading-4 text-ddc-text-muted">
+          Агент запустит много потоков по одной программе и соберёт их ответы.
+        </p>
+      </div>
     </div>
   );
 }

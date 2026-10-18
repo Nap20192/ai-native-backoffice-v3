@@ -25,6 +25,7 @@ import {
   type AppModule,
 } from "../index";
 import { managedAgentsPortTokens } from "../managed-agents";
+import { sessionLimitsPort } from "./sessions";
 
 export const sessionEventStorePort = createPortToken<SessionEventLogStore>(
   "managed-agents.store.session-events",
@@ -62,7 +63,9 @@ export function sessionEventsModule(): AppModule {
       sessionEventStreamPort,
       sessionEventDispatchPort,
     ],
-    setup({ port }) {
+    // At its limit a Session takes no new work (docs/plans/multiagent.md, 3.Б).
+    optional: [sessionLimitsPort],
+    setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const clock = port(clockPort);
       const ids = port(idGeneratorPort);
@@ -76,6 +79,7 @@ export function sessionEventsModule(): AppModule {
             execution: port(sessionEventExecutionContextSourcePort),
             stream: port(sessionEventStreamPort),
             dispatch: port(sessionEventDispatchPort),
+            limits: optionalPort(sessionLimitsPort),
             clock,
             ids: {
               nextEventId: () => ids.next("session-event"),

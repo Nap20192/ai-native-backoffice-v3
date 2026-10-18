@@ -21,6 +21,8 @@ describe("loadNodeConfig", () => {
     expect(config.memoryQueue).toBe("auto");
     expect(config.realtime).toEqual({ mode: "memory", pollIntervalMs: 300 });
     expect(config.execution.concurrency).toBe(8);
+    // Session limits by the trial copy log (docs/plans/multiagent.md, 3.Б).
+    expect(config.sessionLimits).toEqual({ maxTokens: 1_000_000, maxChildTurns: 20 });
     expect(config.workspace).toEqual({ strategy: "ephemeral", checkpointIntervalMs: 60_000 });
     expect(config.execution.ownerId).toMatch(/^node:\d+:/);
     expect(config.paths).toEqual({
@@ -115,6 +117,7 @@ describe("loadNodeConfig", () => {
       ...minimal,
       AUTH_DISABLED: "1", AUTH_REQUIRE_EMAIL_VERIFY: "1", FEISHU_WS_RUNNER: "1", MEMORY_QUEUE: "disabled",
       DREAM_CURATOR_MODE: "dedup", OMA_SESSION_EXECUTION_CONCURRENCY: "3", OMA_SESSION_EXECUTION_OWNER_ID: "replica-a",
+      OMA_SESSION_MAX_TOKENS: "250000", OMA_SESSION_MAX_CHILD_TURNS: "5",
       ANTHROPIC_CUSTOM_HEADERS: "X-A: 1, X-B: two:parts",
       SMTP_HOST: "smtp", SMTP_PORT: "465", SMTP_USER: "u", SMTP_PASS: "p", SMTP_FROM: "noreply@x",
       GATEWAY_ORIGIN: "https://gw", PUBLIC_BASE_URL: "https://pub",
@@ -125,6 +128,7 @@ describe("loadNodeConfig", () => {
     expect(config.memoryQueue).toBe("disabled");
     expect(config.dreamCurator).toBe("dedup");
     expect(config.execution).toEqual({ concurrency: 3, ownerId: "replica-a" });
+    expect(config.sessionLimits).toEqual({ maxTokens: 250_000, maxChildTurns: 5 });
     expect(config.model.customHeaders).toEqual({ "X-A": "1", "X-B": "two:parts" });
     expect(config.email).toEqual({ host: "smtp", port: 465, secure: true, user: "u", pass: "p", fromAddress: "noreply@x" });
     expect(config.http.gatewayOrigin).toBe("https://gw");

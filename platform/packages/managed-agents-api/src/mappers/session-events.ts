@@ -131,6 +131,9 @@ export function toSendableSessionEvent(event: WireSendableEvent): SendableSessio
         result: event.result,
         toolUseId: event.tool_use_id,
         ...(event.deny_message !== undefined && { denyMessage: event.deny_message }),
+        ...(event.session_thread_id !== undefined && {
+          sessionThreadId: event.session_thread_id,
+        }),
       };
     case "user.custom_tool_result":
       return {
@@ -140,6 +143,9 @@ export function toSendableSessionEvent(event: WireSendableEvent): SendableSessio
           content: event.content.map(toToolResultContent),
         }),
         ...(event.is_error !== undefined && { isError: event.is_error }),
+        ...(event.session_thread_id !== undefined && {
+          sessionThreadId: event.session_thread_id,
+        }),
       };
     case "user.define_outcome":
       return {

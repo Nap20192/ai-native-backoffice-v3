@@ -101,6 +101,61 @@ therefore outside this adapter's resource-port inventory.
 | `agents.archive` | `POST /v1/agents/:agent_id/archive` | `archiveAgent` |
 | `agents.versions.list` | `GET /v1/agents/:agent_id/versions` | `listAgentVersions` |
 
+### Multiagent block
+
+The `multiagent` field of an Agent takes the CMA type `multiagent_20261001`
+next to `coordinator` on create and update, and the Agent reads it back.
+Here the Agent wire leaves SDK 0.120: SDK 0.120 and 0.129 know only
+`coordinator` (owner decision 3 of `docs/plans/multiagent.md`, section 3.2).
+The wire type is our own (`AgentMultiagentBody` in `contracts/agents.ts`),
+declared like `_oma` of an agent. The `coordinator` form stays as the SDK has
+it.
+
+- The block holds three settings. `subagents` and `workflows` are
+  `{type: "enabled", inline_agents, predefined_agents}` or
+  `{type: "disabled"}`. `advisor` is `{type: "enabled", model}` or
+  `{type: "disabled"}`.
+- A setting or field left out or sent as null takes its default: `subagents`
+  and `workflows` enabled with `inline_agents: {type: "enabled"}` and an
+  empty list, `advisor` disabled. The Agent reads the block back with every
+  default filled in.
+- A list entry is an agent id, `{type: "agent", id}`,
+  `{type: "agent", id, version}` or `{type: "self"}`. The service pins every
+  entry to a version when it saves the block. `self` reads back as the
+  Agent's own id and version.
+- These answer 400 `invalid_request_error`: more than 20 agents in one list;
+  the same agent twice in one list; a listed agent that is missing, archived
+  or has its own `multiagent` block; `inline_agents` disabled with an empty
+  list; an enabled advisor without `model`; a listed agent named
+  `anthropic.advisor` while the advisor is enabled; an own custom tool whose
+  name starts with `ant__` while `workflows` is enabled. The last check reads
+  the Agent as it stands after the request, so an update that leaves the
+  block alone still checks the tools it sends.
+- An update follows the CMA edit rules. A `multiagent_20261001` block sent
+  to an Agent that has one changes only what it sends: a setting or field
+  left out keeps its value, null takes the default, a sent list replaces the
+  old one whole, and a setting of another `type` is replaced with its
+  defaults. A kept list keeps its pins, and the checks that read the rest of
+  the block run on the block as it stands after the update: `inline_agents`
+  disabled with an empty list, and an advisor turned on over a kept agent
+  named `anthropic.advisor`. Any other update replaces the whole block, so a
+  change between `coordinator` and `multiagent_20261001` keeps nothing of
+  the old block. A `coordinator` block sent to a `coordinator` Agent replaces
+  it whole, as before.
+- A Session copies the block when it is created and keeps its type. The
+  `agent.multiagent` of a Session is the Agent block with every listed agent
+  in full, as `coordinator` lists them: the same fields as a Session thread
+  agent, at the pinned version. A pinned agent that is gone fails the create
+  as before.
+- The turn reads both types through one view (`effectiveMultiagent` in
+  `managed-agents-application`). `coordinator` reads as `subagents` without
+  inline agents, with `workflows` disabled and the advisor of its roster
+  entry. The agents of an enabled `subagents` list are the callable agents
+  of the turn. The `workflows` list never is.
+- Not yet: the turn runs neither workflows nor inline agents. `workflows` is
+  stored and copied only (owner decision 4), and `inline_agents` waits for
+  step 5 of the plan.
+
 ## Completed top-level Session surface
 
 | SDK operation | Method and path | Application port method |
@@ -146,6 +201,71 @@ Event history covers the SDK's complete 35-variant union; `event_start` and
 Contract tests call the real SDK against the in-process Hono adapter without
 rewriting paths. This catches method, URL, beta header, query serialization,
 pagination envelope, response shape, and SDK error-class drift.
+
+### Thread of a call answer
+
+`user.tool_confirmation` and `user.custom_tool_result` accept an optional
+`session_thread_id` on send. Here the events send wire leaves SDK 0.120. The
+field is not an OMA invention: CMA routes an answer to a subagent thread by it
+and records it on the event, but the SDK has it on the recorded event only.
+The wire type is our own (`OpenMaSendableEventParams` in
+`contracts/session-event-inputs.ts`), declared like `_oma` of an agent. SDK
+0.129 still lacks the field (owner decision 3 of `docs/plans/multiagent.md`).
+
+- The field must name the thread of the call. A call in another thread, or a
+  call this Session does not have, answers 400 `invalid_request_error`.
+- Without the field the service takes the thread from the call and records it.
+  An answer to a primary call carries no thread, the same as before.
+- Until step 3 of the plan, both answers execute in the primary lane whatever
+  thread they name (`sessionExecutionEventBatches`).
+
+### Session limits
+
+`GET /v1/sessions/:session_id` adds `_oma.limits` to the Session, and the
+create and update bodies take it. Here the Session resource and both bodies
+leave SDK 0.120: CMA counts a budget in cents, and this platform counts tokens
+and subagent turns instead (owner decision 6 of `docs/plans/multiagent.md`,
+section 3.Б). The fields are declared like `_oma` of an agent, in
+`contracts/sessions.ts`.
+
+- `max_tokens` and `max_child_turns` are the limits. Create sets them with
+  `_oma: {limits: {max_tokens, max_child_turns}}`. A value left out takes the
+  server default `OMA_SESSION_MAX_TOKENS` or `OMA_SESSION_MAX_CHILD_TURNS`.
+- `used_tokens` is the input and output of every model request of every
+  thread: main thread, subagents, advisor and outcome grader. Cache tokens are
+  not counted.
+- `used_child_turns` counts the turns of subagent threads. The advisor thread
+  is not counted.
+- Retrieve and update carry the field. Create, list and archive do not.
+- A limit is a whole number from 1 up. A limit cannot be removed.
+- Before each model request the server reads the tokens. At the limit the
+  turn stops: the stopped threads write `session.thread_status_idle`, then
+  come `session.usage` and `session.status_idle` with `budget_reached`. A
+  started request runs to its end, so the count may pass the limit by up to
+  one request per thread. A subagent turn over `max_child_turns` does not
+  start, and the Session stops the same way.
+- A Session stands at its limit when its last turn stopped on
+  `budget_reached` or `requires_action` and the work reaches a limit. Then
+  `user.message` and `user.define_outcome` answer 400
+  `invalid_request_error`. `user.tool_confirmation`, `user.tool_result`,
+  `user.custom_tool_result` and `user.interrupt` are accepted. A turn that
+  passed the limit with its last request and ended on `end_turn` still takes
+  a message: that turn stops before its first request with `budget_reached`.
+- `POST /v1/sessions/:session_id` with `_oma.limits` raises the limits. Each
+  given value must be above the work counted, otherwise the update answers
+  400 and changes nothing. An update of the limits alone leaves the Session
+  document and its revision as they are.
+- After a raise, a Session whose last turn stopped on `budget_reached` and
+  that is now under its token limit goes on with that turn, without a new
+  message. Two raises queue one continuation. A raise on any other Session
+  only changes the limits.
+- Not yet: the agent default `_oma.session_limits`, the copy of the limits
+  into a Deployment Session, and the continuation of subagent threads that
+  stopped at the limit. The coordinator reads that the subagent stopped, as a
+  tool result or as a message from its thread, and decides on its next
+  request. A
+  self-hosted environment gets the 400 and the raise, but no continuation.
+  MySQL has no counter, so nothing stops there.
 
 ## Completed Environment surface
 

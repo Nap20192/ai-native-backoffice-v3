@@ -82,6 +82,18 @@ it("marks pending MCP calls for confirmation and keeps server metadata", () => {
   }
 });
 
+it("a call_agent_* call writes only its tool use; the server writes the thread message", () => {
+  // 2026-10-18: Pi wrote its own agent.thread_message_sent with to_thread_id and
+  // content. The /v1 event schema rejects those keys, so GET /events answered
+  // 500 on every session that called a subagent. The runner already writes the
+  // proper event with toSessionThreadId (node-managed-subagents.ts).
+  const broadcast = vi.fn();
+  emitHarnessToolUseFromCall({ broadcast } as any, { call_agent_checker: { execute: vi.fn() } }, "call-1", "call_agent_checker", { message: "проверь" });
+  const types = broadcast.mock.calls.map((call) => call[0].type);
+  expect(types).not.toContain("agent.thread_message_sent");
+  expect(types).toContain("agent.tool_use");
+});
+
 it("passes the execution toolCallId to MCP, including confirmed calls", async () => {
   const callTool = vi.fn(async () => ({ content: [] }));
   const mcp = await import("@open-managed-agents/mcp");

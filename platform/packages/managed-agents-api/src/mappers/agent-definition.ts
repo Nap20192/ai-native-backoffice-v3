@@ -1,13 +1,19 @@
 import type {
   AgentCustomToolInputSchema,
   AgentMcpServerInput,
+  AgentMultiagent,
   AgentMultiagentInput,
+  AgentMultiagentSetting,
+  AgentMultiagentSettingInput,
+  AgentPredefinedAgentInput,
   AgentPermissionPolicy,
   AgentSkillInput,
   AgentToolConfigInput,
   AgentToolDefaultConfigInput,
   AgentToolInput,
   AgentModel,
+  SessionAgentMultiagent,
+  SessionAgentMultiagentSetting,
   SessionThreadAgent,
   JsonObject,
   JsonValue,
@@ -205,9 +211,65 @@ export function toAgentSkillInput(skill: WireSkill): AgentSkillInput {
   };
 }
 
+type WireMultiagent20261001 = Extract<WireMultiagent, { type: "multiagent_20261001" }>;
+type WireMultiagentSetting = NonNullable<WireMultiagent20261001["subagents"]>;
+type WirePredefinedAgent = NonNullable<
+  Extract<WireMultiagentSetting, { type: "enabled" }>["predefined_agents"]
+>[number];
+
+function toPredefinedAgentInput(entry: WirePredefinedAgent): AgentPredefinedAgentInput {
+  if (typeof entry === "string") return entry;
+  if (entry.type === "self") return { type: entry.type };
+  return {
+    type: entry.type,
+    agentId: entry.id,
+    ...(entry.version !== undefined && { version: entry.version }),
+  };
+}
+
+function toMultiagentSettingInput(
+  setting: WireMultiagentSetting,
+): AgentMultiagentSettingInput {
+  if (setting.type === "disabled") return { type: setting.type };
+  return {
+    type: setting.type,
+    ...(setting.inline_agents !== undefined && {
+      inlineAgents:
+        setting.inline_agents === null ? null : setting.inline_agents.type === "enabled",
+    }),
+    ...(setting.predefined_agents !== undefined && {
+      predefinedAgents:
+        setting.predefined_agents === null
+          ? null
+          : setting.predefined_agents.map(toPredefinedAgentInput),
+    }),
+  };
+}
+
 export function toAgentMultiagentInput(
   multiagent: WireMultiagent,
 ): AgentMultiagentInput {
+  if (multiagent.type === "multiagent_20261001") {
+    return {
+      type: multiagent.type,
+      ...(multiagent.subagents !== undefined && {
+        subagents:
+          multiagent.subagents === null ? null : toMultiagentSettingInput(multiagent.subagents),
+      }),
+      ...(multiagent.workflows !== undefined && {
+        workflows:
+          multiagent.workflows === null ? null : toMultiagentSettingInput(multiagent.workflows),
+      }),
+      ...(multiagent.advisor !== undefined && {
+        advisor:
+          multiagent.advisor === null
+            ? null
+            : multiagent.advisor.type === "enabled"
+              ? { type: multiagent.advisor.type, model: multiagent.advisor.model }
+              : { type: multiagent.advisor.type },
+      }),
+    };
+  }
   return {
     type: multiagent.type,
     agents: multiagent.agents.map((entry) => {
@@ -387,15 +449,34 @@ export function fromAgentSkillInput(skill: AgentSkillInput): object {
   };
 }
 
-export function fromAgentMultiagentInput(
-  multiagent: AgentMultiagentInput,
-): object {
+function fromMultiagentSetting(setting: AgentMultiagentSetting): object {
+  if (setting.type === "disabled") return { type: setting.type };
+  return {
+    type: setting.type,
+    inline_agents: { type: setting.inlineAgents ? "enabled" : "disabled" },
+    predefined_agents: setting.predefinedAgents.map((entry) => ({
+      type: entry.type,
+      id: entry.agentId,
+      version: entry.version,
+    })),
+  };
+}
+
+export function fromAgentMultiagent(multiagent: AgentMultiagent): object {
+  if (multiagent.type === "multiagent_20261001") {
+    return {
+      type: multiagent.type,
+      subagents: fromMultiagentSetting(multiagent.subagents),
+      workflows: fromMultiagentSetting(multiagent.workflows),
+      advisor:
+        multiagent.advisor.type === "enabled"
+          ? { type: multiagent.advisor.type, model: multiagent.advisor.model }
+          : { type: multiagent.advisor.type },
+    };
+  }
   return {
     type: multiagent.type,
     agents: multiagent.agents.map((entry) => {
-      if (typeof entry === "string" || entry.type === "self") {
-        throw new Error("Application returned an unresolved multiagent roster entry");
-      }
       if (entry.type === "advisor") {
         return { type: entry.type, model: entry.model };
       }
@@ -463,6 +544,34 @@ export function fromAgentModel(model: AgentModel): object {
     }),
     ...(model.speed !== undefined && { speed: model.speed }),
     ...(model.maxTokens !== undefined && { max_tokens: model.maxTokens }),
+  };
+}
+
+function fromSessionMultiagentSetting(setting: SessionAgentMultiagentSetting): object {
+  if (setting.type === "disabled") return { type: setting.type };
+  return {
+    type: setting.type,
+    inline_agents: { type: setting.inlineAgents ? "enabled" : "disabled" },
+    predefined_agents: setting.predefinedAgents.map(fromSessionThreadAgent),
+  };
+}
+
+/** The block a Session copied: the Agent block with every listed agent in full. */
+export function fromSessionAgentMultiagent(multiagent: SessionAgentMultiagent): object {
+  if (multiagent.type === "coordinator") {
+    return {
+      type: multiagent.type,
+      agents: multiagent.agents.map(fromSessionThreadAgent),
+    };
+  }
+  return {
+    type: multiagent.type,
+    subagents: fromSessionMultiagentSetting(multiagent.subagents),
+    workflows: fromSessionMultiagentSetting(multiagent.workflows),
+    advisor:
+      multiagent.advisor.type === "enabled"
+        ? { type: multiagent.advisor.type, model: multiagent.advisor.model }
+        : { type: multiagent.advisor.type },
   };
 }
 

@@ -20,6 +20,7 @@ import {
   textBlockSchema,
   toolResultContentSchema,
   userMessageContentSchema,
+  type OpenMaSendableEventParams,
 } from "./session-event-inputs";
 export {
   rubricSchema,
@@ -27,7 +28,9 @@ export {
   userMessageContentSchema,
 } from "./session-event-inputs";
 
-export type SessionEventSendBody = Omit<EventSendParams, "betas">;
+export type SessionEventSendBody = Omit<EventSendParams, "betas" | "events"> & {
+  events: OpenMaSendableEventParams[];
+};
 export type SessionEventListQuery = Omit<EventListParams, "betas">;
 export type SessionEventStreamQuery = Omit<EventStreamParams, "betas">;
 export type SessionEventListResponse = Pick<

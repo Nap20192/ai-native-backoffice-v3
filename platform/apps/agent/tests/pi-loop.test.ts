@@ -8,7 +8,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { ModelError, type SessionEvent } from "@open-managed-agents/shared";
+import { ModelError, SessionLimitError, type SessionEvent } from "@open-managed-agents/shared";
 import type { HarnessContext, HarnessRuntime } from "../src/harness/interface";
 import type { PiCompactionPolicy } from "../src/harness/pi-compaction";
 import { PiSummaryCompactionPolicy } from "../src/harness/pi-compaction";
@@ -1257,5 +1257,58 @@ describe("PiHarness", () => {
       expect(faux.state.callCount).toBe(2);
       expect(events.filter((event) => event.type === "agent.thread_context_compacted")).toHaveLength(1);
     });
+  });
+});
+
+describe("предел сессии (план multiagent 3.Б, срез 2)", () => {
+  /** Предел как у сервера: проверка перед запросом видит расход прошлых
+   * запросов. Здесь предел исчерпан после `requests` ответов модели. */
+  function limitAfter(ctx: HarnessContext, requests: number): HarnessRuntime {
+    const runtime = ctx.runtime;
+    let answered = 0;
+    runtime.reportUsage = vi.fn(async () => { answered += 1; });
+    runtime.beforeModelRequest = vi.fn(async () => {
+      if (answered >= requests) runtime.limitReached = true;
+    });
+    return runtime;
+  }
+
+  it("не шлёт запрос модели после предела и не пишет спан ошибки", async () => {
+    const { ctx, events, echo, faux } = makeContext([
+      fauxAssistantMessage(fauxToolCall("echo", { value: "hello" }, { id: "tool-echo" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("этот ответ модель не должна дать"),
+    ]);
+    limitAfter(ctx, 1);
+
+    const failure = await new PiHarness().run(ctx).then(() => null, (error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SessionLimitError);
+    expect(failure).not.toBeInstanceOf(ModelError);
+    expect(faux.state.callCount).toBe(1);
+    expect(echo).toHaveBeenCalledTimes(1);
+    expect(events.find((event) => event.type === "agent.tool_result")).toMatchObject({ tool_use_id: "tool-echo" });
+    expect(events.filter((event) => event.type === "span.model_request_start")).toHaveLength(1);
+    const ends = events.filter((event) => event.type === "span.model_request_end");
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ is_error: false });
+    // Неотправленный запрос не оставляет пустого ответа в истории.
+    expect(events.filter((event) => event.type === "agent.message")).toEqual([]);
+    expect(ctx.runtime.reportUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it("на пределе до хода не зовёт ни сжатие, ни модель", async () => {
+    const { ctx, events, faux } = makeContext([fauxAssistantMessage("этот ответ модель не должна дать")]);
+    const policy: PiCompactionPolicy = {
+      name: "test-policy",
+      shouldCompact: () => true,
+      compact: vi.fn(async () => null),
+    };
+    limitAfter(ctx, 0);
+
+    await expect(new PiHarness({ compaction: policy }).run(ctx)).rejects.toBeInstanceOf(SessionLimitError);
+
+    expect(faux.state.callCount).toBe(0);
+    expect(policy.compact).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type.startsWith("span."))).toEqual([]);
   });
 });

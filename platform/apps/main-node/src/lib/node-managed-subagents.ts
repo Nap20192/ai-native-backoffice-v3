@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { withSandboxExecutionGuard, type SandboxExecutor } from "@open-managed-agents/sandbox";
-import type { Session, SessionEventView, SessionThread } from "@open-managed-agents/managed-agents-application";
-import { decodeRuntimeProducedSessionEvent } from "@open-managed-agents/managed-agents-adapters-runtime";
+import { listedSubagents, type Session, type SessionEventView, type SessionThread } from "@open-managed-agents/managed-agents-application";
+import { decodeRuntimeProducedSessionEvent, encodeRuntimeHistoryEvent } from "@open-managed-agents/managed-agents-adapters-runtime";
 import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
+import { nodeManagedStopReason, waitingCalls } from "./node-managed-stop-reason.js";
+import { isSessionLimitError, type SessionLimitGate } from "./node-session-limits.js";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 
 export interface ManagedNodeCreateSubagent {
@@ -15,8 +17,25 @@ export interface ManagedNodeCreateSubagent {
 
 export interface ManagedNodeSubagentState {
   threadId: string;
-  status: "idle" | "running" | "completed" | "interrupted" | "closed" | "failed";
+  /** `requires_action`: the turn stopped on a call that waits for a person.
+   * `budget_reached`: the Session limit stopped the turn or kept it from
+   * starting (plan multiagent, 3.Б). */
+  status: "idle" | "running" | "completed" | "requires_action" | "budget_reached" | "interrupted" | "closed" | "failed";
   output?: string;
+}
+
+type CallResultEvent = Extract<SessionEventView, { type: "agent.tool_result" | "agent.mcp_tool_result" }>;
+
+/** The answer to a call that waited for a person, before it gets its id,
+ * time and thread. */
+export type ManagedNodeCallAnswer = CallResultEvent extends infer Event
+  ? Event extends CallResultEvent ? Omit<Event, "id" | "processedAt" | "sessionThreadId"> : never
+  : never;
+
+/** A subagent turn that went on after a person answered its call, with the
+ * name its report goes under (plan multiagent, 3.1). */
+export interface ManagedNodeSubagentTurn extends ManagedNodeSubagentState {
+  agentName: string;
 }
 
 export interface ManagedNodeSubagentControl {
@@ -66,6 +85,8 @@ interface SubagentsInput {
   output(frame: unknown): Promise<void>;
   clock: { now(): Date };
   ids: { nextEventId(): string };
+  /** The Session limit (plan multiagent, 3.Б). Without it nothing stops. */
+  limits?: SessionLimitGate;
 }
 
 export function managedEventThread(event: SessionEventView): string {
@@ -95,9 +116,25 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
   private mutations: Promise<void> = Promise.resolve();
   private readonly loads = new Map<string, Promise<Child>>();
   private readonly facts: SessionEventView[];
+  private stoppedAtLimit = false;
 
   constructor(private readonly input: SubagentsInput) {
     this.facts = [...input.historyEvents];
+  }
+
+  /** A thread of this execution stopped at the Session limit, or the limit
+   * kept a turn from starting. The other threads stop at their next request. */
+  get limitReached(): boolean {
+    return this.stoppedAtLimit;
+  }
+
+  /** The turn limit, asked once the frames written so far reached the row. */
+  private async childTurnRefused(): Promise<boolean> {
+    if (this.input.limits === undefined) return false;
+    await this.outputChain.catch(() => undefined);
+    if (!await this.input.limits.childTurn()) return false;
+    this.stoppedAtLimit = true;
+    return true;
   }
 
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
@@ -185,8 +222,8 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
   private defaultSession(request: ManagedNodeCreateSubagent): Session {
     let agent = structuredClone(this.input.session.agent);
     if (request.agentId !== undefined && request.agentId !== "general") {
-      const configured = agent.multiagent?.agents.find((candidate) => candidate.type === "agent" && candidate.id === request.agentId);
-      if (configured?.type !== "agent") throw new Error(`Subagent ${request.agentId} is not in the Session roster`);
+      const configured = listedSubagents(agent.multiagent).find((candidate) => candidate.id === request.agentId);
+      if (configured === undefined) throw new Error(`Subagent ${request.agentId} is not in the Session roster`);
       const { type: _type, ...snapshot } = configured;
       agent = { ...snapshot, multiagent: null };
     }
@@ -217,7 +254,11 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
     for (const event of events) {
       if (event.type === "session.thread_status_terminated") status = "closed";
       if (event.type === "session.thread_status_running") status = "interrupted"; // Previous process cannot still own this turn.
-      if (event.type === "session.thread_status_idle") status = (event as typeof event & { interrupted?: boolean }).interrupted ? "interrupted" : status === "failed" ? "failed" : "completed";
+      if (event.type === "session.thread_status_idle") {
+        status = event.interrupted ? "interrupted" : status === "failed" ? "failed"
+          : event.stopReason.type === "requires_action" ? "requires_action"
+          : event.stopReason.type === "budget_reached" ? "budget_reached" : "completed";
+      }
       if (event.type === "session.error") status = "failed";
     }
     const delivered = new Set(events.flatMap((event) => event.type === "agent.thread_message_received" && event.fromMessageId ? [event.fromMessageId] : []));
@@ -257,11 +298,19 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
     child.paused = false;
     const runTurn = async (): Promise<void> => {
       const controller = new AbortController();
+      // Calls of this turn that wait for a person (plan multiagent, 3.1).
+      let waiting: string[] = [];
       child.controller = controller;
       child.state = { threadId: child.thread.id, status: "running" };
       const abortFromParent = () => controller.abort(this.input.abortSignal.reason);
       this.input.abortSignal.addEventListener("abort", abortFromParent, { once: true });
       try {
+        // A turn over the Session limit does not start: its message stays
+        // queued for the turn after a raise (plan multiagent, 3.Б).
+        if (await this.childTurnRefused()) {
+          child.state = { threadId: child.thread.id, status: "budget_reached", output: lastOutput(child.events) };
+          return;
+        }
         const pending = child.pending[0];
         if (pending !== undefined) {
           await this.emit(child, { type: "agent.thread_message_received",
@@ -274,6 +323,7 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
         const sandbox = withSandboxExecutionGuard(this.input.sandbox, { signal: controller.signal });
         const runtime = new ManagedNodeHarnessRuntime({ initialEvents: [], events: childHistory(child.events),
           sandbox, abortSignal: controller.signal, clock: this.input.clock, ids: this.input.ids,
+          ...(this.input.limits !== undefined && { limits: this.input.limits }),
           output: (raw) => {
             const frame = raw as Record<string, unknown>;
             const type = typeof frame.type === "string" && frame.type.startsWith("session.status_")
@@ -282,9 +332,21 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
               ...(typeof type === "string" && type.startsWith("session.thread_status_") && { agent_name: child.session.agent.name }) });
           },
         });
+        // Pi stops at the limit with its own error: the thread ends on
+        // budget_reached, not on a failure.
+        let stoppedAtLimit = false;
         try { await this.input.run({ session: child.session, runtime, sandbox }); }
+        catch (error) {
+          if (!isSessionLimitError(error)) throw error;
+          stoppedAtLimit = true;
+        }
         finally { await runtime.drain(); }
-        child.state = { threadId: child.thread.id, status: controller.signal.aborted ? "interrupted" : "completed", output: lastOutput(child.events) };
+        const stop = nodeManagedStopReason(runtime.history.getEvents(), false, [], stoppedAtLimit || runtime.limitReached);
+        if (stop.type === "requires_action") waiting = stop.eventIds;
+        if (stop.type === "budget_reached") this.stoppedAtLimit = true;
+        child.state = { threadId: child.thread.id, output: lastOutput(child.events),
+          status: controller.signal.aborted ? "interrupted" : waiting.length > 0 ? "requires_action"
+            : stop.type === "budget_reached" ? "budget_reached" : "completed" };
       } catch (error) {
         child.state = { threadId: child.thread.id, status: controller.signal.aborted ? "interrupted" : "failed" };
         if (!controller.signal.aborted) await this.emit(child, { type: "session.error", error: {
@@ -293,14 +355,21 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
       } finally {
         this.input.abortSignal.removeEventListener("abort", abortFromParent);
         await this.emit(child, { type: "session.thread_status_idle", agent_name: child.session.agent.name,
-          stop_reason: { type: child.state?.status === "failed" ? "retries_exhausted" : "end_turn" },
+          stop_reason: child.state.status === "failed" ? { type: "retries_exhausted" }
+            : child.state.status === "requires_action" ? { type: "requires_action", event_ids: waiting }
+            : child.state.status === "budget_reached" ? { type: "budget_reached" }
+            : { type: "end_turn" },
           ...(controller.signal.aborted && { interrupted: true }) });
         child.controller = undefined;
       }
     };
+    // A thread that waits for a person takes no queued message: its model
+    // would see a call without a result. The message stays pending.
     child.running = (async () => {
       do { await runTurn(); }
-      while (child.pending.length > 0 && !child.paused && !this.input.abortSignal.aborted && child.state.status !== "failed");
+      while (child.pending.length > 0 && !child.paused && !this.input.abortSignal.aborted
+        && child.state.status !== "failed" && child.state.status !== "requires_action"
+        && child.state.status !== "budget_reached");
     })().finally(() => { child.running = undefined; });
     // A child failure is returned through its status. Persistence failures must
     // still reach the parent fence barrier without an unhandled rejection.
@@ -376,6 +445,59 @@ export class ManagedNodeSubagents implements ManagedNodeSubagentControl {
       child.state = { ...child.state, status: "idle" };
     }
     return this.snapshot(child);
+  }
+
+  /** The session of a subagent thread: its agent and tools run the calls
+   * of that thread (plan multiagent, 3.1). */
+  async threadSession(threadId: string): Promise<Session> {
+    this.assertActive();
+    return (await this.child(threadId)).session;
+  }
+
+  /** Writes the answer to a call that waited for a person into the thread
+   * of the call. */
+  answer(threadId: string, answer: ManagedNodeCallAnswer): Promise<void> {
+    return this.mutate(async () => {
+      this.assertActive();
+      const child = await this.child(threadId);
+      const frame = encodeRuntimeHistoryEvent({
+        ...answer,
+        id: this.input.ids.nextEventId(),
+        processedAt: this.input.clock.now().toISOString(),
+      } as CallResultEvent) as Record<string, unknown>;
+      await this.write(child, frame);
+    });
+  }
+
+  /**
+   * Runs the next turn of threads whose waiting calls got their answers and
+   * waits for those turns. The turn goes on from the results, without a new
+   * message; a message queued while the thread waited rides along. A thread
+   * that still has a waiting call, a closed thread and a running one stay
+   * as they are.
+   */
+  async continueAnswered(threadIds: readonly string[]): Promise<ManagedNodeSubagentTurn[]> {
+    const started = await this.mutate(async () => {
+      this.assertActive();
+      const waiting = new Set(waitingCalls(this.facts));
+      const children: Child[] = [];
+      for (const threadId of threadIds) {
+        const child = await this.child(threadId);
+        if (child.state.status === "closed" || child.running !== undefined) continue;
+        if (child.events.some((event) => (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") && waiting.has(event.id))) continue;
+        this.assertCapacity();
+        this.startChild(child);
+        children.push(child);
+      }
+      return children;
+    });
+    await Promise.all(started.map((child) => child.running));
+    return started.map((child) => ({ ...this.snapshot(child), agentName: child.session.agent.name }));
+  }
+
+  /** History of every thread with the events this execution wrote so far. */
+  events(): SessionEventView[] {
+    return [...this.facts];
   }
 
   async drain(): Promise<void> {

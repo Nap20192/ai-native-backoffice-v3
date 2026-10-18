@@ -310,7 +310,17 @@ export type FormState = {
   modelCardId: string;
   mcpServers: McpEntry[];
   skills: SkillEntry[];
+  /** Агенты списка субагентов, кроме самого агента. */
   callableAgents: CallableEntry[];
+  /** Пункт «Сам агент»: запись `{type: "self"}` списка. */
+  selfCallable: boolean;
+  /**
+   * Переключатель «Агенты, которых описывает сам агент»
+   * (`subagents.inline_agents`). Блок `coordinator` его не хранит.
+   */
+  inlineAgents: boolean;
+  /** Модель советника. Пустая строка: советник выключен. */
+  advisorModel: string;
   toolDefaultEnabled: boolean;
   toolDefaultPermission: "always_allow" | "always_ask";
   toolOverrides: Record<string, ToolOverride>;
@@ -331,6 +341,9 @@ export const INITIAL_FORM: FormState = {
   mcpServers: [],
   skills: [],
   callableAgents: [],
+  selfCallable: false,
+  inlineAgents: false,
+  advisorModel: "",
   toolDefaultEnabled: true,
   toolDefaultPermission: "always_allow",
   toolOverrides: {},
@@ -417,14 +430,99 @@ function modelSpeedOf(model: unknown): "" | "standard" | "fast" {
   return speed === "standard" || speed === "fast" ? speed : "";
 }
 
-/** Map an API / pasted config into form state (lossy by design for the UI). */
-export function configToForm(config: Record<string, unknown>): FormState {
+/*
+ * Блок `multiagent` (docs/plans/multiagent.md, 3.2, срез 4). Форма читает оба
+ * типа: `coordinator` из SDK и `multiagent_20261001` из CMA. Пишет она тот тип,
+ * который прочла. Новый агент и агент без блока получают `coordinator`
+ * (решение 5: новый тип консоль начнёт писать после шага 3). Сервер отдаёт
+ * пункт `self` своим id и версией, а такую запись обратно не примет, поэтому
+ * форма показывает её пунктом «Сам агент» и пишет `{type: "self"}`.
+ */
+
+type MultiagentFormFields = Pick<
+  FormState,
+  "callableAgents" | "selfCallable" | "inlineAgents" | "advisorModel"
+>;
+
+/** Запись списка: строка с id, ссылка на агента или `self`. */
+type ListedEntry = { kind: "self" } | { kind: "agent"; entry: CallableEntry } | { kind: "other" };
+
+function listedEntryOf(entry: unknown, ownId: string | undefined): ListedEntry {
+  if (typeof entry === "string") {
+    return ownId !== undefined && entry === ownId
+      ? { kind: "self" }
+      : { kind: "agent", entry: { type: "agent", id: entry } };
+  }
+  if (!isRecord(entry)) return { kind: "other" };
+  if (entry.type === "self") return { kind: "self" };
+  if (entry.type !== "agent" || typeof entry.id !== "string") return { kind: "other" };
+  if (ownId !== undefined && entry.id === ownId) return { kind: "self" };
+  return {
+    kind: "agent",
+    entry: {
+      type: "agent",
+      id: entry.id,
+      ...(typeof entry.version === "number" && Number.isInteger(entry.version)
+        ? { version: entry.version }
+        : {}),
+    },
+  };
+}
+
+function listedFields(
+  entries: unknown,
+  ownId: string | undefined,
+): Pick<FormState, "callableAgents" | "selfCallable"> {
+  const callableAgents: CallableEntry[] = [];
+  let selfCallable = false;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const listed = listedEntryOf(entry, ownId);
+    if (listed.kind === "self") selfCallable = true;
+    else if (listed.kind === "agent") callableAgents.push(listed.entry);
+  }
+  return { callableAgents, selfCallable };
+}
+
+function multiagentToForm(block: unknown, ownId: string | undefined): MultiagentFormFields {
+  const empty = { callableAgents: [], selfCallable: false, inlineAgents: false, advisorModel: "" };
+  if (!isRecord(block)) return empty;
+  if (block.type === "multiagent_20261001") {
+    // Пропущенная настройка или поле берут умолчание CMA: субагенты и inline включены.
+    const subagents = isRecord(block.subagents) ? block.subagents : { type: "enabled" };
+    const enabled = subagents.type !== "disabled";
+    const advisor = isRecord(block.advisor) ? block.advisor : undefined;
+    return {
+      ...(enabled ? listedFields(subagents.predefined_agents, ownId) : empty),
+      inlineAgents:
+        enabled && !(isRecord(subagents.inline_agents) && subagents.inline_agents.type === "disabled"),
+      advisorModel:
+        advisor?.type === "enabled" && typeof advisor.model === "string" ? advisor.model : "",
+    };
+  }
+  const roster = Array.isArray(block.agents) ? block.agents : [];
+  const advisor = roster.find(
+    (entry): entry is Record<string, unknown> => isRecord(entry) && entry.type === "advisor",
+  );
+  return {
+    ...listedFields(roster, ownId),
+    inlineAgents: false,
+    advisorModel: typeof advisor?.model === "string" ? advisor.model : "",
+  };
+}
+
+/** Форма пишет `multiagent_20261001` только агенту, у которого этот блок уже есть. */
+export function writesMultiagent20261001(config: Record<string, unknown> | null | undefined): boolean {
+  return isRecord(config?.multiagent) && config.multiagent.type === "multiagent_20261001";
+}
+
+/**
+ * Map an API / pasted config into form state (lossy by design for the UI).
+ * `ownId` is the agent's own id: the server reads `self` back as it.
+ */
+export function configToForm(config: Record<string, unknown>, ownId?: string): FormState {
   const toolPolicy = parseToolPolicy(
     Array.isArray(config.tools) ? (config.tools as unknown[]) : undefined,
   );
-  const multiagent = config.multiagent as {
-    agents?: Array<Record<string, unknown>>;
-  } | undefined;
   const openma =
     config._oma && typeof config._oma === "object"
       ? (config._oma as Record<string, unknown>)
@@ -474,25 +572,13 @@ export function configToForm(config: Record<string, unknown>): FormState {
           ...(typeof s.version === "string" ? { version: s.version } : {}),
         }))
       : [],
-    callableAgents: Array.isArray(multiagent?.agents)
-      ? multiagent.agents.flatMap((entry): CallableEntry[] =>
-          entry.type === "agent" && typeof entry.id === "string"
-            ? [{
-                type: "agent",
-                id: entry.id,
-                ...(typeof entry.version === "number" && Number.isInteger(entry.version)
-                  ? { version: entry.version }
-                  : {}),
-              }]
-            : [],
-        )
-      : [],
+    ...multiagentToForm(config.multiagent, ownId),
     ...toolPolicy,
   };
 }
 
 export function agentToForm(agent: Agent): FormState {
-  return configToForm(agent as unknown as Record<string, unknown>);
+  return configToForm(agent as unknown as Record<string, unknown>, agent.id);
 }
 
 export function buildModelValue(
@@ -687,46 +773,80 @@ export function mergeToolsField(
   return result;
 }
 
-function mergeMultiagent(
-  existing: unknown,
-  callableAgents: CallableEntry[],
-): Record<string, unknown> | null {
-  const prior =
-    existing && typeof existing === "object" && !Array.isArray(existing)
-      ? (existing as Record<string, unknown>)
-      : undefined;
-  const priorRoster = Array.isArray(prior?.agents)
-    ? prior.agents.filter(
-        (entry): entry is Record<string, unknown> =>
-          !!entry && typeof entry === "object" && !Array.isArray(entry),
-      )
-    : [];
-  const requested = new Map(callableAgents.map((entry) => [entry.id, entry]));
+/**
+ * Список формы поверх прежнего: оставшиеся записи сохраняют своё место и поля,
+ * новые агенты идут в конец, затем `self`. Записи других видов остаются.
+ * `advisor` решает, что делать с записью советника блока `coordinator`.
+ */
+function mergeListedEntries(
+  prior: unknown[],
+  form: MultiagentFormFields,
+  ownId: string | undefined,
+  advisor: (entry: Record<string, unknown>) => Record<string, unknown> | null,
+): unknown[] {
+  const requested = new Map<string, CallableEntry>();
+  let wantsSelf = form.selfCallable;
+  for (const entry of form.callableAgents) {
+    if (ownId !== undefined && entry.id === ownId) wantsSelf = true;
+    else requested.set(entry.id, entry);
+  }
   const seen = new Set<string>();
-  const roster: Record<string, unknown>[] = [];
+  let selfPlaced = false;
+  const result: unknown[] = [];
 
-  for (const member of priorRoster) {
-    if (member.type !== "agent" || typeof member.id !== "string") {
-      roster.push(structuredClone(member));
+  for (const member of prior) {
+    if (isRecord(member) && member.type === "advisor") {
+      const kept = advisor(member);
+      if (kept !== null) result.push(kept);
       continue;
     }
-    const replacement = requested.get(member.id);
-    if (replacement === undefined) continue;
-    seen.add(member.id);
-    const next = {
-      ...structuredClone(member),
+    const listed = listedEntryOf(member, ownId);
+    if (listed.kind === "other") {
+      result.push(structuredClone(member));
+      continue;
+    }
+    if (listed.kind === "self") {
+      if (wantsSelf && !selfPlaced) result.push({ type: "self" });
+      selfPlaced ||= wantsSelf;
+      continue;
+    }
+    const replacement = requested.get(listed.entry.id);
+    if (replacement === undefined || seen.has(replacement.id)) continue;
+    seen.add(replacement.id);
+    const next: Record<string, unknown> = {
+      ...(isRecord(member) ? structuredClone(member) : {}),
       type: "agent",
       id: replacement.id,
-      ...(replacement.version !== undefined
-        ? { version: replacement.version }
-        : {}),
     };
-    if (replacement.version === undefined) delete next.version;
-    roster.push(next);
+    if (replacement.version !== undefined) next.version = replacement.version;
+    else delete next.version;
+    result.push(next);
   }
-  for (const member of callableAgents) {
-    if (seen.has(member.id)) continue;
-    roster.push({ ...member });
+  for (const entry of requested.values()) {
+    if (!seen.has(entry.id)) result.push({ ...entry });
+  }
+  if (wantsSelf && !selfPlaced) result.push({ type: "self" });
+  return result;
+}
+
+function mergeCoordinator(
+  prior: Record<string, unknown> | undefined,
+  form: MultiagentFormFields,
+  ownId: string | undefined,
+): Record<string, unknown> | null {
+  let advisorPlaced = false;
+  const roster = mergeListedEntries(
+    Array.isArray(prior?.agents) ? prior.agents : [],
+    form,
+    ownId,
+    (entry) => {
+      if (!form.advisorModel || advisorPlaced) return null;
+      advisorPlaced = true;
+      return { ...structuredClone(entry), model: form.advisorModel };
+    },
+  );
+  if (form.advisorModel && !advisorPlaced) {
+    roster.push({ type: "advisor", model: form.advisorModel });
   }
   if (roster.length === 0) return null;
   return {
@@ -734,6 +854,74 @@ function mergeMultiagent(
     type: "coordinator",
     agents: roster,
   };
+}
+
+/**
+ * Блок нового типа: форма правит `subagents` и `advisor`, `workflows` и
+ * чужие поля уходят как были. Пустой список без inline это `disabled`:
+ * включённые субагенты без агентов и без inline сервер не примет.
+ */
+function mergeMultiagent20261001(
+  prior: Record<string, unknown>,
+  form: MultiagentFormFields,
+  ownId: string | undefined,
+): Record<string, unknown> {
+  const next = structuredClone(prior);
+  const priorSubagents = isRecord(prior.subagents) && prior.subagents.type !== "disabled"
+    ? prior.subagents
+    : undefined;
+  const listed = mergeListedEntries(
+    Array.isArray(priorSubagents?.predefined_agents) ? priorSubagents.predefined_agents : [],
+    form,
+    ownId,
+    () => null,
+  );
+  if (listed.length === 0 && !form.inlineAgents) {
+    next.subagents = { type: "disabled" };
+  } else {
+    const priorInline = isRecord(priorSubagents?.inline_agents) ? priorSubagents.inline_agents : {};
+    next.subagents = {
+      ...(priorSubagents ? structuredClone(priorSubagents) : {}),
+      type: "enabled",
+      inline_agents: {
+        ...structuredClone(priorInline),
+        type: form.inlineAgents ? "enabled" : "disabled",
+      },
+      predefined_agents: listed,
+    };
+  }
+  // Список workflows форма не правит, но себя сервер отдаёт и там своим id.
+  // Такую запись он обратно не примет, поэтому она уходит как `self`.
+  if (isRecord(next.workflows) && Array.isArray(next.workflows.predefined_agents)) {
+    next.workflows.predefined_agents = next.workflows.predefined_agents.map((entry) =>
+      listedEntryOf(entry, ownId).kind === "self" ? { type: "self" } : entry,
+    );
+  }
+  const priorAdvisor = isRecord(prior.advisor) ? prior.advisor : undefined;
+  if (!form.advisorModel) {
+    next.advisor = { type: "disabled" };
+  } else if (priorAdvisor?.type === "enabled" && priorAdvisor.model === form.advisorModel) {
+    next.advisor = structuredClone(priorAdvisor);
+  } else {
+    next.advisor = {
+      ...(priorAdvisor?.type === "enabled" ? structuredClone(priorAdvisor) : {}),
+      type: "enabled",
+      model: form.advisorModel,
+    };
+  }
+  return next;
+}
+
+function mergeMultiagent(
+  existing: unknown,
+  form: MultiagentFormFields,
+  ownId: string | undefined,
+): Record<string, unknown> | null {
+  const prior = isRecord(existing) ? existing : undefined;
+  if (prior?.type === "multiagent_20261001") {
+    return mergeMultiagent20261001(prior, form, ownId);
+  }
+  return mergeCoordinator(prior, form, ownId);
 }
 
 /**
@@ -802,9 +990,10 @@ export function mergeMcpServers(
 export function mergeFormIntoConfig(
   form: FormState,
   base: Record<string, unknown> | null | undefined,
-  opts: { forUpdate: boolean },
+  /** `ownId`: id изменяемого агента, сервер отдаёт под ним пункт `self`. */
+  opts: { forUpdate: boolean; ownId?: string },
 ): Record<string, unknown> {
-  const { forUpdate } = opts;
+  const { forUpdate, ownId } = opts;
   const existingTools = Array.isArray(base?.tools) ? (base!.tools as unknown[]) : undefined;
   const existingMcp = Array.isArray(base?.mcp_servers)
     ? (base!.mcp_servers as unknown[])
@@ -885,7 +1074,7 @@ export function mergeFormIntoConfig(
       ? mergeMcpServers(existingMcp, form.mcpServers)
       : null;
     payload.skills = form.skills.length ? form.skills : null;
-    payload.multiagent = mergeMultiagent(base?.multiagent, form.callableAgents);
+    payload.multiagent = mergeMultiagent(base?.multiagent, form, ownId);
   } else {
     if (form.system) payload.system = form.system;
     else delete payload.system;
@@ -898,7 +1087,7 @@ export function mergeFormIntoConfig(
     }
     if (form.skills.length) payload.skills = form.skills;
     else delete payload.skills;
-    const multiagent = mergeMultiagent(base?.multiagent, form.callableAgents);
+    const multiagent = mergeMultiagent(base?.multiagent, form, ownId);
     if (multiagent !== null) {
       payload.multiagent = multiagent;
     } else {

@@ -263,7 +263,7 @@ export const sessionThreadAgentResponseSchema = z
   })
   .strict();
 
-export const sessionAgentMultiagentResponseSchema = z
+const sessionCoordinatorMultiagentResponseSchema = z
   .object({
     agents: z.array(
       z.union([sessionThreadAgentResponseSchema, advisorResponseSchema]),
@@ -271,6 +271,41 @@ export const sessionAgentMultiagentResponseSchema = z
     type: z.literal("coordinator"),
   })
   .strict();
+
+const sessionMultiagentSettingResponseSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("enabled"),
+      inline_agents: z
+        .object({ type: z.enum(["enabled", "disabled"]) })
+        .strict(),
+      predefined_agents: z.array(sessionThreadAgentResponseSchema),
+    })
+    .strict(),
+  z.object({ type: z.literal("disabled") }).strict(),
+]);
+
+/**
+ * The `multiagent_20261001` block as a Session copied it: the Agent block
+ * with every listed agent in full. SDK 0.120 lacks the type (API_LAYER.md,
+ * "Multiagent block").
+ */
+const sessionMultiagent20261001ResponseSchema = z
+  .object({
+    type: z.literal("multiagent_20261001"),
+    subagents: sessionMultiagentSettingResponseSchema,
+    workflows: sessionMultiagentSettingResponseSchema,
+    advisor: z.discriminatedUnion("type", [
+      z.object({ type: z.literal("enabled"), model: z.string().min(1) }).strict(),
+      z.object({ type: z.literal("disabled") }).strict(),
+    ]),
+  })
+  .strict();
+
+export const sessionAgentMultiagentResponseSchema = z.discriminatedUnion("type", [
+  sessionCoordinatorMultiagentResponseSchema,
+  sessionMultiagent20261001ResponseSchema,
+]);
 
 export const sessionAgentResponseSchema = z
     .object({

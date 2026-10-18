@@ -291,6 +291,19 @@ describe("SqlSessionExecutionCoordinator", () => {
     }])).toEqual([
       expect.objectContaining({ id: "null_lane", laneId: "sthr_primary" }),
     ]);
+    // Until step 3 of docs/plans/multiagent.md an answer to a call of a
+    // subagent thread runs in the primary lane; a message keeps its thread lane.
+    expect(sessionExecutionEventBatches([
+      { id: "confirm", type: "user.tool_confirmation", result: "allow", toolUseId: "toolu_child", sessionThreadId: "sthr_child", processedAt: at(1) },
+      { id: "custom", type: "user.custom_tool_result", customToolUseId: "toolu_custom", sessionThreadId: "sthr_child", processedAt: at(1) },
+      { id: "child_message", type: "user.message", content: [{ type: "text", text: "Go on" }], sessionThreadId: "sthr_child", processedAt: at(1) },
+    ])).toEqual([
+      expect.objectContaining({ id: "confirm", laneId: "sthr_primary", events: [
+        expect.objectContaining({ id: "confirm" }),
+        expect.objectContaining({ id: "custom" }),
+      ] }),
+      expect.objectContaining({ id: "child_message", laneId: "sthr_child" }),
+    ]);
   });
 
   it("handles SQL portability envelopes and rejects corrupt execution rows", async () => {

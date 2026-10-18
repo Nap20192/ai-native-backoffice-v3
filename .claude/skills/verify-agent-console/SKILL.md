@@ -11,7 +11,7 @@ description: Проверка конструктора агентов (копи�
 Папка скилла: `.claude/skills/verify-agent-console/`, дальше `S=.claude/skills/verify-agent-console/scripts`.
 Команды запускаются из корня репозитория `/home/vnkjd/orca/projects/ai-native-backoffice-v3`.
 
-**Ожидаемый итог на текущем коде.** Главный сценарий «ПРОЙДЕН», 91 проверка, 0 провалов, строк «внимание» нет, подфункций карты 26 из 47, остальные идут строками «не проверено» `feature.*` (`20261018-050648`). `mcp-ask` «ПРОЙДЕН», 19 проверок, 0 провалов, строк «внимание» нет, подфункций 6 из 6 (`20261018-051008`). `crud` «ПРОЙДЕН», 25 проверок, подфункций 7 из 7, на хранилищах git `45694b6` (`20261018-051113`). `builder` «ПРОЙДЕН», 55 проверок, подфункций 20 из 21, не проверена только `builder-qwen`; прежние строки «не проверено» `vb.tunnel_token`, `vb.after_click_window` и `vb.rerun_6_2` на месте (`20261018-045443`).
+**Ожидаемый итог на текущем коде.** Главный сценарий «ПРОЙДЕН», 91 проверка, 0 провалов, строк «внимание» нет, подфункций карты 26 из 47, остальные идут строками «не проверено» `feature.*` (`20261018-140626`). `mcp-ask` «ПРОЙДЕН», 19 проверок, 0 провалов, строк «внимание» нет, подфункций 6 из 6 (`20261018-140732`). `multiagent` «ПРОЙДЕН», 21 проверка, 0 провалов, строк «внимание» нет, подфункций 12 из 12 (`20261018-141340`). Находка 5 ревью исправлена: Pi больше не пишет своё `agent.thread_message_sent`, журнал сессии с делегированием отвечает 200, и «Разрешить» в потоке субагента идёт кликом в консоли. `crud` «ПРОЙДЕН», 25 проверок, подфункций 7 из 7, на хранилищах git `45694b6` (`20261018-051113`). `builder` «ПРОЙДЕН», 55 проверок, подфункций 20 из 21, не проверена только `builder-qwen`; прежние строки «не проверено» `vb.tunnel_token`, `vb.after_click_window` и `vb.rerun_6_2` на месте (`20261018-045443`).
 Когда прогон упал или проверка ведёт себя неожиданно, прочитайте `HISTORY.md`: там прошлые провалы с причинами, снимки дерева и сбои машины по датам. Если упало то, чего там нет, исправьте скрипт и карту функций. Проверки не ослабляйте.
 
 ## Предусловия
@@ -181,6 +181,18 @@ RUN="$($S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$
 - `mcp.repeat_allow_none` шлёт второе `allow` на исполненный `write_act` по API: кнопки в консоли после первого клика нет. Проверка ждёт, что вызов не ушёл снова и модель не проснулась (нет `agent.message`, `span.model_request_start` и нового запроса к фейку). Старый агент для `mcp.old_agent_*` создаётся по API с набором MCP на явном `always_allow`, как его писала консоль до функции 3.1.
 - `mcp.ui_waiting_row` и `mcp.ui_waiting_row_reload` требуют подпись «Ждёт вас» у строки ожидающего вызова в ходе: сразу после хода и после свежей загрузки страницы. Подпись «Прервано» это провал. `mcp.ui_rows_after_reload` после «Разрешить» и «Отклонить» и свежей загрузки требует строку исполненного вызова без подписи и строку отклонённого с подписью «Отклонено». До правки консоли 2026-10-18 первая проверка писала «внимание», причины в Gotchas `features/mcp-confirmation.md`.
 
+## Сценарий multiagent: поток субагента, предел сессии, блок multiagent_20261001
+
+Сценарий `multiagent` (`scripts/journey-multiagent.mjs`, маркер фейка `VERIFY_DELEGATE` в `scripts/fake-model.mjs`) проверяет шаг 1, раздел 3.Б и шаг 2 `docs/plans/multiagent.md`. План называл доказательство шага 1 `journey-subagent-confirm.mjs`, это тот же сценарий. Рецепт и ловушки в `features/multiagent.md`.
+
+```sh
+RUN="$(VERIFY_PORT=8801 VERIFY_FAKE_PORT=8802 VERIFY_FAKE_MCP_PORT=8803 $S/launch.sh)" && { $S/doctor.sh --run "$RUN" && $S/seed-user.sh --run "$RUN" && $S/journey.sh --run "$RUN" --scenario multiagent; $S/cleanup.sh --run "$RUN"; }
+```
+
+- Окружение, субагент с bash на `always_ask`, основной агент с блоком `coordinator` и агент для предела создаются по API (`ma.seed_path`). Сессия с делегированием и её реплика идут через консоль. Сессия с `max_tokens: 1` создаётся по API (`ma.limit_seed_path`), реплика, заметка и «Поднять предел» идут через консоль.
+- Шаг 1: `ma.subagent_waits`, `ma.subagent_wrong_thread`, `ma.ui_subagent_confirm`, `ma.subagent_allow_once`, `ma.subagent_report`, `ma.subagent_repeat_allow_none`. Раздел 3.Б: `ma.limits_count`, `ma.limits_grow`, `ma.limit_stop`, `ma.limit_refuses_message`, `ma.limit_ui_note`, `ma.limit_ui_send_refused`, `ma.limit_raise`. Шаг 2: `ma.block_invalid`, `ma.block_api`, `ma.block_form`, `ma.block_session_copy`, `ma.block_delegation`.
+- Журнал основного потока сессий с делегированием сценарий читает из `managed_session_events` базы прогона (`sqlite3 -readonly`). Так повелось, пока `GET /v1/sessions/:id/events` на них отвечал 500 (находка 5 ревью, исправлена 2026-10-18). Теперь маршрут отвечает 200, а `ma.ui_subagent_confirm` жмёт «Разрешить» в потоке субагента.
+
 ## Evidence
 
 Всё лежит в `.verify-evidence/<RUN_ID>/`. Строка `.verify-evidence/` есть в корневом `.gitignore` (закоммичена в `b62dd98`), cleanup эту папку не удаляет.
@@ -222,14 +234,15 @@ $S/cleanup.sh --run "$RUN"               # или --keep-state, чтобы ос�
 | `scripts/launch.sh` | `RUN="$($S/launch.sh)"` | Сборка консоли, фейковая модель, сервер, проверка готовности; stdout: папка прогона |
 | `scripts/doctor.sh` | `$S/doctor.sh --run "$RUN"` | Можно ли вести экземпляр, включая сверку кода с моментом launch |
 | `scripts/seed-user.sh` | `$S/seed-user.sh --run "$RUN" [--others]` | Тестовая учётка и её рабочее пространство; с `--others` участник этого пространства и второй пользователь со своим |
-| `scripts/journey.sh` | `$S/journey.sh --run "$RUN" [--scenario builder\|crud\|mcp-ask]` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск сценария (по умолчанию главного) |
+| `scripts/journey.sh` | `$S/journey.sh --run "$RUN" [--scenario builder\|crud\|mcp-ask\|multiagent]` | PID сценария, проверка нагрузки, Node 24, `nice` и запуск сценария (по умолчанию главного) |
 | `scripts/journey-builder.mjs` | через `journey.sh --scenario builder` | Сценарий ассистента: шаги 6.2, 6.3, 6.4 и 6.7 плана, живой режим 6.8, `summary.md` |
 | `scripts/journey-crud.mjs` | через `journey.sh --scenario crud` | Сценарий «правка, архив и удаление»: списки агентов, окружений, сессий и файлов, страница деплойментов, красные карточки помощника, `summary.md` |
 | `scripts/journey-mcp-ask.mjs` | через `journey.sh --scenario mcp-ask` | Сценарий «подтверждение MCP»: агент со своим MCP-сервером из формы, сессия с хранилищем, вызов `write_act` ждёт «Разрешить», «Разрешить» и «Отклонить» на странице сессии, журнал fake-mcp, `summary.md` |
+| `scripts/journey-multiagent.mjs` | через `journey.sh --scenario multiagent` | Сценарий «мультиагент»: делегирование с подтверждением в потоке субагента, страница такой сессии, повтор подтверждения, счётчики и предел сессии с заметкой и «Поднять предел», блок `multiagent_20261001` по API, в форме и в ходе, `summary.md` |
 | `scripts/journey-builder-guard.mjs` | модуль `journey-builder.mjs` | Шаги 6.5 и 6.6: подложенные указания и смена объекта после preview |
 | `scripts/fake-model-builder.mjs` | модуль `fake-model.mjs` | Решения фейка по маркерам `VERIFY_BUILDER*`, поиск канареек в сыром теле |
 | `scripts/journey-env-to-agent.mjs` | через `journey.sh` | Главный сценарий Playwright, проверки и `summary.md` |
-| `scripts/fake-model.mjs` | запускает `launch.sh` (`node fake-model.mjs --port 8792 --log f.jsonl`) | Модель Anthropic Messages (SSE): bash с командой из промпта, затем `VERIFY_DONE_<nonce>` (в ходе агента `VERIFY_AGENT_RUN` перед bash ещё текст, а ответ состоит из блока кода с `VERIFY_DONE_<nonce>` и строки после него); запрос без потока получает `ok`; отвечает на проверку ключа карточки OpenAI (`/chat/completions`); пишет в журнал `thinking` и `effort` каждого запроса; маркер `VERIFY_TOOL` вызывает инструмент из строки `Инструмент:` с входом из строки `Вход:` (сценарий `mcp-ask`) |
+| `scripts/fake-model.mjs` | запускает `launch.sh` (`node fake-model.mjs --port 8792 --log f.jsonl`) | Модель Anthropic Messages (SSE): bash с командой из промпта, затем `VERIFY_DONE_<nonce>` (в ходе агента `VERIFY_AGENT_RUN` перед bash ещё текст, а ответ состоит из блока кода с `VERIFY_DONE_<nonce>` и строки после него); запрос без потока получает `ok`; отвечает на проверку ключа карточки OpenAI (`/chat/completions`); пишет в журнал `thinking`, `effort` и начало последнего сообщения пользователя (`last_user_text`) каждого запроса; маркер `VERIFY_TOOL` вызывает инструмент из строки `Инструмент:` с входом из строки `Вход:` (сценарий `mcp-ask`); маркер `VERIFY_DELEGATE` вызывает `call_agent_<id>` из строки `Агент:` с командой из строки `Команда субагента:` и отвечает по результату и по отчёту субагента (сценарий `multiagent`) |
 | `scripts/fake-mcp.mjs` | запускает `launch.sh` (`node fake-mcp.mjs --port 8793 --log fake-mcp.jsonl`) | MCP-сервер Streamable HTTP без сессии на `/mcp`, ответы JSON: инструменты `read_report` и `write_act`, 401 без Bearer, -32601 на `server/discover`; журнал JSONL с sha256 токена, методом, инструментом и аргументами каждого сообщения |
 | `scripts/cleanup.sh` | `$S/cleanup.sh --run "$RUN" [--keep-state]` | Остановка по своим PID и уборка временных данных одного прогона |
 

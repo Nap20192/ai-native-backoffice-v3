@@ -73,12 +73,16 @@ export type SendableSessionEvent =
       result: "allow" | "deny";
       toolUseId: string;
       denyMessage?: string | null;
+      /** Thread of the call. Absent, the service takes it from the call. */
+      sessionThreadId?: string | null;
     }
   | {
       type: "user.custom_tool_result";
       customToolUseId: string;
       content?: ToolResultContentBlock[];
       isError?: boolean | null;
+      /** Thread of the call. Absent, the service takes it from the call. */
+      sessionThreadId?: string | null;
     }
   | {
       type: "user.define_outcome";

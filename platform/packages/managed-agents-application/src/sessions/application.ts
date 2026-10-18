@@ -1,5 +1,16 @@
 import type { Agent } from "../domain/agent";
-import type { Session, SessionAgent } from "../domain/session";
+import type {
+  AgentMultiagent,
+  AgentMultiagentSetting,
+  AgentPinnedAgent,
+} from "../domain/agent-definition";
+import type {
+  Session,
+  SessionAgent,
+  SessionAgentMultiagent,
+  SessionAgentMultiagentSetting,
+  SessionListedAgent,
+} from "../domain/session";
 import type { SessionBootstrapEvent } from "../domain/session-bootstrap";
 import type { SessionThreadAgent } from "../domain/session-thread";
 import {
@@ -8,6 +19,7 @@ import {
   resolveAgentTools,
   validateMcpConfiguration,
 } from "../agents/definition-resolution";
+import { listedSubagents } from "../agents/multiagent";
 import type { AgentModelInput } from "../ports/agents";
 import type { FilesApplicationPort } from "../ports/files";
 import type {
@@ -24,6 +36,8 @@ import type {
   RetrieveSessionQuery,
   RetrieveSessionResult,
   SessionsApplicationPort,
+  SessionLimitsInput,
+  SessionLimitsView,
   SessionResourceInput,
   SpendLimit,
   UpdateSessionCommand,
@@ -32,6 +46,7 @@ import type {
 import type { SessionAgentSelector } from "../ports/sessions";
 import type { SessionAgentSourcePort } from "./agent-source";
 import type { SessionEnvironmentSourcePort } from "./environment-source";
+import type { SessionLimitsPort } from "./limits-source";
 import type { SessionStore } from "@open-managed-agents/session-store";
 import type { SessionResourceResolverPort } from "./resource-resolver";
 import type { SessionLifecycleCommandPort } from "../session-execution/lifecycle";
@@ -44,6 +59,22 @@ import type {
   LaunchDeploymentSession,
   LaunchDeploymentSessionResult,
 } from "../deployments/session-launcher";
+
+const LIMITS_UNAVAILABLE = "Session limits (_oma.limits) are not available on this server";
+
+/** The 400 answer to a limit that is not above the work counted against it. */
+function notAboveUsed(input: SessionLimitsInput, limits: SessionLimitsView): string {
+  const refused: string[] = [];
+  if (input.maxTokens !== undefined && input.maxTokens <= limits.usedTokens) {
+    refused.push(`_oma.limits.max_tokens must be above the ${limits.usedTokens} tokens the Session used`);
+  }
+  if (input.maxChildTurns !== undefined && input.maxChildTurns <= limits.usedChildTurns) {
+    refused.push(`_oma.limits.max_child_turns must be above the ${limits.usedChildTurns} subagent turns the Session used`);
+  }
+  return refused.length > 0
+    ? refused.join("; ")
+    : "_oma.limits must be above the work the Session used";
+}
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -121,9 +152,16 @@ export interface SessionsApplicationServiceDependencies {
    * another live Session or Deployment mounts. Without it the files stay.
    */
   files?: Pick<FilesApplicationPort, "listFiles" | "deleteFile">;
+  /**
+   * The limits of the Session and the work counted against them
+   * (docs/plans/multiagent.md, 3.Б): create and update set them, retrieve and
+   * update show them. Without it there are none, and `_oma.limits` in a
+   * create or update gets 400.
+   */
+  limits?: SessionLimitsPort;
 }
 
-function snapshotThreadAgent(agent: Agent): SessionThreadAgent {
+function snapshotThreadAgent(agent: Agent): SessionListedAgent {
   return {
     type: "agent",
     id: agent.id,
@@ -151,35 +189,64 @@ async function findPinnedAgent(
   return source.findVersion({ workspaceId, agentId, version });
 }
 
+/**
+ * The block as the Session copies it (docs/plans/multiagent.md, 3.2): it keeps
+ * its type, and every pinned agent is copied whole. Null when a pinned agent
+ * is gone.
+ */
+async function snapshotMultiagent(
+  multiagent: AgentMultiagent,
+  source: SessionAgentSourcePort,
+  workspaceId: string,
+): Promise<SessionAgentMultiagent | null> {
+  const listed = async (entry: AgentPinnedAgent): Promise<SessionListedAgent | null> => {
+    const member = await findPinnedAgent(source, workspaceId, entry.agentId, entry.version);
+    return member === null ? null : snapshotThreadAgent(member);
+  };
+  if (multiagent.type === "coordinator") {
+    const agents: SessionThreadAgent[] = [];
+    for (const entry of multiagent.agents) {
+      const member = entry.type === "advisor"
+        ? { type: entry.type, model: entry.model }
+        : await listed(entry);
+      if (member === null) return null;
+      agents.push(member);
+    }
+    return { type: multiagent.type, agents };
+  }
+  const setting = async (
+    value: AgentMultiagentSetting,
+  ): Promise<SessionAgentMultiagentSetting | null> => {
+    if (value.type === "disabled") return value;
+    const predefinedAgents: SessionListedAgent[] = [];
+    for (const entry of value.predefinedAgents) {
+      const member = await listed(entry);
+      if (member === null) return null;
+      predefinedAgents.push(member);
+    }
+    return { type: value.type, inlineAgents: value.inlineAgents, predefinedAgents };
+  };
+  const subagents = await setting(multiagent.subagents);
+  const workflows = await setting(multiagent.workflows);
+  if (subagents === null || workflows === null) return null;
+  return { type: multiagent.type, subagents, workflows, advisor: multiagent.advisor };
+}
+
 async function snapshotAgent(
   agent: Agent,
   source: SessionAgentSourcePort,
   workspaceId: string,
 ): Promise<SessionAgent | null> {
-  const roster: SessionThreadAgent[] = [];
-  for (const entry of agent.multiagent?.agents ?? []) {
-    if (entry.type === "advisor") {
-      roster.push({ type: entry.type, model: entry.model });
-      continue;
-    }
-    const member = await findPinnedAgent(
-      source,
-      workspaceId,
-      entry.agentId,
-      entry.version,
-    );
-    if (member === null) return null;
-    roster.push(snapshotThreadAgent(member));
-  }
+  const multiagent = agent.multiagent === null
+    ? null
+    : await snapshotMultiagent(agent.multiagent, source, workspaceId);
+  if (agent.multiagent !== null && multiagent === null) return null;
   return {
     id: agent.id,
     description: agent.description,
     mcpServers: agent.mcpServers,
     model: agent.model,
-    multiagent:
-      agent.multiagent === null
-        ? null
-        : { type: "coordinator", agents: roster },
+    multiagent,
     name: agent.name,
     ...(agent.openma !== undefined && { openma: agent.openma }),
     skills: agent.skills,
@@ -226,6 +293,16 @@ async function applyOverrides(
   };
 }
 
+/** Fields of an update that live in the Session document. */
+function changesSessionDocument(command: UpdateSessionCommand): boolean {
+  return command.agent !== undefined ||
+    command.budget !== undefined ||
+    command.metadata !== undefined ||
+    command.title !== undefined ||
+    command.vaultIds !== undefined ||
+    command.limits === undefined;
+}
+
 function patchMetadata(
   current: Record<string, string>,
   patch: Record<string, string | null> | null,
@@ -245,6 +322,7 @@ interface InternalCreateSessionCommand {
   initialEvents: SessionBootstrapEvent[];
   deploymentId: string | null;
   budget?: SpendLimit;
+  limits?: SessionLimitsInput;
   metadata?: Record<string, string>;
   resources?: SessionResourceInput[];
   title?: string | null;
@@ -267,6 +345,9 @@ export class SessionsApplicationService
   private async createSessionRecord(
     command: InternalCreateSessionCommand,
   ): Promise<CreateSessionResult> {
+    if (command.limits !== undefined && this.dependencies.limits === undefined) {
+      return { type: "invalid_request", message: LIMITS_UNAVAILABLE };
+    }
     const selectedVersion =
       command.agent.type === "versioned" || command.agent.type === "overrides"
         ? command.agent.version
@@ -313,8 +394,7 @@ export class SessionsApplicationService
         return { type: "invalid_request", message: invalidMcp };
       }
     }
-    for (const member of sessionAgent.multiagent?.agents ?? []) {
-      if (member.type !== "agent") continue;
+    for (const member of listedSubagents(sessionAgent.multiagent)) {
       const asking = askingMcpServer(member.tools);
       if (asking !== null) {
         return {
@@ -384,6 +464,13 @@ export class SessionsApplicationService
       initialEvents: command.initialEvents,
       resourceSecrets: resolvedResources.secrets,
     });
+    if (command.limits !== undefined) {
+      await this.dependencies.limits!.set({
+        workspaceId: this.dependencies.workspaceId,
+        sessionId: inserted.session.id,
+        limits: command.limits,
+      });
+    }
     await this.dependencies.lifecycle.sessionStarted({
       workspaceId: this.dependencies.workspaceId,
       sessionId: inserted.session.id,
@@ -482,9 +569,17 @@ export class SessionsApplicationService
       workspaceId: this.dependencies.workspaceId,
       sessionId: query.sessionId,
     });
-    return record === null
-      ? { type: "not_found" }
-      : { type: "found", session: record.session, revision: record.revision };
+    if (record === null) return { type: "not_found" };
+    const limits = await this.dependencies.limits?.read({
+      workspaceId: this.dependencies.workspaceId,
+      sessionId: query.sessionId,
+    });
+    return {
+      type: "found",
+      session: record.session,
+      revision: record.revision,
+      ...(limits !== undefined && { limits }),
+    };
   }
 
   async updateSession(command: UpdateSessionCommand): Promise<UpdateSessionResult> {
@@ -494,6 +589,9 @@ export class SessionsApplicationService
     });
     if (current === null) return { type: "not_found" };
 
+    if (command.limits !== undefined && this.dependencies.limits === undefined) {
+      return { type: "invalid_request", message: LIMITS_UNAVAILABLE };
+    }
     const updatesAgent = command.agent?.tools !== undefined
       || command.agent?.mcpServers !== undefined;
     if (updatesAgent && current.session.status !== "idle") {
@@ -533,20 +631,45 @@ export class SessionsApplicationService
         return { type: "invalid_request", message: invalidMcp };
       }
     }
-    const replaced = await this.dependencies.store.replaceCurrent({
+    const scope = {
       workspaceId: this.dependencies.workspaceId,
       sessionId: command.sessionId,
-      expectedRevision: current.revision,
-      next,
-    });
-    if (replaced.type === "not_found") return { type: "not_found" };
-    if (replaced.type === "revision_conflict") {
-      return {
-        type: "version_conflict",
-        message: `Session changed concurrently at revision ${replaced.actualRevision}`,
-      };
+    };
+    // The limits change first: a value not above the work counted refuses
+    // the whole update before anything is written (plan multiagent, 3.Б).
+    if (command.limits !== undefined) {
+      const raised = await this.dependencies.limits!.raise({ ...scope, limits: command.limits });
+      if (raised.type === "not_above_used") {
+        return { type: "invalid_request", message: notAboveUsed(command.limits, raised.limits) };
+      }
     }
-    return { type: "updated", session: replaced.record.session };
+    // The limits live beside the Session document. An update of the limits
+    // alone leaves the document and its revision as they are, so a raise
+    // does not race the events of a running turn.
+    let session = current.session;
+    if (changesSessionDocument(command)) {
+      const replaced = await this.dependencies.store.replaceCurrent({
+        ...scope,
+        expectedRevision: current.revision,
+        next,
+      });
+      if (replaced.type === "not_found") return { type: "not_found" };
+      if (replaced.type === "revision_conflict") {
+        return {
+          type: "version_conflict",
+          message: `Session changed concurrently at revision ${replaced.actualRevision}`,
+        };
+      }
+      session = replaced.record.session;
+    }
+    // A turn that stopped at the limit goes on after the raise.
+    if (command.limits !== undefined) await this.dependencies.limits!.resume(scope);
+    const limits = await this.dependencies.limits?.read(scope);
+    return {
+      type: "updated",
+      session,
+      ...(limits !== undefined && { limits }),
+    };
   }
 
   /** The 412 answer when the store refused a write guarded by the revision. */

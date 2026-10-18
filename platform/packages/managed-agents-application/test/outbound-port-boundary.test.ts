@@ -119,6 +119,7 @@ describe("Managed Agents outbound port boundary", () => {
       "../src/session-threads/persistence.ts",
       "../src/sessions/agent-source.ts",
       "../src/sessions/environment-source.ts",
+      "../src/sessions/limits-source.ts",
       "../src/sessions/memory-store-source.ts",
       "../src/sessions/resource-resolver.ts",
       "../src/skills/package-compiler.ts",

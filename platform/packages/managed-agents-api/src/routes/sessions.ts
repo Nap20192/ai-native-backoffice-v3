@@ -30,15 +30,15 @@ import {
   toSessionResponse,
   toUpdateSessionCommand,
 } from "../mappers/sessions";
-import type { SessionView } from "../ports/sessions";
+import type { SessionLimitsView, SessionView } from "../ports/sessions";
 import type {
   ListSessionsPage,
   SessionsApplicationPort,
 } from "../ports/sessions";
 
-function serializeSession(session: SessionView): object | null {
+function serializeSession(session: SessionView, limits?: SessionLimitsView): object | null {
   try {
-    const parsed = sessionResponseSchema.safeParse(toSessionResponse(session));
+    const parsed = sessionResponseSchema.safeParse(toSessionResponse(session, limits));
     return parsed.success ? (parsed.data as object) : null;
   } catch {
     return null;
@@ -48,7 +48,7 @@ function serializeSession(session: SessionView): object | null {
 function serializeSessionPage(page: ListSessionsPage): object | null {
   try {
     const parsed = sessionPageResponseSchema.safeParse({
-      data: page.sessions.map(toSessionResponse),
+      data: page.sessions.map((session) => toSessionResponse(session)),
       next_page: page.nextCursor,
       prev_page: page.previousCursor,
     });
@@ -127,7 +127,7 @@ export function buildSessionRoutes(
       );
     }
 
-    const session = serializeSession(result.session);
+    const session = serializeSession(result.session, result.limits);
     if (session === null) {
       return c.json(apiError("Application returned an invalid session resource"), 500);
     }
@@ -260,7 +260,7 @@ export function buildSessionRoutes(
       );
     }
 
-    const session = serializeSession(result.session);
+    const session = serializeSession(result.session, result.limits);
     if (session === null) {
       return c.json(apiError("Application returned an invalid session resource"), 500);
     }

@@ -58,6 +58,14 @@ export class BillingError extends OmaError {}
 export class AuthError extends OmaError {}
 
 /**
+ * The Session spent its limit of tokens or subagent turns
+ * (docs/plans/multiagent.md, 3.Б). The harness sends no further model
+ * request and the turn stops with `budget_reached`, not with an error: the
+ * runner neither retries it nor reports `session.error`.
+ */
+export class SessionLimitError extends OmaError {}
+
+/**
  * Heuristic mapper: native/external error → typed OmaError.
  *
  * Used by boundary wrappers when they don't have enough info to type the

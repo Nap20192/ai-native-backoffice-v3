@@ -18,6 +18,7 @@
 import { resolveSessionSandboxMode, readManagedSessionMappingMetadata } from "@open-managed-agents/openai-agents-compat";
 import { SqlSessionThreadStore } from "@open-managed-agents/session-thread-store-sql";
 import { buildOpenAISubagentTools, nodeOpenAISubagentPolicy, openAISubagentSession } from "../openai-subagents.js";
+import { NodeSessionLimits, sessionLimitContinuations } from "../lib/node-session-limits.js";
 
 import { createNodeOpenAIArtifactPublisher, withReportedArtifactPublication } from "../openai-artifact-publication.js";
 
@@ -29,7 +30,7 @@ import { agentUsesAssemblySkillMount } from "@open-managed-agents/agent/harness/
 import type { HarnessContext } from "@open-managed-agents/agent/harness/interface";
 
 import { buildCredentialRoutes as buildManagedCredentialRoutes, buildDeploymentRoutes as buildManagedDeploymentRoutes, buildDeploymentRunRoutes as buildManagedDeploymentRunRoutes, buildDreamRoutes as buildManagedDreamRoutes, buildEnvironmentRoutes as buildManagedEnvironmentRoutes, buildEnvironmentWorkRoutes as buildManagedEnvironmentWorkRoutes, buildFileRoutes as buildManagedFileRoutes, buildMemoryStoreRoutes as buildManagedMemoryStoreRoutes, buildMemoryRoutes as buildManagedMemoryRoutes, buildMemoryVersionRoutes as buildManagedMemoryVersionRoutes, buildModelRoutes as buildManagedModelRoutes, buildSkillRoutes as buildManagedSkillRoutes, buildSkillVersionRoutes as buildManagedSkillVersionRoutes, buildTunnelCertificateRoutes as buildManagedTunnelCertificateRoutes, buildTunnelRoutes as buildManagedTunnelRoutes, buildVaultRoutes as buildManagedVaultRoutes, buildUserProfileRoutes as buildManagedUserProfileRoutes } from "@open-managed-agents/managed-agents-api";
-import { SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService, type SessionEnvironmentSourcePort } from "@open-managed-agents/managed-agents-application";
+import { listedSubagents, SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService, type SessionEnvironmentSourcePort } from "@open-managed-agents/managed-agents-application";
 import { bindPort, defineAppModule, providePort } from "@open-managed-agents/app";
 import { managedAgentsPortTokens } from "@open-managed-agents/app/managed-agents";
 import { deploymentAgentSourcePort, deploymentEnvironmentSourcePort, deploymentFileSourcePort, deploymentMemoryStoreSourcePort, deploymentSchedulePlannerPort, deploymentSessionLauncherPort, deploymentVaultSourcePort } from "@open-managed-agents/app/modules/deployments";
@@ -373,16 +374,31 @@ export async function createManagedNodeRuntime(
   // Agent trace (docs/plans/agent-trace.md, TW1): the driver observer and the
   // sandbox phases of the runner write trace_spans; null on MySQL (3.4).
   const traceWiring = createNodeTraceWiring({ sql, dialect: foundation.dialect, logger });
+  // Session limits (docs/plans/multiagent.md, 3.Б): one row of counted work
+  // and limits per Session, added in the batch of the runtime events. Not on
+  // MySQL, like the trace: the row is filled with ON CONFLICT. A raise queues
+  // the stopped turn through the execution worker built further down.
+  const sessionLimits = foundation.dialect === "mysql"
+    ? undefined
+    : new NodeSessionLimits({
+      sql,
+      dialect: foundation.dialect,
+      defaults: config.sessionLimits,
+      continueTurn: (input) => continueAfterLimitRaise(input),
+    });
+  await sessionLimits?.ensureSchema();
 
   const managedRuntimeRunner = new DefaultNodeManagedSessionRunner(withTracePhases(traceWiring, {
     ...(workspaceCheckpoints === undefined ? {} : { workspaceCheckpoints }),
+    // Every model request and subagent turn asks the row first (3.Б, slice 2).
+    ...(sessionLimits !== undefined && { sessionLimits }),
     subagentThreads: new SqlSessionThreadStore(sql),
     subagentPolicy: ({ session }) => nodeOpenAISubagentPolicy(session, openAIAgentsSecrets),
     resolveSubagentSession: async ({ workspaceId, session, request }) => {
       const saved = await readManagedSessionMappingMetadata(session, openAIAgentsSecrets);
       if (saved) return openAISubagentSession(session, request);
-      const member = session.agent.multiagent?.agents.find(item => item.type === "agent" && item.id === request.agentId);
-      if (!member || member.type !== "agent") throw new Error("Subagent is not in the configured callable agent roster");
+      const member = listedSubagents(session.agent.multiagent).find(item => item.id === request.agentId);
+      if (!member) throw new Error("Subagent is not in the configured callable agent roster");
       const selected = await managedPlatform.app({ workspaceId }).port(managedAgentsPortTokens.agents).retrieveAgent({ agentId: member.id, version: member.version });
       if (selected.type !== "found" || selected.agent.archivedAt !== null) throw new Error("Configured subagent is unavailable");
       return { ...session, agent: { ...selected.agent, multiagent: null } };
@@ -677,7 +693,9 @@ export async function createManagedNodeRuntime(
     projectionFor: (workspaceId) =>
       new SessionRuntimeProjectionApplicationService({
         workspaceId,
-        persistence: new SqlSessionRuntimeProjectionPersistence(sql),
+        persistence: new SqlSessionRuntimeProjectionPersistence(sql, {
+          ...(sessionLimits !== undefined && { effects: [sessionLimits] }),
+        }),
       }),
     ...(traceWiring !== null && { observer: traceWiring.observer, logger }),
   });
@@ -703,6 +721,12 @@ export async function createManagedNodeRuntime(
       { err, op: "main-node.session_execution.background_failed" },
       "managed Session execution background operation failed",
     ),
+  });
+  const continueAfterLimitRaise = sessionLimitContinuations({
+    context: managedRuntimeReaders.executionContext,
+    coordinator: managedSessionExecutionCoordinator,
+    poll: () => managedSessionExecutionWorker.poll(),
+    now: () => new Date(),
   });
   const managedSessionRuntime = new NodeManagedSessionRuntimeAdapter(
     managedRuntimeDriver,
@@ -765,6 +789,7 @@ export async function createManagedNodeRuntime(
         { recursive: true, force: true },
       );
       await traceWiring?.deleteSession({ workspaceId, sessionId });
+      await sessionLimits?.deleteSession({ workspaceId, sessionId });
     },
   });
   const managedResourceCipher = secrets === null
@@ -773,6 +798,9 @@ export async function createManagedNodeRuntime(
   const managedSessionsComposition = new SqlManagedSessionsComposition({
     client: sql,
     executionOutbox: true,
+    ...(sessionLimits !== undefined && {
+      sessionLimits: { port: sessionLimits, projection: sessionLimits },
+    }),
     environments: nodeManagedEnvironments,
     lifecycle: managedSessionLifecycle,
     runtime: managedSessionRuntime,

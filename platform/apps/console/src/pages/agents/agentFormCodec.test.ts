@@ -16,6 +16,8 @@ import {
   newMcpEntry,
   parseAgentConfigText,
   prepareCodePayload,
+  writesMultiagent20261001,
+  type FormState,
 } from "./agentFormCodec";
 
 function sampleAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
@@ -913,5 +915,233 @@ describe("разрешение MCP-сервера в форме (план cma-wa
       default_config: { permission_policy: { type: "always_ask" } },
       configs: [{ name: "read_report", permission_policy: { type: "always_allow" } }],
     });
+  });
+});
+
+describe("мультиагент: оба типа блока (план multiagent, 3.2, срез 4)", () => {
+  const WORKFLOWS = {
+    type: "enabled",
+    inline_agents: { type: "enabled" },
+    predefined_agents: [{ type: "agent", id: "agent_batch", version: 1 }],
+  };
+
+  /** Агент `agent_1` с блоком нового типа: себя сервер отдаёт своим id и версией. */
+  function newTypeAgent(): AgentRecord {
+    return sampleAgent({
+      multiagent: {
+        type: "multiagent_20261001",
+        subagents: {
+          type: "enabled",
+          inline_agents: { type: "disabled" },
+          predefined_agents: [
+            { type: "agent", id: "agent_reviewer", version: 3 },
+            { type: "agent", id: "agent_1", version: 2 },
+          ],
+        },
+        workflows: structuredClone(WORKFLOWS),
+        advisor: { type: "enabled", model: "verify-oai" },
+      } as unknown as AgentRecord["multiagent"],
+    });
+  }
+
+  function coordinatorAgent(): AgentRecord {
+    return sampleAgent({
+      multiagent: {
+        type: "coordinator",
+        agents: [
+          { type: "agent", id: "agent_reviewer", version: 3 },
+          { type: "advisor", model: "verify-oai" },
+          { type: "agent", id: "agent_1", version: 2 },
+        ],
+      },
+      _oma: { enable_general_subagent: true },
+    });
+  }
+
+  function multiagentOf(form: FormState, agent: AgentRecord): unknown {
+    return mergeFormIntoConfig(form, agentToPreservedConfig(agent), {
+      forUpdate: true,
+      ownId: agent.id,
+    }).multiagent;
+  }
+
+  it("читает coordinator: агентов с версией, себя по своему id и советника", () => {
+    const form = agentToForm(coordinatorAgent());
+
+    expect(form.callableAgents).toEqual([{ type: "agent", id: "agent_reviewer", version: 3 }]);
+    expect(form.selfCallable).toBe(true);
+    expect(form.advisorModel).toBe("verify-oai");
+    expect(form.inlineAgents).toBe(false);
+  });
+
+  it("читает multiagent_20261001: список субагентов, себя, inline и советника", () => {
+    const form = agentToForm(newTypeAgent());
+
+    expect(form.callableAgents).toEqual([{ type: "agent", id: "agent_reviewer", version: 3 }]);
+    expect(form.selfCallable).toBe(true);
+    expect(form.inlineAgents).toBe(false);
+    expect(form.advisorModel).toBe("verify-oai");
+  });
+
+  it("YAML нового типа: строка с id и self читаются, пропущенные настройки берут умолчания CMA", () => {
+    const form = configToForm({
+      name: "Из YAML",
+      multiagent: {
+        type: "multiagent_20261001",
+        subagents: { type: "enabled", predefined_agents: ["agent_reviewer", { type: "self" }] },
+      },
+    });
+
+    expect(form.callableAgents).toEqual([{ type: "agent", id: "agent_reviewer" }]);
+    expect(form.selfCallable).toBe(true);
+    expect(form.inlineAgents).toBe(true);
+    expect(form.advisorModel).toBe("");
+    expect(configToForm({ multiagent: { type: "multiagent_20261001" } }).inlineAgents).toBe(true);
+    expect(
+      configToForm({ multiagent: { type: "multiagent_20261001", subagents: { type: "disabled" } } })
+        .inlineAgents,
+    ).toBe(false);
+  });
+
+  it("правка имени агента нового типа пишет тот же тип: workflows, закрепления и чужие поля целы, сам агент уходит как self", () => {
+    const agent = newTypeAgent();
+    const preserved = agentToPreservedConfig(agent);
+    const block = preserved.multiagent as { subagents: Record<string, unknown> };
+    block.subagents.note = "чужое поле";
+    const form = configToForm(preserved, agent.id);
+    form.name = "Renamed";
+
+    const payload = mergeFormIntoConfig(form, preserved, { forUpdate: true, ownId: agent.id });
+
+    expect(payload.multiagent).toEqual({
+      type: "multiagent_20261001",
+      subagents: {
+        type: "enabled",
+        note: "чужое поле",
+        inline_agents: { type: "disabled" },
+        predefined_agents: [
+          { type: "agent", id: "agent_reviewer", version: 3 },
+          { type: "self" },
+        ],
+      },
+      workflows: WORKFLOWS,
+      advisor: { type: "enabled", model: "verify-oai" },
+    });
+    expect(payload).not.toHaveProperty("_oma");
+  });
+
+  it("сам агент в списке workflows уходит как self: свой id сервер в списке не примет", () => {
+    const agent = newTypeAgent();
+    const block = agent.multiagent as unknown as { workflows: { predefined_agents: unknown[] } };
+    block.workflows.predefined_agents.push({ type: "agent", id: "agent_1", version: 2 });
+    const form = agentToForm(agent);
+    form.name = "Renamed";
+
+    expect(multiagentOf(form, agent)).toMatchObject({
+      workflows: {
+        type: "enabled",
+        inline_agents: { type: "enabled" },
+        predefined_agents: [{ type: "agent", id: "agent_batch", version: 1 }, { type: "self" }],
+      },
+    });
+  });
+
+  it("форма меняет inline и советника нового типа, пустой список без inline даёт subagents disabled", () => {
+    const agent = newTypeAgent();
+    const form = agentToForm(agent);
+    form.inlineAgents = true;
+    form.advisorModel = "";
+
+    expect(multiagentOf(form, agent)).toMatchObject({
+      subagents: { type: "enabled", inline_agents: { type: "enabled" } },
+      workflows: WORKFLOWS,
+      advisor: { type: "disabled" },
+    });
+
+    form.callableAgents = [];
+    form.selfCallable = false;
+    form.inlineAgents = false;
+    expect(multiagentOf(form, agent)).toEqual({
+      type: "multiagent_20261001",
+      subagents: { type: "disabled" },
+      workflows: WORKFLOWS,
+      advisor: { type: "disabled" },
+    });
+
+    form.inlineAgents = true;
+    expect(multiagentOf(form, agent)).toMatchObject({
+      subagents: { type: "enabled", inline_agents: { type: "enabled" }, predefined_agents: [] },
+    });
+  });
+
+  it("новый агент из формы пишет coordinator с собой и советником (решение 5)", () => {
+    const form: FormState = {
+      ...INITIAL_FORM,
+      name: "Координатор",
+      model: "verify-fake",
+      callableAgents: [{ type: "agent", id: "agent_reviewer" }],
+      selfCallable: true,
+      advisorModel: "verify-oai",
+    };
+
+    const payload = mergeFormIntoConfig(form, null, { forUpdate: false });
+
+    expect(payload.multiagent).toEqual({
+      type: "coordinator",
+      agents: [
+        { type: "agent", id: "agent_reviewer" },
+        { type: "self" },
+        { type: "advisor", model: "verify-oai" },
+      ],
+    });
+    expect(payload).not.toHaveProperty("_oma");
+  });
+
+  it("правка coordinator: свой id становится self на своём месте, советник меняется на месте, _oma цел", () => {
+    const agent = coordinatorAgent();
+    const form = agentToForm(agent);
+    form.advisorModel = "verify-fake";
+
+    const payload = mergeFormIntoConfig(form, agentToPreservedConfig(agent), {
+      forUpdate: true,
+      ownId: agent.id,
+    });
+
+    expect(payload.multiagent).toEqual({
+      type: "coordinator",
+      agents: [
+        { type: "agent", id: "agent_reviewer", version: 3 },
+        { type: "advisor", model: "verify-fake" },
+        { type: "self" },
+      ],
+    });
+    expect(payload._oma).toEqual({ enable_general_subagent: true });
+  });
+
+  it("coordinator без агентов, себя и советника на правке снимает блок", () => {
+    const agent = coordinatorAgent();
+    const form = agentToForm(agent);
+    form.callableAgents = [];
+    form.selfCallable = false;
+    form.advisorModel = "";
+
+    expect(multiagentOf(form, agent)).toBeNull();
+  });
+
+  it("агент, выбранный в списке как он сам, уходит как self", () => {
+    const agent = sampleAgent();
+    const form: FormState = {
+      ...agentToForm(agent),
+      callableAgents: [{ type: "agent", id: agent.id, version: 3 }],
+    };
+
+    expect(multiagentOf(form, agent)).toEqual({ type: "coordinator", agents: [{ type: "self" }] });
+  });
+
+  it("форма пишет новый тип только агенту, у которого он уже есть", () => {
+    expect(writesMultiagent20261001(agentToPreservedConfig(newTypeAgent()))).toBe(true);
+    expect(writesMultiagent20261001(agentToPreservedConfig(coordinatorAgent()))).toBe(false);
+    expect(writesMultiagent20261001(agentToPreservedConfig(sampleAgent()))).toBe(false);
+    expect(writesMultiagent20261001(null)).toBe(false);
   });
 });

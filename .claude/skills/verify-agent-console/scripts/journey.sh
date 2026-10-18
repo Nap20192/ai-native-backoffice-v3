@@ -3,11 +3,12 @@
 # затем journey-env-to-agent.mjs (Playwright). Код выхода = код сценария.
 # PID сценария пишется в state/pids (роль journey), PID Chromium — сам сценарий
 # (роль journey-child): cleanup.sh остановит их, даже если сценарий убили по таймауту.
-# Использование: scripts/journey.sh --run <RUN_ID|папка> [--scenario env-to-agent|builder|crud|mcp-ask]
+# Использование: scripts/journey.sh --run <RUN_ID|папка> [--scenario env-to-agent|builder|crud|mcp-ask|multiagent]
 #   (или VERIFY_RUN_DIR=<папка>). По умолчанию главный сценарий env-to-agent;
 #   builder: journey-builder.mjs (ассистент платформы, нужен seed-user.sh --others);
 #   crud: journey-crud.mjs (архив, возврат и удаление в консоли и через помощника);
-#   mcp-ask: journey-mcp-ask.mjs (вызов MCP ждёт «Разрешить» на странице сессии, fake-mcp.mjs).
+#   mcp-ask: journey-mcp-ask.mjs (вызов MCP ждёт «Разрешить» на странице сессии, fake-mcp.mjs);
+#   multiagent: journey-multiagent.mjs (подтверждение в потоке субагента, предел сессии, блок multiagent_20261001).
 # Переменные сценария: VERIFY_FIRST_TURN_TIMEOUT_MS (900000), VERIFY_TURN_TIMEOUT_MS (600000),
 #   VERIFY_KEEP_SESSION=1 (не архивировать сессии в конце), VERIFY_HEADED=1, VERIFY_CHROMIUM=<путь>.
 set -euo pipefail
@@ -27,7 +28,8 @@ case "$SCENARIO" in
   builder) JOURNEY_SCRIPT=journey-builder.mjs ;;
   crud) JOURNEY_SCRIPT=journey-crud.mjs ;;
   mcp-ask) JOURNEY_SCRIPT=journey-mcp-ask.mjs ;;
-  *) vac_die "сценарий $SCENARIO неизвестен: env-to-agent, builder, crud или mcp-ask" ;;
+  multiagent) JOURNEY_SCRIPT=journey-multiagent.mjs ;;
+  *) vac_die "сценарий $SCENARIO неизвестен: env-to-agent, builder, crud, mcp-ask или multiagent" ;;
 esac
 vac_load_run
 trap 'vac_abort_summary "$EVIDENCE_DIR" journey "${VAC_LAST_ERROR:-journey.sh завершился до запуска сценария}"' EXIT

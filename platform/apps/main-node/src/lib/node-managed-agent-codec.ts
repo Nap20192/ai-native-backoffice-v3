@@ -1,10 +1,12 @@
-import type {
-  AgentCustomToolInputSchema,
-  AgentTool,
-  AgentToolConfig,
-  Environment,
-  AgentToolDefaultConfig,
-  Session,
+import {
+  effectiveMultiagent,
+  listedSubagents,
+  type AgentCustomToolInputSchema,
+  type AgentTool,
+  type AgentToolConfig,
+  type Environment,
+  type AgentToolDefaultConfig,
+  type Session,
 } from "@open-managed-agents/managed-agents-application";
 
 export async function resolveNodeManagedAuxiliaryToolModel<Model>(
@@ -226,12 +228,16 @@ export function toLegacyHarnessAgentConfig(
   session: Session,
 ): LegacyManagedHarnessAgentConfig {
   const { agent } = session;
-  const roster = agent.multiagent?.agents ?? [];
-  const callableAgents = roster.flatMap((member) =>
-    member.type === "agent"
-      ? [{ type: member.type, id: member.id, version: member.version }]
-      : [],
-  );
+  // Both block types reach the harness through one view
+  // (docs/plans/multiagent.md, 3.2): the subagents list is callable, and the
+  // legacy roster adds the advisor. Workflows and inline agents wait for
+  // steps 5 and 6.
+  const multiagent = effectiveMultiagent(agent.multiagent);
+  const callableAgents = listedSubagents(agent.multiagent).map((member) => ({
+    type: member.type,
+    id: member.id,
+    version: member.version,
+  }));
   return {
     id: agent.id,
     name: agent.name,
@@ -256,14 +262,15 @@ export function toLegacyHarnessAgentConfig(
       version: skill.version,
     })),
     ...(callableAgents.length > 0 && { callable_agents: callableAgents }),
-    ...(agent.multiagent !== null && {
+    ...(multiagent !== null && {
       multiagent: {
-        type: agent.multiagent.type,
-        agents: roster.map((member) =>
-          member.type === "advisor"
-            ? { type: member.type, model: member.model }
-            : { type: member.type, id: member.id, version: member.version },
-        ),
+        type: "coordinator" as const,
+        agents: [
+          ...callableAgents,
+          ...(multiagent.advisor.type === "enabled"
+            ? [{ type: "advisor" as const, model: multiagent.advisor.model }]
+            : []),
+        ],
       },
     }),
     ...(agent.description !== null && { description: agent.description }),

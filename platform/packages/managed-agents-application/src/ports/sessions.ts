@@ -9,13 +9,20 @@ import type {
   MonetaryAmount,
   Session,
   SessionAgent,
+  SessionLimitsInput,
+  SessionLimitsView,
   SessionStats,
   SessionStatus,
   SessionUsage,
 } from "../domain/session";
 import type { SessionResourceInput } from "../domain/session-resource";
 
-export type { MonetaryAmount, SessionStatus } from "../domain/session";
+export type {
+  MonetaryAmount,
+  SessionLimitsInput,
+  SessionLimitsView,
+  SessionStatus,
+} from "../domain/session";
 export type {
   RepositoryCheckoutInput,
   SessionResourceInput,
@@ -42,6 +49,7 @@ export interface CreateSessionCommand {
   environmentId: string;
   budget?: SpendLimit;
   initialEvents?: InitialSessionEvent[];
+  limits?: SessionLimitsInput;
   metadata?: Record<string, string>;
   resources?: SessionResourceInput[];
   title?: string | null;
@@ -64,6 +72,9 @@ export interface UpdateSessionCommand {
     tools?: AgentToolInput[];
   };
   budget?: SpendLimit | null;
+  /** Each value must be above the work counted against it. A Session that
+   * stopped on `budget_reached` goes on after the raise. */
+  limits?: SessionLimitsInput;
   metadata?: Record<string, string | null> | null;
   title?: string | null;
   vaultIds?: string[];
@@ -114,11 +125,11 @@ export type CreateSessionResult =
   | { type: "dependency_not_found"; message: string };
 
 export type RetrieveSessionResult =
-  | { type: "found"; session: SessionView; revision?: number }
+  | { type: "found"; session: SessionView; revision?: number; limits?: SessionLimitsView }
   | { type: "not_found" };
 
 export type UpdateSessionResult =
-  | { type: "updated"; session: SessionView }
+  | { type: "updated"; session: SessionView; limits?: SessionLimitsView }
   | { type: "invalid_request"; message: string }
   | { type: "version_conflict"; message: string }
   | { type: "not_found" };

@@ -1,6 +1,7 @@
 export * from "./agents/application";
 export * from "./agents/pi-model-catalog";
 export * from "./agents/definition-resolution";
+export * from "./agents/multiagent";
 export * from "./agents/port";
 export * from "./domain/agent";
 export * from "./domain/agent-definition";
@@ -69,6 +70,7 @@ export * from "./models/catalog-source";
 export * from "./sessions/agent-source";
 export * from "./sessions/application";
 export * from "./sessions/environment-source";
+export * from "./sessions/limits-source";
 export * from "./sessions/memory-store-source";
 export * from "./sessions/resource-resolver";
 export * from "./sessions/resource-resolver-service";

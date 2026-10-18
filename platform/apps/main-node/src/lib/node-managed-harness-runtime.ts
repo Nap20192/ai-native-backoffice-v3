@@ -24,6 +24,7 @@ import {
   ledgerToManagedSessionUsage,
   type NodeHarnessUsageLedger,
 } from "./node-harness-usage.js";
+import type { SessionLimitGate } from "./node-session-limits.js";
 
 type UnstampedRuntimeProducedSessionEvent =
   RuntimeProducedSessionEvent extends infer Event
@@ -48,7 +49,7 @@ class ManagedNodeHistoryStore implements HistoryStore {
   }
 
   append(event: SessionEvent): void {
-    this.events.push(event);
+    this.events.push(receivedAsUserMessage(event));
   }
 
   getEvents(afterSeq?: number): SessionEvent[] {
@@ -104,7 +105,27 @@ export function managedNodeEventsToMessages(
   return projectManagedHistorySegments(events, eventsToMessages);
 }
 
+/**
+ * A message from another thread is input for the agent of this thread, and
+ * Pi history skips `agent.thread_message_received` (plan multiagent, 3.1).
+ * Both the replayed history and the events of the running turn read it as a
+ * user message, as the history of a subagent does.
+ */
+function receivedAsUserMessage(event: SessionEvent): SessionEvent {
+  if (event.type !== "agent.thread_message_received") return event;
+  const message: Extract<SessionEvent, { type: "user.message" }> = {
+    type: "user.message",
+    content: event.content,
+    ...(event.id !== undefined && { id: event.id }),
+    ...(event.processed_at !== undefined && { processed_at: event.processed_at }),
+  };
+  return message;
+}
+
 function toHarnessHistoryEvent(event: SessionEventView): SessionEvent {
+  if (event.type === "agent.thread_message_received") {
+    return receivedAsUserMessage(encodeRuntimeHistoryEvent(event) as SessionEvent);
+  }
   if (event.type === "user.define_outcome") {
     const rubric = event.rubric.type === "text"
       ? event.rubric.content
@@ -215,6 +236,8 @@ export interface ManagedNodeHarnessRuntimeInput {
   output(frame: unknown): Promise<void>;
   clock: { now(): Date };
   ids: { nextEventId(): string };
+  /** The Session limit (plan multiagent, 3.Б). Without it nothing stops. */
+  limits?: Pick<SessionLimitGate, "modelRequest">;
 }
 
 /** History is read back `ORDER BY processed_at` (millisecond precision) and
@@ -241,6 +264,8 @@ export class ManagedNodeHarnessRuntime implements HarnessRuntime {
   /** Number of `agent.*` events (tool calls, messages, thinking) produced so far:
    * a turn that produced none has no side effects and is safe to re-run. */
   agentEventCount = 0;
+  /** The Session spent its limit: this thread sends no more model requests. */
+  limitReached = false;
 
   constructor(private readonly input: ManagedNodeHarnessRuntimeInput) {
     this.history = new ManagedNodeHistoryStore(
@@ -264,6 +289,27 @@ export class ManagedNodeHarnessRuntime implements HarnessRuntime {
       usage: ledgerToManagedSessionUsage(this.usageLedger),
     });
   };
+
+  /**
+   * The limit check before a model request (plan multiagent, 3.Б). The
+   * counted events of this thread reach the row first: frames are written
+   * in the background, and the row would miss the last request. A failed
+   * write surfaces at the turn's own `drain`, not here.
+   */
+  beforeModelRequest = async (): Promise<void> => {
+    if (this.limitReached || this.input.limits === undefined) return;
+    await this.drain().catch(() => undefined);
+    if (await this.input.limits.modelRequest()) this.limitReached = true;
+  };
+
+  /** `session.usage` with the work of this turn, which the stop at the
+   * limit writes before `session.status_idle`, as CMA does. */
+  publishUsage(): void {
+    this.broadcastProducedEvent({
+      type: "session.usage",
+      usage: ledgerToManagedSessionUsage(this.usageLedger),
+    });
+  }
 
   broadcast = (event: SessionEvent): void => {
     creditCacheTokensFromSpanEnd(

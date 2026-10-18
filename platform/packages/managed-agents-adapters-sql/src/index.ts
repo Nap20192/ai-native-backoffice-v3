@@ -28,7 +28,10 @@ export {
   createSqlSessionRuntimeReaders,
   type SqlSessionRuntimeReaders,
 } from "@open-managed-agents/session-runtime-sql";
-export { SqlSessionRuntimeProjectionPersistence } from "./session-runtime-projection-sql-persistence";
+export {
+  SqlSessionRuntimeProjectionPersistence,
+  type SqlRuntimeProjectionEffect,
+} from "./session-runtime-projection-sql-persistence";
 export { SqlPersistedSessionEventStream } from "./session-event-polling-stream";
 export { SqlReplicatedSessionEventStream } from "./session-event-replicated-stream";
 export type { SqlReplicatedSessionEventStreamOptions } from "./session-event-replicated-stream";

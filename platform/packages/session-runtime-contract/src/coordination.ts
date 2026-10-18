@@ -177,6 +177,20 @@ export function sessionBootstrapExecutionEvents(input: {
   });
 }
 
+/** Lane and thread id of the primary thread; its events carry no thread id. */
+export const PRIMARY_SESSION_THREAD_ID = "sthr_primary";
+
+/**
+ * Answers to a call that execute in the primary lane whatever thread they
+ * name. The runner keeps one turn state per session, so a second lane of the
+ * same session would overwrite it. Step 3 slice 1 of docs/plans/multiagent.md
+ * gives thread lanes their own runs and removes this rule.
+ */
+function runsInPrimaryLane(event: SentSessionEvent): boolean {
+  return event.type === "user.tool_confirmation" ||
+    event.type === "user.custom_tool_result";
+}
+
 /** Split one SDK event batch into independently executable thread lanes. */
 export function sessionExecutionEventBatches(
   events: readonly SentSessionEvent[],
@@ -187,9 +201,9 @@ export function sessionExecutionEventBatches(
     if (event.type === "user.interrupt" || event.type === "system.message") {
       continue;
     }
-    const laneId = "sessionThreadId" in event
-      ? event.sessionThreadId ?? "sthr_primary"
-      : "sthr_primary";
+    const laneId = "sessionThreadId" in event && !runsInPrimaryLane(event)
+      ? event.sessionThreadId ?? PRIMARY_SESSION_THREAD_ID
+      : PRIMARY_SESSION_THREAD_ID;
     const current = lanes.get(laneId);
     if (current === undefined) {
       lanes.set(laneId, {

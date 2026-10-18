@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionEvent } from "@open-managed-agents/shared";
+import type { SessionEventView } from "@open-managed-agents/managed-agents-application";
 import { nodeManagedStopReason } from "../src/lib/node-managed-stop-reason";
 
 const ask = (id: string, type = "agent.mcp_tool_use") => ({ type, id, name: "write", input: {}, evaluated_permission: "ask", mcp_server_name: "platform" }) as SessionEvent;
@@ -21,6 +22,13 @@ describe("nodeManagedStopReason", () => {
   });
   it("does not resolve calls from a different tool family", () => {
     expect(nodeManagedStopReason([ask("same"), { type: "agent.tool_result", tool_use_id: "same", content: "ok" }])).toMatchObject({ eventIds: ["same"] });
+  });
+  it("counts calls that wait in subagent threads after the primary ones (plan multiagent 3.1, slice 2)", () => {
+    const child = [{ id: "child", type: "agent.tool_use", name: "bash", input: {}, evaluatedPermission: "ask",
+      processedAt: "2026-10-18T09:00:00.000Z", sessionThreadId: "sthr_child" }] as SessionEventView[];
+    expect(nodeManagedStopReason([ask("main")], false, child)).toEqual({ type: "requires_action", eventIds: ["main", "child"] });
+    expect(nodeManagedStopReason([{ type: "agent.tool_result", tool_use_id: "child", content: "ok" }], false, child))
+      .toEqual({ type: "end_turn" });
   });
   it("keeps failure precedence over pending calls", () => {
     expect(nodeManagedStopReason([ask("a")], true)).toEqual({ type: "retries_exhausted" });

@@ -1,6 +1,7 @@
 import type {
   SessionCreateBody,
   SessionListQuery,
+  SessionOpenMaBody,
   SessionUpdateBody,
 } from "../contracts/sessions";
 import type {
@@ -10,6 +11,8 @@ import type {
   ListSessionsQuery,
   SessionAgentSelector,
   SessionAgentView,
+  SessionLimitsInput,
+  SessionLimitsView,
   SessionResourceInput,
   SessionView,
   UpdateSessionCommand,
@@ -20,7 +23,7 @@ import {
   fromAgentModel,
   fromAgentSkillInput,
   fromAgentToolInput,
-  fromSessionThreadAgent,
+  fromSessionAgentMultiagent,
   toAgentMcpServerInput,
   toAgentSkillInput,
   toAgentToolInput,
@@ -110,12 +113,25 @@ function fromMonetaryAmount(amount: MonetaryAmount): object {
   return { amount: amount.amountMinor, currency: amount.currency };
 }
 
+/** `_oma.limits` of a create or update body (API_LAYER.md, "Session limits"). */
+function toSessionLimitsInput(
+  limits: NonNullable<SessionOpenMaBody["limits"]>,
+): SessionLimitsInput {
+  return {
+    ...(limits.max_tokens !== undefined && { maxTokens: limits.max_tokens }),
+    ...(limits.max_child_turns !== undefined && { maxChildTurns: limits.max_child_turns }),
+  };
+}
+
 export function toCreateSessionCommand(body: SessionCreateBody): CreateSessionCommand {
   return {
     agent: toAgentSelector(body.agent),
     environmentId: body.environment_id,
     ...(body.budget !== undefined && {
       budget: toMonetaryAmount(body.budget.max_list_cost),
+    }),
+    ...(body._oma?.limits !== undefined && {
+      limits: toSessionLimitsInput(body._oma.limits),
     }),
     ...(body.initial_events !== undefined && {
       initialEvents: body.initial_events.map(toInitialSessionEvent),
@@ -150,6 +166,9 @@ export function toUpdateSessionCommand(
         body.budget === null
           ? null
           : toMonetaryAmount(body.budget.max_list_cost),
+    }),
+    ...(body._oma?.limits !== undefined && {
+      limits: toSessionLimitsInput(body._oma.limits),
     }),
     ...(body.metadata !== undefined && { metadata: body.metadata }),
     ...(body.title !== undefined && { title: body.title }),
@@ -200,10 +219,7 @@ export function toSessionAgentResponse(agent: SessionAgentView): object {
     multiagent:
       agent.multiagent === null
         ? null
-        : {
-            type: agent.multiagent.type,
-            agents: agent.multiagent.agents.map(fromSessionThreadAgent),
-          },
+        : fromSessionAgentMultiagent(agent.multiagent),
     name: agent.name,
     ...(agent.openma !== undefined &&
       Object.keys(agent.openma).length > 0 && {
@@ -217,7 +233,9 @@ export function toSessionAgentResponse(agent: SessionAgentView): object {
   };
 }
 
-export function toSessionResponse(session: SessionView): object {
+/** `limits` is the OpenMA extension `_oma.limits` (API_LAYER.md, "Session
+ * limits"). Retrieve and update have it. */
+export function toSessionResponse(session: SessionView, limits?: SessionLimitsView): object {
   return {
     id: session.id,
     agent: toSessionAgentResponse(session.agent),
@@ -302,6 +320,16 @@ export function toSessionResponse(session: SessionView): object {
     vault_ids: session.vaultIds,
     ...(session.deploymentId !== undefined && {
       deployment_id: session.deploymentId,
+    }),
+    ...(limits !== undefined && {
+      _oma: {
+        limits: {
+          max_tokens: limits.maxTokens,
+          max_child_turns: limits.maxChildTurns,
+          used_tokens: limits.usedTokens,
+          used_child_turns: limits.usedChildTurns,
+        },
+      },
     }),
   };
 }

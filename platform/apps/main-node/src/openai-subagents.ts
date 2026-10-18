@@ -1,5 +1,5 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
-import type { Session } from "@open-managed-agents/managed-agents-application";
+import { listedSubagents, type Session } from "@open-managed-agents/managed-agents-application";
 import { readManagedSessionMappingMetadata, type ResourceSecretSealer } from "@open-managed-agents/openai-agents-compat";
 import type { ManagedNodeSubagentControl } from "./lib/node-managed-subagents.js";
 
@@ -8,7 +8,7 @@ export async function nodeOpenAISubagentPolicy(session: Session, secrets: Resour
   const saved = await readManagedSessionMappingMetadata(session, secrets);
   return saved
     ? { enabled: saved.agent.multi_agent?.enabled === true, maxConcurrentSubagents: saved.agent.multi_agent?.max_concurrent_subagents ?? 6 }
-    : { enabled: (session.agent.multiagent?.agents.length ?? 0) > 0, maxConcurrentSubagents: 6 };
+    : { enabled: listedSubagents(session.agent.multiagent).length > 0, maxConcurrentSubagents: 6 };
 }
 
 /** OpenAI children share the environment and configured MCP/search tools. Function

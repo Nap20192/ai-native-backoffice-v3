@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { withReportedArtifactPublication } from "../src/openai-artifact-publication";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
-import type { SessionEvent } from "@open-managed-agents/shared";
+import { SessionLimitError, type SessionEvent } from "@open-managed-agents/shared";
 import type {
   Environment,
   Session,
@@ -12,6 +12,15 @@ import type {
   NodeManagedSessionRunner,
   NodeManagedSessionRunnerAcceptInput,
 } from "../src/lib/node-managed-session-runtime.js";
+import type { HarnessContext } from "@open-managed-agents/agent/harness/interface";
+import { MemorySessionThreadStore } from "../../../packages/session-thread-store-memory/src/index";
+import {
+  DefaultNodeManagedSessionRunner,
+  type DefaultNodeManagedSessionRunnerDependencies,
+} from "../src/lib/node-managed-session-runner.js";
+import type { ManagedNodeSubagentControl } from "../src/lib/node-managed-subagents.js";
+import type { ManagedNodeHarnessRuntime } from "../src/lib/node-managed-harness-runtime.js";
+import { sessionLimitContinuationEvent } from "../src/lib/node-session-limits.js";
 
 const session: Session = {
   id: "session_01",
@@ -1609,5 +1618,949 @@ describe("DefaultNodeManagedSessionRunner", () => {
     await started;
     runner.cancel({ workspaceId: "workspace_01", sessionId: session.id, reason: "session_stopped" });
     await expect(pending).rejects.toThrow("session_stopped");
+  });
+});
+
+// A call of a subagent thread on always_ask waits for a person: the thread and
+// the session stop on requires_action with that call (plan multiagent, 3.1,
+// slice 2). Allowing the call in the subagent's thread is slice 3.
+describe("a subagent call waits for a person (plan multiagent 3.1, slice 2)", () => {
+  const WAITING = "The subagent is waiting for a tool confirmation. Its report will arrive as a separate message.";
+  const checker = {
+    type: "agent" as const,
+    id: "agent_checker",
+    description: null,
+    mcpServers: [],
+    model: { id: "local-model" },
+    name: "Checker",
+    skills: [],
+    system: "Check the folder",
+    tools: [{
+      type: "agent_toolset_20260401" as const,
+      configs: [{ name: "bash" as const, type: "bash" as const, enabled: true, permissionPolicy: { type: "always_ask" as const } }],
+      defaultConfig: { enabled: true, permissionPolicy: { type: "always_allow" as const } },
+    }],
+    version: 1,
+  };
+  const coordinator: Session = {
+    ...session,
+    id: "session_waits",
+    agent: { ...session.agent, name: "Coordinator", multiagent: { type: "coordinator", agents: [checker] } },
+  };
+  const childThread = "sthr_checker";
+
+  type Context = {
+    session: Session;
+    runtime: ManagedNodeHarnessRuntime;
+    subagents?: ManagedNodeSubagentControl;
+    delegateToAgent?: (agentId: string, message: string) => Promise<string>;
+  };
+
+  /** What Pi emits for a bash call: a tool without execute (always_ask) gets
+   * evaluated_permission "ask" and the turn stops on it. */
+  function callBash(context: Context, id: string): void {
+    const toolset = context.session.agent.tools.find((tool) => tool.type === "agent_toolset_20260401");
+    const bash = toolset?.type === "agent_toolset_20260401"
+      ? toolset.configs.find((config) => config.name === "bash")
+      : undefined;
+    const asks = (bash?.permissionPolicy ?? toolset?.defaultConfig.permissionPolicy)?.type === "always_ask";
+    context.runtime.broadcast({
+      type: "agent.tool_use",
+      id,
+      name: "bash",
+      input: { command: "ls" },
+      ...(asks && { evaluated_permission: "ask" as const }),
+    } as SessionEvent);
+  }
+
+  function fixture(run: (context: Context) => Promise<void>, store = new MemorySessionThreadStore()) {
+    const frames: Array<Record<string, unknown>> = [];
+    let id = 0;
+    const dependencies: DefaultNodeManagedSessionRunnerDependencies = {
+      buildSandbox: async () => ({}) as SandboxExecutor,
+      buildModel: async () => ({}) as HarnessContext["model"],
+      buildTools: async () => ({}),
+      buildHarnessContext: async (input) => input as unknown as HarnessContext,
+      buildHarness: () => ({ run: async (context) => run(context as unknown as Context) }),
+      confirmedTools: { execute: async () => { throw new Error("unexpected confirmed tool execution"); } },
+      outcomes: { evaluate: async () => { throw new Error("unexpected outcome evaluation"); } },
+      clock: { now: () => new Date("2026-10-18T09:00:00.000Z") },
+      ids: { nextEventId: () => `event_waits_${++id}` },
+      subagentThreads: store,
+      subagentPolicy: () => ({ enabled: true, maxConcurrentSubagents: 2 }),
+    };
+    const runner = new DefaultNodeManagedSessionRunner(dependencies);
+    return {
+      frames,
+      store,
+      async accept(history: SessionEventView[] = []) {
+        await runner.start({ workspaceId: "workspace_01", sessionId: coordinator.id, session: coordinator, environment, initialEvents: [] });
+        const message: NodeManagedSessionRunnerAcceptInput["events"][number] = {
+          id: `event_user_${++id}`,
+          type: "user.message",
+          content: [{ type: "text", text: "Check the folder through the checker" }],
+          processedAt: "2026-10-18T08:59:00.000Z",
+        };
+        await runner.accept({
+          workspaceId: "workspace_01", sessionId: coordinator.id, session: coordinator, environment,
+          initialEvents: [], events: [message], historyEvents: [...history, message],
+          output: async (frame) => { frames.push(frame as Record<string, unknown>); },
+        });
+      },
+    };
+  }
+
+  /** A checker thread of an earlier turn that stopped on its bash call. */
+  async function waitingThread(store: MemorySessionThreadStore): Promise<SessionEventView[]> {
+    const { type: _type, ...agent } = checker;
+    await store.insert({ workspaceId: "workspace_01", thread: {
+      id: childThread, sessionId: coordinator.id, parentThreadId: "sthr_primary",
+      agent: { ...agent, type: "agent" }, archivedAt: null, createdAt: "2026-10-18T08:00:00.000Z",
+      updatedAt: "2026-10-18T08:00:00.000Z", stats: null, usage: null, status: "idle",
+    } });
+    return [
+      { id: "event_thread_created", type: "session.thread_created", agentName: "Checker",
+        parentThreadId: "sthr_primary", processedAt: "2026-10-18T08:00:00.000Z", sessionThreadId: childThread },
+      { id: "toolu_child_bash", type: "agent.tool_use", name: "bash", input: { command: "ls" },
+        evaluatedPermission: "ask", processedAt: "2026-10-18T08:00:01.000Z", sessionThreadId: childThread },
+      { id: "event_thread_idle", type: "session.thread_status_idle", agentName: "Checker",
+        processedAt: "2026-10-18T08:00:02.000Z", sessionThreadId: childThread,
+        stopReason: { type: "requires_action", eventIds: ["toolu_child_bash"] } },
+    ] as SessionEventView[];
+  }
+
+  it("a subagent with bash on always_ask leaves the session in requires_action with the thread's call", async () => {
+    let report: string | undefined;
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Coordinator") {
+        report = await context.delegateToAgent!("agent_checker", "Check the folder");
+        context.runtime.broadcast({ type: "agent.message", content: [{ type: "text", text: report }] });
+      } else {
+        callBash(context, "toolu_child_bash");
+      }
+    });
+
+    await f.accept();
+
+    const created = f.frames.find((frame) => frame.type === "session.thread_created")!;
+    const thread = created.session_thread_id;
+    expect(f.frames).toContainEqual(expect.objectContaining({
+      type: "agent.tool_use", id: "toolu_child_bash", session_thread_id: thread, evaluated_permission: "ask",
+    }));
+    expect(f.frames.filter((frame) => frame.type === "session.thread_status_idle")).toEqual([
+      expect.objectContaining({
+        session_thread_id: thread,
+        stop_reason: { type: "requires_action", event_ids: ["toolu_child_bash"] },
+      }),
+    ]);
+    expect(report).toBe(WAITING);
+    expect(f.frames.at(-1)).toMatchObject({
+      type: "session.status_idle",
+      stop_reason: { type: "requires_action", event_ids: ["toolu_child_bash"] },
+    });
+  });
+
+  it("a waiting thread runs no queued message on top of its unanswered call", async () => {
+    let childTurns = 0;
+    let status: string | undefined;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Coordinator") {
+        const child = await context.subagents!.create({ agentId: "agent_checker", message: "First" });
+        await context.subagents!.resume({ threadId: child.threadId, message: "Second" });
+        release();
+        status = (await context.subagents!.wait({ threadIds: [child.threadId] })).subagents[0]?.status;
+      } else {
+        childTurns += 1;
+        await gate;
+        callBash(context, `toolu_child_bash_${childTurns}`);
+      }
+    });
+
+    await f.accept();
+
+    expect(childTurns).toBe(1);
+    expect(status).toBe("requires_action");
+  });
+
+  it("a call that waits from an earlier turn still holds the session after a later message", async () => {
+    const store = new MemorySessionThreadStore();
+    const history = await waitingThread(store);
+    const f = fixture(async (context) => {
+      context.runtime.broadcast({ type: "agent.message", content: [{ type: "text", text: "Still waiting" }] });
+    }, store);
+
+    await f.accept(history);
+
+    expect(f.frames.at(-1)).toMatchObject({
+      type: "session.status_idle",
+      stop_reason: { type: "requires_action", event_ids: ["toolu_child_bash"] },
+    });
+  });
+
+  it("an archived thread holds nothing", async () => {
+    const store = new MemorySessionThreadStore();
+    const history = await waitingThread(store);
+    await store.archive({ workspaceId: "workspace_01", sessionId: coordinator.id, threadId: childThread, archivedAt: "2026-10-18T08:30:00.000Z" });
+    const f = fixture(async (context) => {
+      context.runtime.broadcast({ type: "agent.message", content: [{ type: "text", text: "Done" }] });
+    }, store);
+
+    await f.accept(history);
+
+    expect(f.frames.at(-1)).toMatchObject({ type: "session.status_idle", stop_reason: { type: "end_turn" } });
+  });
+
+  it("a result in any thread answers the subagent's call", async () => {
+    const store = new MemorySessionThreadStore();
+    const history = await waitingThread(store);
+    // A session written before slice 3 holds the answer to a child's call without a thread.
+    history.push({ id: "event_child_result", type: "agent.tool_result", toolUseId: "toolu_child_bash",
+      content: [{ type: "text", text: "Denied" }], isError: true, processedAt: "2026-10-18T08:10:00.000Z" } as SessionEventView);
+    const f = fixture(async (context) => {
+      context.runtime.broadcast({ type: "agent.message", content: [{ type: "text", text: "Done" }] });
+    }, store);
+
+    await f.accept(history);
+
+    expect(f.frames.at(-1)).toMatchObject({ type: "session.status_idle", stop_reason: { type: "end_turn" } });
+  });
+});
+
+describe("a confirmation in a subagent thread runs there (plan multiagent 3.1, slice 3)", () => {
+  const checkerTools = [{
+    type: "agent_toolset_20260401" as const,
+    configs: [{ name: "bash" as const, type: "bash" as const, enabled: true, permissionPolicy: { type: "always_ask" as const } }],
+    defaultConfig: { enabled: true, permissionPolicy: { type: "always_allow" as const } },
+  }];
+  const checker = {
+    type: "agent" as const,
+    id: "agent_checker",
+    description: null,
+    mcpServers: [],
+    model: { id: "local-model" },
+    name: "Checker",
+    skills: [],
+    system: "Check the folder",
+    tools: checkerTools,
+    version: 1,
+  };
+  const coordinator: Session = {
+    ...session,
+    id: "session_confirms",
+    agent: { ...session.agent, name: "Coordinator", multiagent: { type: "coordinator", agents: [checker] } },
+  };
+  const childThread = "sthr_checker";
+
+  type Context = { session: Session; runtime: ManagedNodeHarnessRuntime };
+  type Accepted = NodeManagedSessionRunnerAcceptInput["events"][number];
+  type Call = { id: string; asks: boolean; result?: string };
+
+  function say(context: Context, text: string): void {
+    context.runtime.broadcast({ type: "agent.message", content: [{ type: "text", text }] } as SessionEvent);
+  }
+
+  function fixture(
+    run: (context: Context) => Promise<void>,
+    options: Pick<DefaultNodeManagedSessionRunnerDependencies, "sessionLimits"> = {},
+  ) {
+    const store = new MemorySessionThreadStore();
+    const frames: Array<Record<string, unknown>> = [];
+    const executions: Array<{ id: string; agent: string; tools: unknown }> = [];
+    const runs: string[] = [];
+    let id = 0;
+    const runner = new DefaultNodeManagedSessionRunner({
+      ...options,
+      buildSandbox: async () => ({}) as SandboxExecutor,
+      buildModel: async () => ({}) as HarnessContext["model"],
+      buildTools: async () => ({}),
+      buildHarnessContext: async (input) => input as unknown as HarnessContext,
+      buildHarness: () => ({
+        run: async (context) => {
+          const harness = context as unknown as Context;
+          runs.push(harness.session.agent.name);
+          await run(harness);
+        },
+      }),
+      confirmedTools: {
+        execute: async (call) => {
+          executions.push({ id: call.toolUse.id, agent: call.session.agent.name, tools: call.session.agent.tools });
+          return { content: [{ type: "text", text: `ran ${call.toolUse.id}` }], isError: false };
+        },
+      },
+      outcomes: { evaluate: async () => { throw new Error("unexpected outcome evaluation"); } },
+      clock: { now: () => new Date("2026-10-18T10:00:00.000Z") },
+      ids: { nextEventId: () => `event_confirms_${++id}` },
+      subagentThreads: store,
+      subagentPolicy: () => ({ enabled: true, maxConcurrentSubagents: 2 }),
+    });
+    return {
+      frames,
+      executions,
+      runs,
+      /** An earlier execution: the coordinator delegated to the checker, the
+       * checker stopped on its calls, the delegation returned the waiting text. */
+      async seed(calls: Call[]): Promise<SessionEventView[]> {
+        const { type: _type, ...agent } = checker;
+        await store.insert({ workspaceId: "workspace_01", thread: {
+          id: childThread, sessionId: coordinator.id, parentThreadId: "sthr_primary",
+          agent: { ...agent, type: "agent" }, archivedAt: null, createdAt: "2026-10-18T09:00:00.000Z",
+          updatedAt: "2026-10-18T09:00:00.000Z", stats: null, usage: null, status: "idle",
+        } });
+        let second = 0;
+        const at = () => `2026-10-18T09:00:${String(++second).padStart(2, "0")}.000Z`;
+        const asking = calls.filter((call) => call.asks).map((call) => call.id);
+        return [
+          { id: "event_user_task", type: "user.message", content: [{ type: "text", text: "Check the folder through the checker" }], processedAt: at() },
+          { id: "toolu_delegate", type: "agent.tool_use", name: "call_agent_agent_checker", input: { message: "Check the folder" }, processedAt: at() },
+          { id: "event_sent", type: "agent.thread_message_sent", toSessionThreadId: childThread, toAgentName: "Checker",
+            content: [{ type: "text", text: "Check the folder" }], processedAt: at() },
+          { id: "event_thread_created", type: "session.thread_created", agentName: "Checker",
+            parentThreadId: "sthr_primary", processedAt: at(), sessionThreadId: childThread },
+          { id: "event_received", type: "agent.thread_message_received", fromSessionThreadId: "sthr_primary", fromAgentName: "Coordinator",
+            fromMessageId: "event_sent", content: [{ type: "text", text: "Check the folder" }], processedAt: at(), sessionThreadId: childThread },
+          { id: "event_thread_running", type: "session.thread_status_running", agentName: "Checker", processedAt: at(), sessionThreadId: childThread },
+          ...calls.map((call) => ({ id: call.id, type: "agent.tool_use", name: call.asks ? "bash" : "read",
+            input: { command: call.id }, processedAt: at(), sessionThreadId: childThread,
+            ...(call.asks && { evaluatedPermission: "ask" }) })),
+          ...calls.filter((call) => call.result !== undefined).map((call) => ({ id: `event_result_${call.id}`, type: "agent.tool_result",
+            toolUseId: call.id, content: [{ type: "text", text: call.result }], isError: false, processedAt: at(), sessionThreadId: childThread })),
+          { id: "event_thread_idle", type: "session.thread_status_idle", agentName: "Checker", processedAt: at(), sessionThreadId: childThread,
+            stopReason: { type: "requires_action", eventIds: asking } },
+          { id: "event_delegate_result", type: "agent.tool_result", toolUseId: "toolu_delegate",
+            content: [{ type: "text", text: "The subagent is waiting for a tool confirmation. Its report will arrive as a separate message." }],
+            isError: false, processedAt: at() },
+          { id: "event_waits", type: "agent.message", content: [{ type: "text", text: "The checker waits for you" }], processedAt: at() },
+          { id: "event_idle", type: "session.status_idle", stopReason: { type: "requires_action", eventIds: asking }, processedAt: at() },
+        ] as SessionEventView[];
+      },
+      async accept(events: Accepted[], history: SessionEventView[]) {
+        await runner.start({ workspaceId: "workspace_01", sessionId: coordinator.id, session: coordinator, environment, initialEvents: [] });
+        await runner.accept({
+          workspaceId: "workspace_01", sessionId: coordinator.id, session: coordinator, environment,
+          initialEvents: [], events, historyEvents: history,
+          output: async (frame) => { frames.push(frame as Record<string, unknown>); },
+        });
+      },
+    };
+  }
+
+  function confirm(id: string, toolUseId: string, result: "allow" | "deny", denyMessage?: string): Accepted {
+    return {
+      id, type: "user.tool_confirmation", result, toolUseId, sessionThreadId: childThread,
+      processedAt: "2026-10-18T09:30:00.000Z", ...(denyMessage !== undefined && { denyMessage }),
+    };
+  }
+
+  const childFrames = (frames: Array<Record<string, unknown>>, type: string) =>
+    frames.filter((frame) => frame.type === type && frame.session_thread_id === childThread);
+  /** The last event a model reads: status events of the thread are left out. */
+  const lastTurnEvent = (events: SessionEvent[]) => events.filter((event) => !event.type.startsWith("session.")).at(-1);
+
+  it("allow runs the call once with the subagent's tools, the subagent goes on and its report wakes the coordinator", async () => {
+    let checkerHistory: SessionEvent[] = [];
+    let coordinatorMessages: unknown[] = [];
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") {
+        checkerHistory = context.runtime.history.getEvents();
+        say(context, "Three files");
+      } else {
+        coordinatorMessages = context.runtime.history.getMessages();
+        say(context, "The checker found three files");
+      }
+    });
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await f.accept([allow], [...history, allow]);
+
+    expect(f.executions).toEqual([{ id: "toolu_child_bash", agent: "Checker", tools: checkerTools }]);
+    expect(childFrames(f.frames, "agent.tool_result")).toEqual([
+      expect.objectContaining({ tool_use_id: "toolu_child_bash", content: [{ type: "text", text: "ran toolu_child_bash" }] }),
+    ]);
+    expect(f.frames.filter((frame) => frame.type === "agent.tool_result" && frame.session_thread_id === undefined)).toEqual([]);
+    expect(f.runs).toEqual(["Checker", "Coordinator"]);
+    // The checker goes on from the result, without a new message.
+    expect(childFrames(f.frames, "agent.thread_message_received")).toEqual([]);
+    expect(lastTurnEvent(checkerHistory)).toMatchObject({ type: "agent.tool_result", tool_use_id: "toolu_child_bash" });
+    expect(childFrames(f.frames, "session.thread_status_idle")).toEqual([
+      expect.objectContaining({ stop_reason: { type: "end_turn" } }),
+    ]);
+    const reports = f.frames.filter((frame) => frame.type === "agent.thread_message_received");
+    expect(reports).toEqual([expect.objectContaining({
+      from_session_thread_id: childThread, from_agent_name: "Checker", content: [{ type: "text", text: "Three files" }],
+    })]);
+    expect(reports[0]).not.toHaveProperty("session_thread_id");
+    expect(coordinatorMessages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "Three files" }] });
+    expect(f.frames.at(-1)).toMatchObject({ type: "session.status_idle", stop_reason: { type: "end_turn" } });
+  });
+
+  it("two confirmations of one batch in the subagent thread both run", async () => {
+    const f = fixture(async (context) => say(context, context.session.agent.name === "Checker" ? "Both ran" : "Done"));
+    const history = await f.seed([{ id: "toolu_child_bash_1", asks: true }, { id: "toolu_child_bash_2", asks: true }]);
+    const first = confirm("event_allow_1", "toolu_child_bash_1", "allow");
+    const second = confirm("event_allow_2", "toolu_child_bash_2", "allow");
+
+    await f.accept([first, second], [...history, first, second]);
+
+    expect(f.executions.map((execution) => execution.id)).toEqual(["toolu_child_bash_1", "toolu_child_bash_2"]);
+    expect(childFrames(f.frames, "agent.tool_result").map((frame) => frame.tool_use_id)).toEqual(["toolu_child_bash_1", "toolu_child_bash_2"]);
+    expect(f.runs).toEqual(["Checker", "Coordinator"]);
+  });
+
+  it("deny puts the error into the subagent thread and the subagent goes on", async () => {
+    let checkerHistory: SessionEvent[] = [];
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") checkerHistory = context.runtime.history.getEvents();
+      say(context, context.session.agent.name === "Checker" ? "Could not check" : "Done");
+    });
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const deny = confirm("event_deny", "toolu_child_bash", "deny", "Not now");
+
+    await f.accept([deny], [...history, deny]);
+
+    expect(f.executions).toEqual([]);
+    expect(childFrames(f.frames, "agent.tool_result")).toEqual([expect.objectContaining({
+      tool_use_id: "toolu_child_bash", is_error: true, content: [{ type: "text", text: "Denied: Not now" }],
+    })]);
+    expect(lastTurnEvent(checkerHistory)).toMatchObject({ type: "agent.tool_result", tool_use_id: "toolu_child_bash", is_error: true });
+    expect(f.runs).toEqual(["Checker", "Coordinator"]);
+  });
+
+  it("a second allow on an answered call of the subagent runs nothing and wakes no model", async () => {
+    const f = fixture(async (context) => say(context, "Again"));
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const first = confirm("event_allow_1", "toolu_child_bash", "allow");
+    const second = { ...confirm("event_allow_2", "toolu_child_bash", "allow"), processedAt: "2026-10-18T09:40:00.000Z" };
+    const answered = [
+      first,
+      { id: "event_child_result", type: "agent.tool_result", toolUseId: "toolu_child_bash", content: [{ type: "text", text: "ran" }],
+        isError: false, processedAt: "2026-10-18T09:30:01.000Z", sessionThreadId: childThread },
+    ] as SessionEventView[];
+
+    await f.accept([second], [...history, ...answered, second]);
+
+    expect(f.executions).toEqual([]);
+    expect(f.frames.filter((frame) => frame.type === "agent.tool_result")).toEqual([]);
+    expect(f.runs).toEqual([]);
+  });
+
+  it("a mixed batch runs only the waiting call, and the subagent sees both results", async () => {
+    let checkerHistory: SessionEvent[] = [];
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") checkerHistory = context.runtime.history.getEvents();
+      say(context, "Done");
+    });
+    const history = await f.seed([{ id: "toolu_child_read", asks: false, result: "a.txt" }, { id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await f.accept([allow], [...history, allow]);
+
+    expect(f.executions.map((execution) => execution.id)).toEqual(["toolu_child_bash"]);
+    const results = checkerHistory.filter((event) => event.type === "agent.tool_result");
+    expect(results.map((event) => (event as { tool_use_id: string }).tool_use_id)).toEqual(["toolu_child_read", "toolu_child_bash"]);
+    expect(f.runs).toEqual(["Checker", "Coordinator"]);
+  });
+
+  it("a subagent that asks again holds the session and wakes no coordinator", async () => {
+    const f = fixture(async (context) => {
+      context.runtime.broadcast({
+        type: "agent.tool_use", id: "toolu_child_bash_again", name: "bash", input: { command: "rm a.txt" }, evaluated_permission: "ask",
+      } as SessionEvent);
+    });
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await f.accept([allow], [...history, allow]);
+
+    expect(f.runs).toEqual(["Checker"]);
+    expect(f.frames.filter((frame) => frame.type === "agent.thread_message_received")).toEqual([]);
+    expect(f.frames.at(-1)).toMatchObject({
+      type: "session.status_idle",
+      stop_reason: { type: "requires_action", event_ids: ["toolu_child_bash_again"] },
+    });
+  });
+
+  /** What the run of the first allow wrote after it: the call's result, the
+   * checker's turn and, unless the run crashed before it, the report. */
+  function answeredTurn(reported: boolean): SessionEventView[] {
+    const at = (second: number) => `2026-10-18T09:30:${String(second).padStart(2, "0")}.000Z`;
+    return [
+      { id: "event_child_result", type: "agent.tool_result", toolUseId: "toolu_child_bash",
+        content: [{ type: "text", text: "ran toolu_child_bash" }], isError: false, processedAt: at(1), sessionThreadId: childThread },
+      { id: "event_child_running", type: "session.thread_status_running", agentName: "Checker", processedAt: at(2), sessionThreadId: childThread },
+      { id: "event_child_answer", type: "agent.message", content: [{ type: "text", text: "Three files" }], processedAt: at(3),
+        sessionThreadId: childThread },
+      { id: "event_child_idle", type: "session.thread_status_idle", agentName: "Checker", stopReason: { type: "end_turn" },
+        processedAt: at(4), sessionThreadId: childThread },
+      ...(reported ? [
+        { id: "event_report", type: "agent.thread_message_received", fromSessionThreadId: childThread, fromAgentName: "Checker",
+          content: [{ type: "text", text: "Three files" }], processedAt: at(5) },
+        { id: "event_coordinator_answer", type: "agent.message", content: [{ type: "text", text: "The checker found three files" }],
+          processedAt: at(6) },
+        { id: "event_idle_after", type: "session.status_idle", stopReason: { type: "end_turn" }, processedAt: at(7) },
+      ] : []),
+    ] as SessionEventView[];
+  }
+  const reportsOf = (frames: Array<Record<string, unknown>>) =>
+    frames.filter((frame) => frame.type === "agent.thread_message_received");
+
+  it("a second allow sent before the first ran repeats neither the subagent's turn nor its report", async () => {
+    const f = fixture(async (context) => say(context, "Again"));
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const first = confirm("event_allow_1", "toolu_child_bash", "allow");
+    const second = confirm("event_allow_2", "toolu_child_bash", "allow");
+
+    // Both allows were accepted before the run of the first one answered the call.
+    await f.accept([second], [...history, first, second, ...answeredTurn(true)]);
+
+    expect(f.executions).toEqual([]);
+    expect(f.runs).toEqual([]);
+    expect(reportsOf(f.frames)).toEqual([]);
+  });
+
+  it("a replay after the subagent's turn writes only its missing report and wakes the coordinator", async () => {
+    let coordinatorMessages: unknown[] = [];
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") throw new Error("the checker's turn already ran");
+      coordinatorMessages = context.runtime.history.getMessages();
+      say(context, "The checker found three files");
+    });
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await f.accept([allow], [...history, allow, ...answeredTurn(false)]);
+
+    expect(f.executions).toEqual([]);
+    expect(f.runs).toEqual(["Coordinator"]);
+    expect(reportsOf(f.frames)).toEqual([expect.objectContaining({
+      from_session_thread_id: childThread, from_agent_name: "Checker", content: [{ type: "text", text: "Three files" }],
+    })]);
+    expect(coordinatorMessages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "Three files" }] });
+  });
+
+  it("a replay before the subagent's turn ran runs that turn and not the call", async () => {
+    const f = fixture(async (context) => say(context, context.session.agent.name === "Checker" ? "Three files" : "Done"));
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await f.accept([allow], [...history, allow, answeredTurn(false)[0]!]);
+
+    expect(f.executions).toEqual([]);
+    expect(f.runs).toEqual(["Checker", "Coordinator"]);
+    expect(reportsOf(f.frames)).toHaveLength(1);
+  });
+
+  it("a subagent that fails after the answer tells the coordinator and wakes it", async () => {
+    let coordinatorMessages: unknown[] = [];
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") throw new Error("the checker broke");
+      coordinatorMessages = context.runtime.history.getMessages();
+      say(context, "The checker failed");
+    });
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await f.accept([allow], [...history, allow]);
+
+    const failed = "The subagent failed: its turn ended with an error.";
+    expect(f.runs).toEqual(["Checker", "Coordinator"]);
+    expect(reportsOf(f.frames)).toEqual([expect.objectContaining({
+      from_session_thread_id: childThread, content: [{ type: "text", text: failed }],
+    })]);
+    expect(coordinatorMessages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: failed }] });
+    expect(f.frames.at(-1)).toMatchObject({ type: "session.status_idle", stop_reason: { type: "end_turn" } });
+  });
+
+  it("a subagent stopped at the limit after the answer tells the coordinator, which reads it after a raise", async () => {
+    const stopped = "The subagent stopped: the session limit is reached.";
+    let coordinatorMessages: unknown[] = [];
+    const run = async (context: Context) => {
+      if (context.session.agent.name === "Checker") throw new Error("unexpected checker turn");
+      coordinatorMessages = context.runtime.history.getMessages();
+      say(context, "I will ask the checker again");
+    };
+    const atLimit = fixture(run, {
+      sessionLimits: { read: async () => ({ maxTokens: 100, maxChildTurns: 20, usedTokens: 100, usedChildTurns: 1 }) },
+    });
+    const history = await atLimit.seed([{ id: "toolu_child_bash", asks: true }]);
+    const allow = confirm("event_allow", "toolu_child_bash", "allow");
+
+    await atLimit.accept([allow], [...history, allow]);
+
+    expect(atLimit.executions.map((execution) => execution.id)).toEqual(["toolu_child_bash"]);
+    expect(atLimit.runs).toEqual([]);
+    expect(reportsOf(atLimit.frames)).toEqual([expect.objectContaining({
+      from_session_thread_id: childThread, from_agent_name: "Checker", content: [{ type: "text", text: stopped }],
+    })]);
+    expect(atLimit.frames.at(-1)).toMatchObject({ type: "session.status_idle", stop_reason: { type: "budget_reached" } });
+
+    // The raise continues the stopped turn: the coordinator reads the note and decides.
+    const raised = fixture(run);
+    const at = (second: number) => `2026-10-18T09:31:${String(second).padStart(2, "0")}.000Z`;
+    await raised.accept([sessionLimitContinuationEvent("event_stop", at(9))] as Accepted[], [
+      ...history,
+      allow,
+      { id: "event_child_result", type: "agent.tool_result", toolUseId: "toolu_child_bash",
+        content: [{ type: "text", text: "ran toolu_child_bash" }], isError: false, processedAt: at(1), sessionThreadId: childThread },
+      { id: "event_child_idle", type: "session.thread_status_idle", agentName: "Checker", stopReason: { type: "budget_reached" },
+        processedAt: at(2), sessionThreadId: childThread },
+      { id: "event_note", type: "agent.thread_message_received", fromSessionThreadId: childThread, fromAgentName: "Checker",
+        content: [{ type: "text", text: stopped }], processedAt: at(3) },
+      { id: "event_stop", type: "session.status_idle", stopReason: { type: "budget_reached" }, processedAt: at(4) },
+    ] as SessionEventView[]);
+
+    expect(raised.runs).toEqual(["Coordinator"]);
+    expect(coordinatorMessages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: stopped }] });
+  });
+
+  it("a report from an earlier execution reaches the coordinator's model as a user message", async () => {
+    let coordinatorMessages: unknown[] = [];
+    const f = fixture(async (context) => {
+      coordinatorMessages = context.runtime.history.getMessages();
+      say(context, "Noted");
+    });
+    const history = await f.seed([{ id: "toolu_child_bash", asks: true, result: "ran" }]);
+    const report = { id: "event_report", type: "agent.thread_message_received", fromSessionThreadId: childThread,
+      fromAgentName: "Checker", content: [{ type: "text", text: "Three files" }], processedAt: "2026-10-18T09:31:00.000Z" } as SessionEventView;
+    const message: Accepted = { id: "event_user_next", type: "user.message", content: [{ type: "text", text: "Next" }],
+      processedAt: "2026-10-18T09:32:00.000Z" };
+
+    await f.accept([message], [...history, report, message]);
+
+    expect(coordinatorMessages.slice(-2)).toEqual([
+      { role: "user", content: [{ type: "text", text: "Three files" }] },
+      { role: "user", content: [{ type: "text", text: "Next" }] },
+    ]);
+  });
+});
+
+describe("the session stops at its limit (plan multiagent 3.Б, slice 2)", () => {
+  const STOPPED = "The subagent stopped: the session limit is reached.";
+  const WAITING = "The subagent is waiting for a tool confirmation. Its report will arrive as a separate message.";
+  const checker = {
+    type: "agent" as const,
+    id: "agent_checker",
+    description: null,
+    mcpServers: [],
+    model: { id: "local-model" },
+    name: "Checker",
+    skills: [],
+    system: "Check the folder",
+    tools: [{
+      type: "agent_toolset_20260401" as const,
+      configs: [{ name: "bash" as const, type: "bash" as const, enabled: true, permissionPolicy: { type: "always_ask" as const } }],
+      defaultConfig: { enabled: true, permissionPolicy: { type: "always_allow" as const } },
+    }],
+    version: 1,
+  };
+  const coordinator: Session = {
+    ...session,
+    id: "session_limits",
+    agent: { ...session.agent, name: "Coordinator", multiagent: { type: "coordinator", agents: [checker] } },
+  };
+
+  type Context = {
+    session: Session;
+    runtime: ManagedNodeHarnessRuntime;
+    delegateToAgent?: (agentId: string, message: string) => Promise<string>;
+  };
+  type Accepted = NodeManagedSessionRunnerAcceptInput["events"][number];
+  type Frame = Record<string, unknown>;
+
+  /** One model request as Pi makes it: the limit check first. At the limit
+   * nothing goes out and Pi throws its own error. */
+  async function request(context: Context, tokens: number): Promise<void> {
+    await context.runtime.beforeModelRequest?.();
+    if (context.runtime.limitReached) throw new SessionLimitError("Session limit reached");
+    const start = `span_${Math.random().toString(36).slice(2)}`;
+    context.runtime.broadcast({ type: "span.model_request_start", id: start, model: "local-model" } as unknown as SessionEvent);
+    context.runtime.broadcast({
+      type: "span.model_request_end", model: "local-model", model_request_start_id: start, is_error: false,
+      model_usage: { input_tokens: tokens - 5, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    } as unknown as SessionEvent);
+    await context.runtime.reportUsage(tokens - 5, 5);
+  }
+
+  function say(context: Context, text: string): void {
+    context.runtime.broadcast({ type: "agent.message", content: [{ type: "text", text }] } as SessionEvent);
+  }
+
+  /** The counter as the projection keeps it: the work of the frames written
+   * so far plus the work of earlier executions. */
+  function limitsOf(frames: Frame[], max: { maxTokens: number; maxChildTurns: number }, earlier = { tokens: 0, childTurns: 0 }) {
+    return {
+      read: vi.fn(async () => {
+        let usedTokens = earlier.tokens;
+        let usedChildTurns = earlier.childTurns;
+        for (const frame of frames) {
+          const usage = frame.model_usage as { input_tokens: number; output_tokens: number } | undefined;
+          if (frame.type === "span.model_request_end" && usage) usedTokens += usage.input_tokens + usage.output_tokens;
+          if (frame.type === "session.thread_status_running" && frame.session_thread_id !== "sthr_primary") usedChildTurns += 1;
+        }
+        return { ...max, usedTokens, usedChildTurns };
+      }),
+    };
+  }
+
+  function fixture(
+    run: (context: Context) => Promise<void>,
+    max: { maxTokens: number; maxChildTurns: number },
+    options: { earlier?: { tokens: number; childTurns: number }; evaluate?: () => Promise<never> } = {},
+  ) {
+    const frames: Frame[] = [];
+    const runs: string[] = [];
+    const limits = limitsOf(frames, max, options.earlier);
+    let id = 0;
+    const runner = new DefaultNodeManagedSessionRunner({
+      buildSandbox: async () => ({}) as SandboxExecutor,
+      buildModel: async () => ({}) as HarnessContext["model"],
+      buildTools: async () => ({}),
+      buildHarnessContext: async (input) => input as unknown as HarnessContext,
+      buildHarness: () => ({
+        run: async (context) => {
+          const harness = context as unknown as Context;
+          runs.push(harness.session.agent.name);
+          await run(harness);
+        },
+      }),
+      confirmedTools: { execute: async () => { throw new Error("unexpected confirmed tool execution"); } },
+      outcomes: { evaluate: options.evaluate ?? (async () => { throw new Error("unexpected outcome evaluation"); }) },
+      clock: { now: () => new Date("2026-10-18T11:00:00.000Z") },
+      ids: { nextEventId: () => `event_limits_${++id}` },
+      harnessRetry: { attempts: 3, delayMs: () => 0 },
+      subagentThreads: new MemorySessionThreadStore(),
+      subagentPolicy: () => ({ enabled: true, maxConcurrentSubagents: 2 }),
+      sessionLimits: limits,
+    } as DefaultNodeManagedSessionRunnerDependencies);
+    return {
+      frames,
+      runs,
+      limits,
+      async accept(events: Accepted[] = [{
+        id: "event_user_task", type: "user.message",
+        content: [{ type: "text", text: "Check the folder through the checker" }],
+        processedAt: "2026-10-18T10:59:00.000Z",
+      }], historyEvents: SessionEventView[] = events as SessionEventView[]) {
+        await runner.start({ workspaceId: "workspace_01", sessionId: coordinator.id, session: coordinator, environment, initialEvents: [] });
+        await runner.accept({
+          workspaceId: "workspace_01", sessionId: coordinator.id, session: coordinator, environment,
+          initialEvents: [], events, historyEvents,
+          // A write takes time, as the SQL projection does: the check has
+          // to wait for the frames before it reads the counter.
+          output: async (frame) => {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            frames.push(frame as Frame);
+          },
+        });
+      },
+    };
+  }
+
+  const ofType = (frames: Frame[], type: string) => frames.filter((frame) => frame.type === type);
+  const budget = { type: "budget_reached" };
+
+  /** CMA order at the limit: the threads stop, then session.usage, then the
+   * session goes idle with budget_reached. Nothing reports an error. */
+  function expectStoppedAtLimit(frames: Frame[]): void {
+    expect(ofType(frames, "session.error")).toEqual([]);
+    expect(ofType(frames, "session.status_rescheduled")).toEqual([]);
+    expect(frames.at(-1)).toMatchObject({ type: "session.status_idle", stop_reason: budget });
+    expect(frames.at(-2)).toMatchObject({ type: "session.usage" });
+    const threadStops = frames.flatMap((frame, index) =>
+      frame.type === "session.thread_status_idle" && (frame.stop_reason as { type?: string }).type === "budget_reached" ? [index] : []);
+    for (const index of threadStops) expect(index).toBeLessThan(frames.length - 2);
+  }
+
+  it("a turn stops between requests at the token limit, without a retry and without session.error", async () => {
+    const f = fixture(async (context) => {
+      await request(context, 110);
+      context.runtime.broadcast({ type: "agent.tool_use", id: "toolu_read", name: "read", input: { path: "a.txt" } } as SessionEvent);
+      context.runtime.broadcast({ type: "agent.tool_result", tool_use_id: "toolu_read", content: [{ type: "text", text: "a" }] } as SessionEvent);
+      await request(context, 110);
+      say(context, "never written");
+    }, { maxTokens: 100, maxChildTurns: 20 });
+
+    await f.accept();
+
+    expect(f.runs).toEqual(["Coordinator"]);
+    expect(ofType(f.frames, "span.model_request_end")).toHaveLength(1);
+    expect(ofType(f.frames, "agent.message")).toEqual([]);
+    expectStoppedAtLimit(f.frames);
+    expect(f.frames.at(-2)).toMatchObject({ usage: { input_tokens: 105, output_tokens: 5 } });
+  });
+
+  it("a session already at the limit sends no request on a new message", async () => {
+    const f = fixture(async (context) => {
+      await request(context, 10);
+      say(context, "never written");
+    }, { maxTokens: 100, maxChildTurns: 20 }, { earlier: { tokens: 100, childTurns: 0 } });
+
+    await f.accept();
+
+    expect(f.runs).toEqual(["Coordinator"]);
+    expect(f.frames.map((frame) => frame.type)).toEqual(["session.status_running", "session.usage", "session.status_idle"]);
+    expectStoppedAtLimit(f.frames);
+  });
+
+  it("a subagent beyond max_child_turns starts no turn, its message stays queued and the session stops", async () => {
+    const reports: string[] = [];
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") {
+        await request(context, 20);
+        say(context, "first check done");
+        return;
+      }
+      await request(context, 20);
+      reports.push(await context.delegateToAgent!("agent_checker", "Check the folder"));
+      reports.push(await context.delegateToAgent!("agent_checker", "Check it again"));
+      await request(context, 20);
+      say(context, "never written");
+    }, { maxTokens: 1000, maxChildTurns: 1 });
+
+    await f.accept();
+
+    expect(reports).toEqual(["first check done", STOPPED]);
+    expect(f.runs).toEqual(["Coordinator", "Checker"]);
+    const threads = ofType(f.frames, "session.thread_created").map((frame) => frame.session_thread_id);
+    expect(threads).toHaveLength(2);
+    const second = threads[1];
+    expect(ofType(f.frames, "session.thread_status_running").map((frame) => frame.session_thread_id)).toEqual([threads[0]]);
+    expect(f.frames.filter((frame) => frame.session_thread_id === second).map((frame) => frame.type))
+      .toEqual(["session.thread_created", "session.thread_status_idle"]);
+    expect(ofType(f.frames, "agent.thread_message_sent").filter((frame) => frame.to_session_thread_id === second)).toHaveLength(1);
+    expect(ofType(f.frames, "session.thread_status_idle").find((frame) => frame.session_thread_id === second))
+      .toMatchObject({ stop_reason: budget });
+    expect(ofType(f.frames, "agent.message").map((frame) => (frame.content as Array<{ text: string }>)[0]!.text))
+      .toEqual(["first check done"]);
+    expectStoppedAtLimit(f.frames);
+  });
+
+  it("a subagent that spends the tokens stops its thread on budget_reached, and the coordinator stops after it", async () => {
+    let report: string | undefined;
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") {
+        await request(context, 80);
+        await request(context, 80);
+        say(context, "never written");
+        return;
+      }
+      await request(context, 30);
+      report = await context.delegateToAgent!("agent_checker", "Check the folder");
+      await request(context, 30);
+      say(context, "never written");
+    }, { maxTokens: 100, maxChildTurns: 20 });
+
+    await f.accept();
+
+    expect(report).toBe(STOPPED);
+    expect(f.runs).toEqual(["Coordinator", "Checker"]);
+    const thread = ofType(f.frames, "session.thread_created")[0]!.session_thread_id;
+    expect(ofType(f.frames, "session.thread_status_idle")).toEqual([
+      expect.objectContaining({ session_thread_id: thread, stop_reason: budget }),
+    ]);
+    expect(ofType(f.frames, "span.model_request_end")).toHaveLength(2);
+    expect(ofType(f.frames, "agent.message")).toEqual([]);
+    expectStoppedAtLimit(f.frames);
+  });
+
+  it("a call that waits for a person holds the session in requires_action over the limit", async () => {
+    let report: string | undefined;
+    const f = fixture(async (context) => {
+      if (context.session.agent.name === "Checker") {
+        await request(context, 110);
+        context.runtime.broadcast({
+          type: "agent.tool_use", id: "toolu_child_bash", name: "bash", input: { command: "ls" }, evaluated_permission: "ask",
+        } as SessionEvent);
+        return;
+      }
+      await request(context, 10);
+      report = await context.delegateToAgent!("agent_checker", "Check the folder");
+      await request(context, 10);
+      say(context, "never written");
+    }, { maxTokens: 100, maxChildTurns: 20 });
+
+    await f.accept();
+
+    expect(report).toBe(WAITING);
+    expect(ofType(f.frames, "session.error")).toEqual([]);
+    expect(f.frames.at(-1)).toMatchObject({
+      type: "session.status_idle",
+      stop_reason: { type: "requires_action", event_ids: ["toolu_child_bash"] },
+    });
+  });
+
+  it("the outcome grader does not run at the limit", async () => {
+    const evaluate = vi.fn(async (): Promise<never> => { throw new Error("unexpected outcome evaluation"); });
+    const f = fixture(async (context) => {
+      await request(context, 110);
+      say(context, "migration shipped");
+    }, { maxTokens: 100, maxChildTurns: 20 }, { evaluate });
+
+    await f.accept([{
+      id: "event_define_outcome", type: "user.define_outcome", description: "Ship the migration",
+      rubric: { type: "text", content: "All SDK contracts pass" }, maxIterations: 3, outcomeId: "outc_limits",
+      processedAt: "2026-10-18T10:59:00.000Z",
+    }]);
+
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(ofType(f.frames, "span.outcome_evaluation_start")).toEqual([]);
+    expectStoppedAtLimit(f.frames);
+  });
+
+  describe("a raise continues the stopped turn (plan multiagent 3.Б, slice 3)", () => {
+    const at = (second: number) => `2026-10-18T10:59:${String(second).padStart(2, "0")}.000Z`;
+    const stoppedTurn: SessionEventView[] = [
+      { id: "event_user_task", type: "user.message", content: [{ type: "text", text: "Read a.txt" }], processedAt: at(0) },
+      { id: "toolu_read", type: "agent.tool_use", name: "read", input: { path: "a.txt" }, processedAt: at(1) },
+      { id: "event_read_result", type: "agent.tool_result", toolUseId: "toolu_read", content: [{ type: "text", text: "a" }], processedAt: at(2) },
+      { id: "event_stop", type: "session.status_idle", stopReason: { type: "budget_reached" }, processedAt: at(3) },
+    ];
+    const continuation = [sessionLimitContinuationEvent("event_stop", "2026-10-18T11:00:00.000Z")] as Accepted[];
+
+    it("runs the turn from the log, without a new message", async () => {
+      const f = fixture(async (context) => {
+        await request(context, 10);
+        say(context, "a holds the letter a");
+      }, { maxTokens: 1000, maxChildTurns: 20 }, { earlier: { tokens: 100, childTurns: 0 } });
+
+      await f.accept(continuation, stoppedTurn);
+
+      expect(f.runs).toEqual(["Coordinator"]);
+      expect(f.frames.map((frame) => frame.type)).toEqual([
+        "session.status_running", "span.model_request_start", "span.model_request_end", "session.usage",
+        "agent.message", "session.status_idle",
+      ]);
+      expect(f.frames.at(-1)).toMatchObject({ stop_reason: { type: "end_turn" } });
+    });
+
+    it("writes nothing when a turn ran after the stop", async () => {
+      const f = fixture(async () => { throw new Error("unexpected turn"); }, { maxTokens: 1000, maxChildTurns: 20 });
+
+      await f.accept(continuation, [
+        ...stoppedTurn,
+        { id: "event_running", type: "session.status_running", processedAt: at(4) },
+        { id: "event_answer", type: "agent.message", content: [{ type: "text", text: "done" }], processedAt: at(5) },
+        { id: "event_end", type: "session.status_idle", stopReason: { type: "end_turn" }, processedAt: at(6) },
+      ]);
+
+      expect(f.runs).toEqual([]);
+      expect(f.frames).toEqual([]);
+    });
+
+    it("runs no model for a turn that already has its answer", async () => {
+      const f = fixture(async () => { throw new Error("unexpected turn"); }, { maxTokens: 1000, maxChildTurns: 20 });
+
+      await f.accept(continuation, [
+        stoppedTurn[0]!,
+        { id: "event_answer", type: "agent.message", content: [{ type: "text", text: "done" }], processedAt: at(1) },
+        { id: "event_stop", type: "session.status_idle", stopReason: { type: "budget_reached" }, processedAt: at(2) },
+      ]);
+
+      expect(f.runs).toEqual([]);
+      expect(f.frames.map((frame) => frame.type)).toEqual(["session.status_running", "session.status_idle"]);
+      expect(f.frames.at(-1)).toMatchObject({ stop_reason: { type: "end_turn" } });
+    });
   });
 });

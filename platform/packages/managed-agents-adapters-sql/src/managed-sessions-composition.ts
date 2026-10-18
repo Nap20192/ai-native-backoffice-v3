@@ -13,6 +13,7 @@ import {
   type SessionThreadLifecycleCommandPort,
   type SessionThreadsApplicationPort,
   type SessionEnvironmentSourcePort,
+  type SessionLimitsPort,
 } from "@open-managed-agents/managed-agents-application";
 import {
   createApp,
@@ -55,6 +56,7 @@ import {
   sessionAgentSourcePort,
   sessionEnvironmentSourcePort,
   sessionLifecyclePort,
+  sessionLimitsPort,
   sessionResourceResolverPort,
   sessionStorePort,
   sessionsModule,
@@ -82,7 +84,10 @@ import { SqlSessionEventPersistence } from "./session-events-sql-persistence";
 import { SqlMemoryStoreSource } from "./memory-store-sql-source";
 import { SqlSessionPersistence } from "./sessions-sql-persistence";
 import { SqlSessionResourceStore } from "@open-managed-agents/session-resource-store-sql";
-import { SqlSessionRuntimeProjectionPersistence } from "./session-runtime-projection-sql-persistence";
+import {
+  SqlSessionRuntimeProjectionPersistence,
+  type SqlRuntimeProjectionEffect,
+} from "./session-runtime-projection-sql-persistence";
 import { SqlSessionSource } from "./session-sql-source";
 import { SqlSessionThreadContextSource } from "./session-thread-context-sql-source";
 import { SqlSessionThreadStore } from "@open-managed-agents/session-thread-store-sql";
@@ -135,6 +140,15 @@ export interface SqlManagedSessionsCompositionDependencies {
    * such as Cloudflare Durable Objects dispatch directly instead.
    */
   executionOutbox?: boolean;
+  /**
+   * Session limits (docs/plans/multiagent.md, 3.Б): create, update and
+   * retrieve read and set them, the events at the limit are refused, and the
+   * runtime projection counts the work in the batch of its events.
+   */
+  sessionLimits?: {
+    port: SessionLimitsPort;
+    projection: SqlRuntimeProjectionEffect;
+  };
 }
 
 interface SqlManagedSessionsWorkspaceApp extends App {
@@ -235,7 +249,11 @@ export class SqlManagedSessionsComposition {
     this.memoryStores = new SqlMemoryStoreSource(client);
     const runtimeReaders = createSqlSessionRuntimeReaders(client);
     this.runtimeHistory = runtimeReaders.history;
-    this.runtimeProjection = new SqlSessionRuntimeProjectionPersistence(client);
+    this.runtimeProjection = new SqlSessionRuntimeProjectionPersistence(client, {
+      ...(dependencies.sessionLimits !== undefined && {
+        effects: [dependencies.sessionLimits.projection],
+      }),
+    });
     this.executionContext = new ComposedSessionExecutionContextSource(
       runtimeReaders.executionContext,
       this.sessions,
@@ -265,6 +283,7 @@ export class SqlManagedSessionsComposition {
       eventDispatch = runtime,
       eventStream = runtime,
       filesForWorkspace,
+      sessionLimits,
     } = this.dependencies;
     const resources = new SessionResourceResolverService({
       files: this.files,
@@ -304,6 +323,9 @@ export class SqlManagedSessionsComposition {
               managedAgentsPortTokens.files,
               filesOnUse(() => filesForWorkspace(workspaceId)),
             )]),
+        ...(sessionLimits === undefined
+          ? []
+          : [providePort(sessionLimitsPort, sessionLimits.port)]),
         providePort(sessionEventStorePort, this.sessionEvents),
         providePort(sessionEventSourcePort, this.sessionSource),
         providePort(sessionEventExecutionContextSourcePort, this.executionContext),

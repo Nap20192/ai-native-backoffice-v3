@@ -3,6 +3,7 @@ import {
   type DeploymentSessionLauncherPort,
   type SessionAgentSourcePort,
   type SessionEnvironmentSourcePort,
+  type SessionLimitsPort,
   type SessionResourceResolverPort,
 } from "@open-managed-agents/managed-agents-application";
 import type {
@@ -46,6 +47,11 @@ export const sessionLifecyclePort =
     "managed-agents.outbound.sessions.lifecycle",
   );
 
+export const sessionLimitsPort =
+  createPortToken<SessionLimitsPort>(
+    "managed-agents.outbound.sessions.limits",
+  );
+
 export const deploymentSessionLauncherPort =
   createPortToken<DeploymentSessionLauncherPort>(
     "managed-agents.application.deployment-session-launcher",
@@ -70,7 +76,8 @@ export function sessionsModule(): AppModule {
     ],
     // Delete takes the output files of the Session along
     // (docs/plans/crud-fixes.md, F4).
-    optional: [managedAgentsPortTokens.files],
+    // The limits of the Session (docs/plans/multiagent.md, 3.Б).
+    optional: [managedAgentsPortTokens.files, sessionLimitsPort],
     setup({ port, optionalPort }) {
       const workspace = port(workspaceContextPort);
       const clock = port(clockPort);
@@ -85,6 +92,7 @@ export function sessionsModule(): AppModule {
         resources: port(sessionResourceResolverPort),
         lifecycle: port(sessionLifecyclePort),
         files: optionalPort(managedAgentsPortTokens.files),
+        limits: optionalPort(sessionLimitsPort),
       });
       return {
         ports: [

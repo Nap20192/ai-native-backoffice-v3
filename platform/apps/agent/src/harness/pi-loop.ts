@@ -18,6 +18,7 @@ import {
   classifyExternalError,
   generateEventId,
   ModelError,
+  SessionLimitError,
 } from "@open-managed-agents/shared";
 import { eventsToMessagesAsync } from "../runtime/history";
 import type { HarnessContext, HarnessInterface } from "./interface";
@@ -86,6 +87,8 @@ export class PiHarness implements HarnessInterface {
     }
 
     const signal = ctx.runtime.abortSignal;
+    // A Session at its limit sends nothing, the compaction summary included.
+    if (await sessionLimitReached(ctx)) throw sessionLimitError();
     await this.compactIfInsufficientOutputRoom(ctx);
     const proactivelyCompacted = await this.compactBeforeTurn(ctx);
     if (signal?.aborted) return;
@@ -97,10 +100,14 @@ export class PiHarness implements HarnessInterface {
       && (!proactivelyCompacted || outcome.producedOutput)
       && shouldRetryPiTurnAfterCompaction(outcome, ctx.pi.model)
     ) {
+      if (await sessionLimitReached(ctx)) throw sessionLimitError();
       const recovered = await this.compactBeforeTurn(ctx, true);
       if (recovered && !signal?.aborted) outcome = await this.runAgentOnce(ctx);
     }
     if (signal?.aborted) return;
+    // The request the limit stopped never left: the turn ends here, and the
+    // runner reads the error as budget_reached, not as a model failure.
+    if (ctx.runtime.limitReached) throw sessionLimitError();
 
     if (outcome.providerFailure) {
       const failure = outcome.providerFailure;
@@ -161,12 +168,23 @@ export class PiHarness implements HarnessInterface {
         thinkingLevel: ctx.pi!.thinkingLevel,
       },
       sessionId: ctx.session_id,
-      streamFn: (model, context, options) =>
-        ctx.pi!.models.streamSimple(
+      // The limit check runs before each request (plan multiagent, 3.Б). Pi
+      // turns a throw here into an error reply and loses its type, so the
+      // flag on the runtime carries the stop. The request span opens only
+      // for a request that goes out.
+      streamFn: async (model, context, options) => {
+        try {
+          await ctx.runtime.beforeModelRequest?.();
+        } finally {
+          if (!ctx.runtime.limitReached) broadcastModelRequestStart(ctx, state);
+        }
+        if (ctx.runtime.limitReached) throw sessionLimitError();
+        return ctx.pi!.models.streamSimple(
           model,
           context,
           withPiRuntimeRequestOptions(ctx.pi!, options, context),
-        ),
+        );
+      },
       toolExecution: "parallel",
     });
     toolAssembly.attach(agent);
@@ -306,14 +324,9 @@ async function translatePiEvent(
   let producedOutput = false;
 
   if (event.type === "turn_start") {
+    // `streamFn` opens the span once the request passed the limit check.
     state.spanId = generateEventId();
     state.firstTokenSeen = false;
-    runtime.broadcast({
-      type: "span.model_request_start",
-      id: state.spanId,
-      model: modelId,
-      at_ms: Date.now(),
-    } as SessionEvent);
     return { producedOutput };
   }
 
@@ -374,6 +387,12 @@ async function translatePiEvent(
   }
 
   if (event.type === "message_end" && event.message.role === "assistant") {
+    // The error reply Pi made of the limit stop: no request went out, so it
+    // gets no span, no usage and no empty answer in the history.
+    if (runtime.limitReached) {
+      await closeLiveStreams(ctx, state, "aborted");
+      return { producedOutput };
+    }
     const message = event.message;
     const contextWindow = ctx.pi!.model.contextWindow;
     const desiredMaxOutput = ctx.pi!.model.maxTokens || PI_CONTEXT_OUTPUT_RESERVE_TOKENS;
@@ -525,6 +544,25 @@ async function translatePiEvent(
   }
 
   return { producedOutput };
+}
+
+async function sessionLimitReached(ctx: HarnessContext): Promise<boolean> {
+  await ctx.runtime.beforeModelRequest?.();
+  return ctx.runtime.limitReached === true;
+}
+
+function sessionLimitError(): SessionLimitError {
+  return new SessionLimitError("Session limit reached: no further model request is sent");
+}
+
+function broadcastModelRequestStart(ctx: HarnessContext, state: LiveMessageState): void {
+  state.spanId ??= generateEventId();
+  ctx.runtime.broadcast({
+    type: "span.model_request_start",
+    id: state.spanId,
+    model: ctx.pi!.model.id,
+    at_ms: Date.now(),
+  } as SessionEvent);
 }
 
 function markFirstToken(

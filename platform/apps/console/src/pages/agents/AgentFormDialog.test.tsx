@@ -673,3 +673,87 @@ describe("AgentFormDialog: разрешение MCP-сервера (план cma
     expect(screen.getByText(/шаблон ассистента/)).toBeInTheDocument();
   });
 });
+
+describe("AgentFormDialog: мультиагент (план multiagent, 3.2, срез 4)", () => {
+  const INLINE = "Агенты, которых описывает сам агент";
+
+  it("новый агент: советник из карточек моделей и сам агент уходят блоком coordinator", async () => {
+    managed.create.mockResolvedValue({ id: "agent-new" });
+    await openBlankForm();
+    await userEvent.click(screen.getByRole("tab", { name: /^Мультиагентность/ }));
+    const panel = screen.getByRole("tabpanel");
+
+    await userEvent.click(within(panel).getByRole("checkbox", { name: "Сам агент" }));
+    const inline = within(panel).getByRole("checkbox", { name: INLINE });
+    expect(inline).toBeDisabled();
+    expect(inline).not.toBeChecked();
+    expect(panel.textContent).toContain("Фоновые запуски");
+    expect(panel.textContent).toContain("появятся позже");
+
+    const advisor = within(panel).getByRole("combobox", { name: "Советник" });
+    expect(advisor).toHaveTextContent("Нет");
+    await userEvent.click(advisor);
+    expect(await screen.findByRole("option", { name: /GPT 5/ })).toBeInTheDocument();
+    // Встроенная модель ключа сервера не карточка, советником её не выбрать.
+    expect(screen.queryByRole("option", { name: /Claude Haiku 4\.5/ })).toBeNull();
+    await userEvent.click(screen.getByRole("option", { name: /GPT 5/ }));
+    expect(advisor).toHaveTextContent("GPT 5");
+    expect(screen.getByRole("tab", { name: /^Мультиагентность/ })).toHaveTextContent("1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Создать агента" }));
+    await waitFor(() => expect(managed.create).toHaveBeenCalledOnce());
+    expect(managed.create.mock.calls[0][0].multiagent).toEqual({
+      type: "coordinator",
+      agents: [{ type: "self" }, { type: "advisor", model: "verify-oai" }],
+    });
+  });
+
+  it("агент нового типа: форма видит советника, себя и inline, правка хранит тип и workflows", async () => {
+    const workflows = {
+      type: "enabled",
+      inline_agents: { type: "enabled" },
+      predefined_agents: [{ type: "agent", id: "agent-batch", version: 1 }],
+    };
+    managed.update.mockResolvedValue({ ...existingAgent, version: 3 });
+    renderDialog({
+      agent: {
+        ...existingAgent,
+        multiagent: {
+          type: "multiagent_20261001",
+          subagents: {
+            type: "enabled",
+            inline_agents: { type: "enabled" },
+            predefined_agents: [{ type: "agent", id: "agent-1", version: 2 }],
+          },
+          workflows,
+          advisor: { type: "enabled", model: "verify-oai" },
+        },
+      } as unknown as Agent,
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /^Мультиагентность/ }));
+    const panel = screen.getByRole("tabpanel");
+
+    await waitFor(() =>
+      expect(within(panel).getByRole("combobox", { name: "Советник" })).toHaveTextContent("GPT 5"),
+    );
+    expect(within(panel).getByRole("checkbox", { name: "Сам агент" })).toBeChecked();
+    const inline = within(panel).getByRole("checkbox", { name: INLINE });
+    expect(inline).toBeEnabled();
+    expect(inline).toBeChecked();
+
+    await userEvent.click(inline);
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
+
+    await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
+    expect(managed.update.mock.calls[0][1].multiagent).toEqual({
+      type: "multiagent_20261001",
+      subagents: {
+        type: "enabled",
+        inline_agents: { type: "disabled" },
+        predefined_agents: [{ type: "self" }],
+      },
+      workflows,
+      advisor: { type: "enabled", model: "verify-oai" },
+    });
+  });
+});

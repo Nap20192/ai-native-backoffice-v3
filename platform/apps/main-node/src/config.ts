@@ -72,6 +72,13 @@ export interface NodeConfig {
   };
   dreamCurator: "model" | "dedup";
   execution: { ownerId: string; concurrency: number };
+  /**
+   * Default limits of every Session (docs/plans/multiagent.md, 3.Б): tokens
+   * of all model requests of all threads (OMA_SESSION_MAX_TOKENS) and turns
+   * of subagent threads (OMA_SESSION_MAX_CHILD_TURNS). The numbers come from
+   * the trial copy log of 2026-10-18.
+   */
+  sessionLimits: { maxTokens: number; maxChildTurns: number };
   workspace: {
     strategy: "ephemeral" | "checkpoint_restore";
     /** Target between safe turn checkpoints; no fixed wall-clock RPO. */
@@ -320,6 +327,10 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     execution: {
       ownerId: env.OMA_SESSION_EXECUTION_OWNER_ID ?? `node:${process.pid}:${nanoid()}`,
       concurrency: integer("OMA_SESSION_EXECUTION_CONCURRENCY", 8, { min: 1 }),
+    },
+    sessionLimits: {
+      maxTokens: integer("OMA_SESSION_MAX_TOKENS", 1_000_000, { min: 1 }),
+      maxChildTurns: integer("OMA_SESSION_MAX_CHILD_TURNS", 20, { min: 1 }),
     },
     workspace: {
       strategy: workspaceStrategy === "checkpoint_restore" ? "checkpoint_restore" : "ephemeral",

@@ -1,9 +1,34 @@
 import type {
   BetaManagedAgentsEventParams,
+  BetaManagedAgentsUserCustomToolResultEventParams,
   BetaManagedAgentsUserDefineOutcomeEventParams,
   BetaManagedAgentsUserMessageEventParams,
+  BetaManagedAgentsUserToolConfirmationEventParams,
 } from "@anthropic-ai/sdk/resources/beta/sessions/events";
 import { z } from "zod";
+
+/**
+ * OpenMA wire extension of two sendable events, declared like `_oma` of an
+ * agent. CMA routes a confirmation and a custom tool result to a subagent
+ * thread by `session_thread_id`, and its recorded events carry the field, but
+ * the send params of SDK 0.120 lack it (docs/plans/multiagent.md, 3.1).
+ */
+export type OpenMaUserToolConfirmationEventParams =
+  BetaManagedAgentsUserToolConfirmationEventParams & {
+    session_thread_id?: string | null;
+  };
+export type OpenMaUserCustomToolResultEventParams =
+  BetaManagedAgentsUserCustomToolResultEventParams & {
+    session_thread_id?: string | null;
+  };
+/** The SDK send union with the two extended members. */
+export type OpenMaSendableEventParams =
+  | Exclude<
+      BetaManagedAgentsEventParams,
+      { type: "user.tool_confirmation" | "user.custom_tool_result" }
+    >
+  | OpenMaUserToolConfirmationEventParams
+  | OpenMaUserCustomToolResultEventParams;
 
 export const textBlockSchema = z
   .object({ type: z.literal("text"), text: z.string() })
@@ -116,6 +141,7 @@ export const sendableEventSchema = z.discriminatedUnion("type", [
         result: z.enum(["allow", "deny"]),
         tool_use_id: z.string().min(1),
         deny_message: z.string().nullable().optional(),
+        session_thread_id: z.string().min(1).nullable().optional(),
       })
       .strict(),
     z
@@ -124,6 +150,7 @@ export const sendableEventSchema = z.discriminatedUnion("type", [
         custom_tool_use_id: z.string().min(1),
         content: z.array(toolResultContentSchema).optional(),
         is_error: z.boolean().nullable().optional(),
+        session_thread_id: z.string().min(1).nullable().optional(),
       })
       .strict(),
     userDefineOutcomeEventInputSchema,
@@ -141,4 +168,4 @@ export const sendableEventSchema = z.discriminatedUnion("type", [
         content: z.array(textBlockSchema),
       })
       .strict(),
-  ]) satisfies z.ZodType<BetaManagedAgentsEventParams>;
+  ]) satisfies z.ZodType<OpenMaSendableEventParams>;

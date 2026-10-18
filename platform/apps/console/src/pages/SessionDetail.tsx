@@ -47,6 +47,7 @@ import {
   type SelectionSource,
 } from "../lib/session-stats";
 import { downloadTrace } from "../lib/trace-api";
+import { lastSessionStop, raisedSessionLimits, readSessionLimits } from "../lib/session-limits";
 import { SessionHeader } from "../components/session/SessionHeader";
 import {
   ToolConfirmationRequests,
@@ -270,6 +271,9 @@ export function SessionDetail() {
   const [vaults, setVaults] = useState<Array<{ id: string; name?: string }>>([]);
   useCrumbName(id, session?.title?.trim());
   const [status, setStatus] = useState("idle");
+  /** Остановка на пределе, для которой оператор уже поднял предел. Заметка о
+   *  пределе по ней больше не показывается, даже если ход не продолжился. */
+  const [raisedStopId, setRaisedStopId] = useState<string | null>(null);
   /** Потоки сессии, включая основной. Обновляются на `session.thread_created`. */
   const [threads, setThreads] = useState<BetaManagedAgentsSessionThread[]>([]);
   /** Выбранный поток. Фильтрует ленту, вкладки «События» и «Инструменты».
@@ -771,6 +775,7 @@ export function SessionDetail() {
     setEnvironment(null);
     setVaults([]);
     setStatus("idle");
+    setRaisedStopId(null);
     setThreads([]);
     setActiveThreadId(PRIMARY_THREAD_ID);
     setSelection({ eventId: eventParamRef.current, source: "url", seq: 0 });
@@ -888,6 +893,12 @@ export function SessionDetail() {
     const text = messageText.trim();
     if (!text && !files?.length) return;
     if (!id) return;
+    // На пределе сервер отвечает на user.message 400 по-английски, а тост
+    // показал бы общий текст ошибки. Объясняем причину сами и не шлём.
+    if (limitReached) {
+      toast.error("Предел работы сессии исчерпан. Сначала поднимите предел.");
+      return;
+    }
     const shownText = text || attachmentOnlyText(files?.length ?? 0);
     const localId = optimistic.current.add(shownText);
     setEvents((prev) => [
@@ -1004,6 +1015,11 @@ export function SessionDetail() {
     [events, activeThreadId],
   );
   const totals = useMemo(() => computeSessionTotals(events), [events]);
+  const lastStop = useMemo(() => lastSessionStop(events), [events]);
+  /** Причина последней остановки хода для шапки. Поднятый предел снимает
+   *  `budget_reached`: заметка и запрет отправки уходят сразу. */
+  const stopReason = lastStop && lastStop.eventId !== raisedStopId ? lastStop.reason : null;
+  const limitReached = status === "idle" && stopReason === "budget_reached";
   const outcomes = useMemo(() => collectOutcomes(events), [events]);
   const sourceRows = useMemo(() => buildSourceRows(session?.metadata), [session]);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
@@ -1037,6 +1053,26 @@ export function SessionDetail() {
     setSession((previous) =>
       previous ? { ...previous, title: updated?.title ?? (title || null) } : previous,
     );
+  };
+
+  /** Поднимает оба предела вдвое (docs/plans/multiagent.md, 3.Б, решение 8).
+   *  Израсходованное берётся свежим чтением сессии: сервер принимает только
+   *  предел выше него. Ошибку запроса показывает api(). */
+  const raiseLimit = async () => {
+    if (!id || !lastStop) return;
+    const stopId = lastStop.eventId;
+    try {
+      const limits = readSessionLimits(await managedApi.sessions.retrieve(id));
+      if (!limits) {
+        toast.error("Сервер не сообщил предел сессии");
+        return;
+      }
+      await managedApi.sessions.update(id, raisedSessionLimits(limits));
+      setRaisedStopId(stopId);
+      toast.success("Предел поднят");
+    } catch {
+      // Обращение к серверу уже показало ошибку: заметка и кнопка остаются.
+    }
   };
 
   const defineOutcome = async (event: OutcomeParams) => {
@@ -1279,9 +1315,11 @@ export function SessionDetail() {
           session={session}
           environment={environment}
           status={status}
+          stopReason={stopReason}
           totals={totals}
           lastActivityMs={lastActivityMs}
           onRename={rename}
+          onRaiseLimit={raiseLimit}
           onInterrupt={() => void interrupt()}
           onDefineOutcome={() => setDialog("outcome")}
           onArchive={() => setDialog("archive")}

@@ -1,5 +1,6 @@
 import type { SessionEvent } from "@open-managed-agents/shared";
-import type { SessionStopReason } from "@open-managed-agents/managed-agents-application";
+import type { SessionEventView, SessionStopReason } from "@open-managed-agents/managed-agents-application";
+import { encodeRuntimeHistoryEvent } from "@open-managed-agents/managed-agents-adapters-runtime";
 
 /** Ids of tool calls that wait for a user confirmation: `ask` and no result yet. */
 export function pendingConfirmations(events: readonly SessionEvent[]): string[] {
@@ -25,14 +26,33 @@ export function pendingConfirmations(events: readonly SessionEvent[]): string[] 
   return [...pending];
 }
 
-/** Resolve wire history to the Node runner's internal stop reason. */
+/** Calls that wait for a person in application events of any thread. A
+ * result in one thread answers a call in another: sessions written before
+ * plan multiagent 3.1 slice 3 hold the answer to a subagent's call in the
+ * primary thread. */
+export function waitingCalls(events: readonly SessionEventView[]): string[] {
+  return pendingConfirmations(events.map((event) => encodeRuntimeHistoryEvent(event) as SessionEvent));
+}
+
+/**
+ * Resolve wire history to the Node runner's internal stop reason.
+ * `subagentThreads` holds the events of the subagent threads that are not
+ * archived: a call there that waits for a person holds the session too
+ * (plan multiagent, 3.1). A result in one thread answers a call in another,
+ * as in `waitingCalls`. `limitReached` says the turn stopped at the Session
+ * limit (plan multiagent, 3.Б): a waiting call still wins over it, as in CMA.
+ */
 export function nodeManagedStopReason(
   events: readonly SessionEvent[],
   failed = false,
+  subagentThreads: readonly SessionEventView[] = [],
+  limitReached = false,
 ): SessionStopReason {
   if (failed) return { type: "retries_exhausted" };
-  const pending = pendingConfirmations(events);
-  return pending.length
-    ? { type: "requires_action", eventIds: pending }
-    : { type: "end_turn" };
+  const pending = pendingConfirmations([
+    ...events,
+    ...subagentThreads.map((event) => encodeRuntimeHistoryEvent(event) as SessionEvent),
+  ]);
+  if (pending.length > 0) return { type: "requires_action", eventIds: pending };
+  return limitReached ? { type: "budget_reached" } : { type: "end_turn" };
 }

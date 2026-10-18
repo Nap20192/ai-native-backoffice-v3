@@ -7,7 +7,7 @@ import {
   type CanonicalChatTurn,
   type WireSessionEvent,
 } from "@openma/common/session-events/managed";
-import { buildTranscriptBlocks, type SessionEvent } from "../../lib/session-stats";
+import { buildTranscriptBlocks, collectToolCalls, type SessionEvent } from "../../lib/session-stats";
 import {
   CanonicalSessionTurn,
   projectCanonicalSessionTurn,
@@ -390,6 +390,34 @@ describe("CanonicalSessionTurn: строки вызовов", () => {
     ]);
 
     expect(within(callRow(container, "ask1")!).getByText("Ждёт вас")).toBeInTheDocument();
+  });
+
+  describe("ход встал на requires_action", () => {
+    const asked: WireSessionEvent[] = [
+      { type: "user.message", id: "u1", content: text("Запиши акт"), processed_at: at(0) },
+      { type: "span.model_request_start", id: "r1", processed_at: at(1) },
+      { type: "agent.mcp_tool_use", id: "ask1", name: "mcp__crm__write_act", mcp_server_name: "crm", input: { id: 7 }, evaluated_permission: "ask", processed_at: at(2) },
+      { type: "span.model_request_end", id: "r1e", model_request_start_id: "r1", processed_at: at(3) },
+      { type: "session.status_idle", id: "s", stop_reason: { type: "requires_action", event_ids: ["ask1"] }, processed_at: at(4) },
+    ];
+
+    it("вызов ждёт вас, а не прерван", () => {
+      const { container } = setup(asked);
+
+      expect(within(callRow(container, "ask1")!).getByText("Ждёт вас")).toBeInTheDocument();
+      expect(within(callRow(container, "ask1")!).queryByText("Прервано")).toBeNull();
+    });
+
+    it("после «Разрешить» вызов выполняется и больше не ждёт вас", () => {
+      const all = [...asked, { type: "user.tool_confirmation", id: "c1", tool_use_id: "ask1", result: "allow", processed_at: at(10) }] as WireSessionEvent[];
+      const turn = turnFrom(all);
+      const blocks = buildTranscriptBlocks(turn.rawEvents as unknown as SessionEvent[], { toolCalls: collectToolCalls(all as unknown as SessionEvent[]) });
+
+      const { container } = setup(all, { blocks });
+
+      expect(within(callRow(container, "ask1")!).queryByText("Ждёт вас")).toBeNull();
+      expect(within(callRow(container, "ask1")!).getByText("Выполняется")).toBeInTheDocument();
+    });
   });
 
   it("свёрнутая строка не показывает ввод и вывод", () => {

@@ -320,6 +320,31 @@ export function eventJson(event: SessionEvent): string {
 }
 
 const builtinNames = ["bash", "edit", "read", "write", "glob", "grep", "web_fetch", "web_search"];
+export type ToolRef = Pick<ToolCatalogEntry, "kind" | "name" | "mcpServerName">;
+/** Харнесс называет MCP-вызов mcp__<сервер>__<инструмент>, в агенте и в каталоге стоит имя инструмента. */
+function catalogName(tool: ToolRef): string {
+  const prefix = `mcp__${tool.mcpServerName ?? ""}__`;
+  return tool.kind === "mcp" && tool.mcpServerName && tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name;
+}
+/**
+ * Политика в агенте приходит объектом { type }. Порядок как у харнесса (getToolPermission
+ * в apps/agent/src/harness/tools.ts): настройка инструмента, затем default_config набора.
+ * Без политики MCP спрашивает, встроенный инструмент разрешён.
+ */
+function policyPermission(kind: ToolKind, config: Record<string, unknown>, defaults: Record<string, unknown>): ToolPermission {
+  const policy = str(record(config.permission_policy).type) || str(record(defaults.permission_policy).type);
+  return (policy || (kind === "mcp" ? "always_ask" : "always_allow")) === "always_ask" ? "ask" : "auto";
+}
+/** Разрешение вызова, которого нет в каталоге: MCP-набор часто задаёт только default_config. Без агента null. */
+export function toolPermission(tools: readonly unknown[] | undefined, tool: ToolRef): ToolPermission | null {
+  if (!tools) return null;
+  if (tool.kind === "custom") return "auto";
+  const toolset = tools.map(record).find(t => tool.kind === "mcp" ? t.type === "mcp_toolset" && t.mcp_server_name === tool.mcpServerName : t.type === "agent_toolset_20260401");
+  if (!toolset) return tool.kind === "mcp" ? "ask" : "auto";
+  const name = catalogName(tool);
+  const config = (Array.isArray(toolset.configs) ? toolset.configs.map(record) : []).find(c => c.name === name) ?? {};
+  return policyPermission(tool.kind, config, record(toolset.default_config));
+}
 export function toolCatalogFromAgent(tools: readonly unknown[] | undefined): ToolCatalogEntry[] {
   const catalog: ToolCatalogEntry[] = [];
   for (const item of tools ?? []) {
@@ -328,11 +353,12 @@ export function toolCatalogFromAgent(tools: readonly unknown[] | undefined): Too
     if (tool.type !== "agent_toolset_20260401" && tool.type !== "mcp_toolset") continue;
     const configs = Array.isArray(tool.configs) ? tool.configs.map(record) : [];
     const defaults = record(tool.default_config);
-    const names = tool.type === "agent_toolset_20260401" ? builtinNames : configs.map(c => str(c.name));
+    const kind: ToolKind = tool.type === "mcp_toolset" ? "mcp" : "builtin";
+    const names = kind === "builtin" ? builtinNames : configs.map(c => str(c.name));
     for (const name of names) {
       const config = configs.find(c => c.name === name) ?? {};
       if ((config.enabled ?? defaults.enabled) === false || !name) continue;
-      const entry: ToolCatalogEntry = { name, kind: tool.type === "mcp_toolset" ? "mcp" : "builtin", permission: (config.permission_policy ?? defaults.permission_policy) === "always_ask" ? "ask" : "auto" };
+      const entry: ToolCatalogEntry = { name, kind, permission: policyPermission(kind, config, defaults) };
       if (entry.kind === "mcp") entry.mcpServerName = str(tool.mcp_server_name);
       catalog.push(entry);
     }
@@ -387,7 +413,10 @@ export function collectToolCalls(events: readonly SessionEvent[]): ToolCall[] {
       }
     }
     if (closesTool(event.type)) {
-      for (const call of calls) if (call.threadId === threadId && call.status === "running") {
+      // requires_action: ход встал и ждёт человека. Вызовы из event_ids не прерваны, они ждут подтверждения.
+      const stop = record(event.stop_reason);
+      const waits = (call: ToolCall) => stop.type === "requires_action" && (!Array.isArray(stop.event_ids) || stop.event_ids.includes(call.useEventId));
+      for (const call of calls) if (call.threadId === threadId && call.status === "running" && !waits(call)) {
         call.status = "interrupted";
         call.endMs = eventTimeMs(event);
       }
@@ -396,21 +425,22 @@ export function collectToolCalls(events: readonly SessionEvent[]): ToolCall[] {
   return calls;
 }
 const emptyCounts = (): ToolStatusCounts => ({ completed: 0, failed: 0, denied: 0, interrupted: 0, running: 0 });
-function toolKey(tool: { kind: ToolKind; name: string; mcpServerName?: string }): string { return `${tool.kind}:${tool.mcpServerName ?? ""}:${tool.name}`; }
-export function computeToolStats(calls: readonly ToolCall[], catalog: readonly ToolCatalogEntry[]): { rows: ToolStatsRow[]; summary: ToolsSummary } {
+function toolKey(tool: ToolRef): string { return `${tool.kind}:${tool.mcpServerName ?? ""}:${catalogName(tool)}`; }
+/** `permissionOf`: разрешение вызова, которого нет в каталоге (toolPermission по инструментам агента). */
+export function computeToolStats(calls: readonly ToolCall[], catalog: readonly ToolCatalogEntry[], permissionOf: (tool: ToolRef) => ToolPermission | null = () => null): { rows: ToolStatsRow[]; summary: ToolsSummary } {
   const rows: ToolStatsRow[] = [];
   const byKey = new Map<string, ToolStatsRow>();
-  function add(tool: ToolCatalogEntry | ToolCall, permission: ToolPermission | null): ToolStatsRow {
+  function add(tool: ToolRef, permission: ToolPermission | null): ToolStatsRow {
     const key = toolKey(tool);
     const old = byKey.get(key);
     if (old) return old;
-    const row: ToolStatsRow = { name: tool.name, kind: tool.kind, permission, calls: 0, failed: 0, failedRatio: null, p50Ms: null, counts: emptyCounts(), callList: [] };
+    const row: ToolStatsRow = { name: catalogName(tool), kind: tool.kind, permission, calls: 0, failed: 0, failedRatio: null, p50Ms: null, counts: emptyCounts(), callList: [] };
     rows.push(row); byKey.set(key, row); return row;
   }
   catalog.forEach(tool => add(tool, tool.permission));
   const summary: ToolsSummary = { toolCount: 0, usedCount: 0, callCount: calls.length, counts: emptyCounts(), time: { totalMs: 0, executingMs: 0, waitingMs: 0 } };
   for (const call of calls) {
-    const row = add(call, null);
+    const row = add(call, permissionOf(call));
     row.callList.push(call); row.calls++; row.counts[call.status]++; summary.counts[call.status]++;
     const total = Math.max(call.waitingMs, elapsed(call.startMs, call.endMs) ?? 0);
     summary.time.totalMs += total;
@@ -481,11 +511,15 @@ export function collectOutcomes(events: readonly SessionEvent[]): OutcomeView[] 
  * `outcomes`: результаты всей сессии. Разговор строит блоки по ходам, а оценка
  * может прийти в другом ходе, чем user.define_outcome: «Задать результат» до
  * первого сообщения. Без общего списка оценка своего результата не находит.
+ *
+ * `toolCalls`: вызовы всей сессии. Ход встаёт на requires_action, а подтверждение и
+ * результат вызова приходят следующим ходом. По событиям одного хода вызов навсегда
+ * остался бы без результата.
  */
-export function buildTranscriptBlocks(events: readonly SessionEvent[], options: { previousEventMs?: number | null; gapMs?: number; outcomes?: readonly OutcomeView[] } = {}): TranscriptBlock[] {
+export function buildTranscriptBlocks(events: readonly SessionEvent[], options: { previousEventMs?: number | null; gapMs?: number; outcomes?: readonly OutcomeView[]; toolCalls?: readonly ToolCall[] } = {}): TranscriptBlock[] {
   const requests = collectModelRequests(events);
   const requestByStart = new Map(requests.map(r => [r.startEventId, r]));
-  const calls = collectToolCalls(events);
+  const calls = options.toolCalls ?? collectToolCalls(events);
   const callByEvent = new Map<string, ToolCall>();
   for (const call of calls) for (const id of [call.useEventId, call.resultEventId, call.confirmationEventId]) if (id) callByEvent.set(id, call);
   const outcomes = options.outcomes ?? collectOutcomes(events);

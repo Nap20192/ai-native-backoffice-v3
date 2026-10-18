@@ -87,7 +87,8 @@ describe("event data", () => {
 
 describe("tools", () => {
   it("reads enabled builtins, defaults, MCP and custom configuration", () => {
-    const catalog = s.toolCatalogFromAgent([{ type: "agent_toolset_20260401", default_config: { enabled: true, permission_policy: "always_allow" }, configs: [{ name: "bash", enabled: true, permission_policy: "always_ask" }, { name: "read", enabled: false }] }, { type: "mcp_toolset", mcp_server_name: "server", configs: [{ name: "lookup", enabled: true, permission_policy: "always_ask" }] }, { type: "custom", name: "custom" }]);
+    // Политика приходит объектом { type }, как в SDK и в форме агента. Строка в прежней выборке не встречается в API.
+    const catalog = s.toolCatalogFromAgent([{ type: "agent_toolset_20260401", default_config: { enabled: true, permission_policy: { type: "always_allow" } }, configs: [{ name: "bash", enabled: true, permission_policy: { type: "always_ask" } }, { name: "read", enabled: false }] }, { type: "mcp_toolset", mcp_server_name: "server", configs: [{ name: "lookup", enabled: true, permission_policy: { type: "always_ask" } }] }, { type: "custom", name: "custom" }]);
     expect(catalog).toHaveLength(9);
     expect(catalog.find(x => x.name === "bash")?.permission).toBe("ask");
     expect(catalog.find(x => x.name === "read")).toBeUndefined();
@@ -131,6 +132,73 @@ describe("tools", () => {
   it("includes confirmed waiting time while a tool is still running", () => {
     const calls = s.collectToolCalls([e("agent.tool_use", "a", 0, { name: "bash" }), e("user.tool_confirmation", "allow", 500, { tool_use_id: "a", result: "allow" })]);
     expect(s.computeToolStats(calls, []).summary.time).toEqual({ totalMs: 500, executingMs: 0, waitingMs: 500 });
+  });
+});
+
+describe("вызов на подтверждении", () => {
+  // Ход встаёт на requires_action. Подтверждение и результат приходят следующим ходом:
+  // @openma/common режет ходы по session.status_idle. Лента строит блоки по ходам,
+  // поэтому вызов первого хода берётся из списка вызовов всей сессии.
+  describe.each([
+    ["agent.tool_use", "agent.tool_result", "tool_use_id", "bash", {}],
+    ["agent.mcp_tool_use", "agent.mcp_tool_result", "mcp_tool_use_id", "mcp__crm__write_act", { mcp_server_name: "crm" }],
+  ] as const)("%s", (use, result, field, name, extra) => {
+    const turn1 = [e("user.message", "u", 0, { content: "Запиши акт" }), e("session.status_running", "run1", 10), e("span.model_request_start", "req", 20),
+      e(use, "call", 30, { name, input: { id: 7 }, evaluated_permission: "ask", ...extra }), e("span.model_request_end", "reqe", 40, { model_request_start_id: "req" }),
+      e("session.status_idle", "idle1", 50, { stop_reason: { type: "requires_action", event_ids: ["call"] } })];
+    const finish = (confirmation: s.SessionEvent) => [confirmation, e("session.status_running", "run2", 1010),
+      e(result, "res", 1500, { [field]: "call", content: "Акт записан" }), e("session.status_idle", "idle2", 1600, { stop_reason: { type: "end_turn" } })];
+
+    it.each([
+      ["ждёт человека", [], "running"],
+      ["разрешён и выполнен, после перезагрузки", finish(e("user.tool_confirmation", "ok", 1000, { tool_use_id: "call", result: "allow" })), "completed"],
+      ["отклонён", [e("user.tool_confirmation", "no", 1000, { tool_use_id: "call", result: "deny" }), e("session.status_idle", "idle2", 1100, { stop_reason: { type: "end_turn" } })], "denied"],
+      ["прерван человеком", [e("user.interrupt", "stop", 1000)], "interrupted"],
+    ] as const)("%s", (_, turn2, status) => {
+      const blocks = s.buildTranscriptBlocks(turn1, { toolCalls: s.collectToolCalls([...turn1, ...turn2]) });
+
+      const request = blocks.find(b => b.kind === "request");
+      const item = request?.kind === "request" ? request.items.find(i => i.kind === "tool") : undefined;
+      expect(item?.kind === "tool" ? item.call.status : null).toBe(status);
+    });
+  });
+
+  it("ждёт только вызов из event_ids: остальные вызовы без результата прерваны", () => {
+    const calls = s.collectToolCalls([e("agent.tool_use", "ask", 0, { name: "bash", evaluated_permission: "ask" }), e("agent.tool_use", "lost", 10, { name: "read" }),
+      e("session.status_idle", "idle", 20, { stop_reason: { type: "requires_action", event_ids: ["ask"] } })]);
+    expect(calls.map(c => c.status)).toEqual(["running", "interrupted"]);
+  });
+});
+
+describe("разрешение инструмента", () => {
+  // Политика в агенте приходит объектом { type }, как в SDK. Без политики MCP спрашивает,
+  // встроенный разрешён: так решает харнесс (getToolPermission в apps/agent/src/harness/tools.ts).
+  // Харнесс называет MCP-вызов mcp__<сервер>__<инструмент>, в агенте стоит имя инструмента.
+  const builtin = (policy?: object, configs: object[] = []) => ({ type: "agent_toolset_20260401", ...(policy && { default_config: { permission_policy: policy } }), configs });
+  const mcp = (policy?: object, configs: object[] = []) => ({ type: "mcp_toolset", mcp_server_name: "crm", ...(policy && { default_config: { permission_policy: policy } }), configs });
+  const ask = { type: "always_ask" };
+  const allow = { type: "always_allow" };
+  const bashCall = e("agent.tool_use", "call", 0, { name: "bash" });
+  const mcpCall = e("agent.mcp_tool_use", "call", 0, { name: "mcp__crm__lookup", mcp_server_name: "crm" });
+
+  it.each([
+    ["встроенный по своей настройке", [builtin(allow, [{ name: "bash", permission_policy: ask }])], bashCall, "bash", "ask"],
+    ["встроенный по default_config", [builtin(ask)], bashCall, "bash", "ask"],
+    ["встроенный без политики", [builtin()], bashCall, "bash", "auto"],
+    ["MCP по default_config", [mcp(allow)], mcpCall, "lookup", "auto"],
+    ["MCP без политики", [mcp()], mcpCall, "lookup", "ask"],
+    ["MCP по своей настройке", [mcp(ask, [{ name: "lookup", permission_policy: allow }])], mcpCall, "lookup", "auto"],
+    ["MCP сервера без набора", [builtin(allow)], mcpCall, "lookup", "ask"],
+  ] as const)("%s", (_, tools, call, name, permission) => {
+    const { rows } = s.computeToolStats(s.collectToolCalls([call]), s.toolCatalogFromAgent(tools), tool => s.toolPermission(tools, tool));
+
+    const used = rows.filter(r => r.calls > 0);
+    expect(used).toEqual([expect.objectContaining({ name, permission, calls: 1 })]);
+    expect(rows.filter(r => r.kind === used[0]?.kind && r.name === name)).toHaveLength(1);
+  });
+
+  it("без агента разрешение неизвестно", () => {
+    expect(s.computeToolStats(s.collectToolCalls([mcpCall]), s.toolCatalogFromAgent(undefined), tool => s.toolPermission(undefined, tool)).rows[0]?.permission).toBeNull();
   });
 });
 

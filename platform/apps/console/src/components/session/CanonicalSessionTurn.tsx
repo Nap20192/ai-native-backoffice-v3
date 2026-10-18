@@ -59,7 +59,7 @@ type Block<K extends TranscriptBlock["kind"]> = Extract<TranscriptBlock, { kind:
 
 export interface CanonicalSessionTurnProps {
   turn: CanonicalChatTurn;
-  /** Блоки хода из buildTranscriptBlocks(turn.rawEvents). */
+  /** Блоки хода из buildTranscriptBlocks(turn.rawEvents) с результатами и вызовами всей сессии. */
   blocks: readonly TranscriptBlock[];
   agentName: string;
   sessionId?: string;
@@ -572,8 +572,11 @@ function RequestItemView({
 
   const { call } = item;
   const selected = callMatches(call, selectedEventId);
+  // После «Разрешить» вызов выполняется: ждёт вас только вызов без подтверждения.
   const awaiting =
-    call.status === "running" && rawById.get(call.useEventId)?.evaluated_permission === "ask";
+    call.status === "running" &&
+    call.confirmationEventId === null &&
+    rawById.get(call.useEventId)?.evaluated_permission === "ask";
   return (
     <ToolRow
       awaiting={awaiting}

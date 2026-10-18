@@ -817,3 +817,44 @@ describe("ManagedSessionConversation: время", () => {
     vi.useRealTimers();
   });
 });
+
+describe("ManagedSessionConversation: вызов на подтверждении", () => {
+  // Ход встаёт на requires_action, подтверждение и результат лежат в следующем ходе.
+  const asked: WireSessionEvent[] = [
+    { type: "user.message", id: "u1", content: text("Запиши акт"), processed_at: at(0) },
+    { type: "session.status_running", id: "s1", processed_at: at(1) },
+    { type: "span.model_request_start", id: "r1", processed_at: at(2) },
+    { type: "agent.mcp_tool_use", id: "w1", name: "mcp__crm__write_act", mcp_server_name: "crm", input: { id: 7 }, evaluated_permission: "ask", processed_at: at(3) },
+    { type: "span.model_request_end", id: "r1e", model_request_start_id: "r1", processed_at: at(4) },
+    { type: "session.status_idle", id: "s2", stop_reason: { type: "requires_action", event_ids: ["w1"] }, processed_at: at(5) },
+  ];
+  const finished: WireSessionEvent[] = [
+    ...asked,
+    { type: "user.tool_confirmation", id: "c1", tool_use_id: "w1", result: "allow", processed_at: at(20) },
+    { type: "session.status_running", id: "s3", processed_at: at(21) },
+    { type: "agent.mcp_tool_result", id: "w1r", mcp_tool_use_id: "w1", content: text("Акт записан"), processed_at: at(23) },
+    { type: "span.model_request_start", id: "r2", processed_at: at(24) },
+    { type: "agent.message", id: "m2", content: text("Готово"), processed_at: at(25) },
+    { type: "span.model_request_end", id: "r2e", model_request_start_id: "r2", processed_at: at(26) },
+    { type: "session.status_idle", id: "s4", stop_reason: { type: "end_turn" }, processed_at: at(27) },
+  ];
+  const row = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-event-id="w1"]')!;
+
+  it("вызов, который ждёт подтверждения, подписан «Ждёт вас», а не «Прервано»", () => {
+    const { container } = setup({ turns: turnsFrom(asked) });
+
+    expect(within(row(container)).getByText("Ждёт вас")).toBeInTheDocument();
+    expect(within(row(container)).queryByText("Прервано")).toBeNull();
+  });
+
+  it("после подтверждения и результата вызов выполнен и после перезагрузки", () => {
+    const turns = turnsFrom(finished);
+    expect(turns).toHaveLength(2);
+
+    const { container } = setup({ turns });
+
+    expect(within(row(container)).queryByText("Прервано")).toBeNull();
+    expect(within(row(container)).queryByText("Ждёт вас")).toBeNull();
+    expect(within(row(container)).getByText("20 с")).toBeInTheDocument();
+  });
+});

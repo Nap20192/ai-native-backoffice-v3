@@ -57,6 +57,28 @@ describe("ToolsTab", () => {
     expect(screen.getByRole("region", { name: "Сводка" })).toBeInTheDocument();
   });
 
+  it("читает разрешение из объекта политики для MCP и встроенных инструментов", () => {
+    // Харнесс называет MCP-вызов mcp__<сервер>__<инструмент>, у набора MCP часто есть только default_config.
+    const agentTools = [
+      { type: "agent_toolset_20260401", default_config: { permission_policy: { type: "always_allow" } }, configs: [{ name: "bash", permission_policy: { type: "always_ask" } }] },
+      { type: "mcp_toolset", mcp_server_name: "crm", default_config: { permission_policy: { type: "always_ask" } } },
+    ];
+    const mcpEvents: SessionEvent[] = [
+      { type: "agent.mcp_tool_use", id: "m1", name: "mcp__crm__write_act", mcp_server_name: "crm", ts: 1800000000000, input: { id: 7 } },
+      { type: "agent.mcp_tool_result", id: "m1r", mcp_tool_use_id: "m1", ts: 1800000000500 },
+    ];
+    render(<ToolsTab {...props} events={mcpEvents} agentTools={agentTools} />);
+
+    const table = screen.getByRole("table", { name: "Инструменты" });
+    const permissionOf = (name: string) => within(within(table).getByText(name).closest("tr")!).getAllByRole("cell")[1];
+    expect(permissionOf("write_act")).toHaveTextContent("Спросить");
+    expect(permissionOf("bash")).toHaveTextContent("Спросить");
+    expect(permissionOf("read")).toHaveTextContent("Авто");
+    const permissions = within(table).getAllByRole("row").slice(1).map(row => within(row).getAllByRole("cell")[1].textContent);
+    expect(permissions).toHaveLength(9);
+    expect(permissions).not.toContain("–");
+  });
+
   it("shows empty data without invalid ring values", () => {
     const { container } = render(<ToolsTab {...props} events={[]} agentTools={undefined} />);
     expect(screen.getByText("0 инструментов, 0 использовано, 0 вызовов")).toBeInTheDocument();

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Code, FileText, Globe, Search, Terminal, X, Zap } from "lucide-react";
 import {
-  collectToolCalls, computeToolStats, toolCatalogFromAgent, toolInputPreview,
+  collectToolCalls, computeToolStats, toolCatalogFromAgent, toolInputPreview, toolPermission,
   type EventSelection, type SessionEvent, type ToolCallStatus, type ToolStatusCounts,
 } from "../../../lib/session-stats";
 import { EMPTY_VALUE, formatClockRu, formatPercentRu, formatShortDurationRu, plural } from "../format-ru";
@@ -56,7 +56,7 @@ function Permission({ value }: { value: "auto" | "ask" | null }) {
 export function ToolsTab({ events, agentTools, selection, onSelectEvent }: ToolsTabProps) {
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const { rows, summary } = useMemo(() => computeToolStats(collectToolCalls(events), toolCatalogFromAgent(agentTools)), [events, agentTools]);
+  const { rows, summary } = useMemo(() => computeToolStats(collectToolCalls(events), toolCatalogFromAgent(agentTools), tool => toolPermission(agentTools, tool)), [events, agentTools]);
   const selected = rows.find(row => JSON.stringify([row.kind, row.name, row.callList[0]?.mcpServerName]) === selectedKey);
   const filtered = rows.filter(row => row.name.toLowerCase().includes(query.toLowerCase()));
   const keyOf = (row: (typeof rows)[number]) => JSON.stringify([row.kind, row.name, row.callList[0]?.mcpServerName]);

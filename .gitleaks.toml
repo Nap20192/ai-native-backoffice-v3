@@ -1,0 +1,13 @@
+# gitleaks: default rules plus one allowlist.
+# The server tests boot a control plane with a fixed fake BETTER_AUTH_SECRET.
+# It is not a secret, and the generic-api-key rule flagged it on every new test
+# file. Only that exact value is allowed, and only under the server tests.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixed fake BETTER_AUTH_SECRET of the main-node tests"
+condition = "AND"
+paths = ['''^platform/apps/main-node/test/''']
+regexTarget = "match"
+regexes = ['''BETTER_AUTH_SECRET: "test-secret-0123456789abcdef0123456789abcdef"''']

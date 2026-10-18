@@ -1,14 +1,12 @@
-// Tenants + me routes — workspace creation, current user, memberships,
-// CLI token mint. Uses sql directly for tenant + membership reads since
-// neither runtime exposes a "tenants service" abstraction yet.
+// Tenants + me routes — workspace creation, current user, memberships.
+// Uses sql directly for tenant + membership reads since neither runtime
+// exposes a "tenants service" abstraction yet.
 //
 // Differences vs CF:
 //   - CF runs `shardPool.pickShardForNewTenant` after the tenant insert
 //     so the new workspace's reads land on the right shard. Node has no
 //     shard router; the create-tenant skip on Node is signalled by
 //     `assignShard` being undefined.
-//   - The /me/cli-tokens route reuses the api_keys table (kv on CF;
-//     SQL row on Node) — both paths look identical from the route's POV.
 
 import { buildMemberRoutes, type MemberRoutesDeps } from "./members";
 import { Hono } from "hono";
@@ -113,17 +111,6 @@ export interface MeRoutesDeps {
   } | null>;
   loadTenant?: (tenantId: string) => Promise<{ id: string; name: string } | null>;
   listMemberships?: (userId: string) => Promise<MembershipRow[]>;
-  /** Mint a long-lived API key. Used by POST /v1/oma/me/cli-tokens; reuses
-   *  the api-keys storage. */
-  mintApiKey?: (input: {
-    tenantId: string;
-    userId: string;
-    name: string;
-    source?: string;
-  }) => Promise<{ id: string; key: string; prefix: string; createdAt: string }>;
-  /** Validate (user, tenant) membership for x-active-tenant-style requests
-   *  on the /me/cli-tokens path. */
-  hasMembership?: (userId: string, tenantId: string) => Promise<boolean>;
 }
 
 export function buildMeRoutes(deps: MeRoutesDeps) {
@@ -167,50 +154,6 @@ export function buildMeRoutes(deps: MeRoutesDeps) {
     }
     const ms = deps.listMemberships ? await deps.listMemberships(userId) : [];
     return c.json({ data: ms });
-  });
-
-  app.post("/cli-tokens", async (c) => {
-    const userId = c.var.user_id;
-    const sessionTenant = c.var.tenant_id;
-    if (!userId) {
-      return c.json({ error: "Cookie session required to mint CLI tokens" }, 403);
-    }
-    const body = await c.req
-      .json<{ tenant_id?: string; name?: string }>()
-      .catch(() => ({}) as { tenant_id?: string; name?: string });
-
-    const requested = body.tenant_id ?? sessionTenant;
-    if (deps.hasMembership) {
-      const ok = await deps.hasMembership(userId, requested);
-      if (!ok) {
-        return c.json(
-          {
-            type: "error",
-            error: { type: "not_a_member", message: "Not a member of the requested tenant" },
-          },
-          403,
-        );
-      }
-    }
-    if (!deps.mintApiKey) {
-      return c.json({ error: "CLI tokens not implemented on this server" }, 501);
-    }
-    const minted = await deps.mintApiKey({
-      tenantId: requested,
-      userId,
-      name: body.name?.slice(0, 80) || "CLI",
-      source: "cli",
-    });
-    return c.json(
-      {
-        key_id: minted.id,
-        token: minted.key,
-        tenant_id: requested,
-        user_id: userId,
-        created_at: minted.createdAt,
-      },
-      201,
-    );
   });
 
   return app;

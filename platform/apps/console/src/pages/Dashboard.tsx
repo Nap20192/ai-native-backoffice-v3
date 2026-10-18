@@ -1,9 +1,8 @@
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { useState, type ReactNode } from "react";
-import { ArrowRightIcon, CheckIcon, CopyIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { ArrowRightIcon } from "lucide-react";
 import { Link, useNavigate } from "react-router";
-import { toast } from "sonner";
 
 import { StatusPill } from "../components/Badge";
 import {
@@ -51,48 +50,8 @@ function QuickstartStep({
   );
 }
 
-/** Текст для копирования: вложенная панель `rounded-xl` и кнопка-иконка. */
-function CopyBlock({
-  text,
-  label,
-  copied,
-  onCopy,
-  mono = false,
-}: {
-  text: string;
-  label: string;
-  copied: boolean;
-  onCopy: () => void;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-start gap-2 rounded-xl border border-ddc-border-strong bg-ddc-surface-muted py-1.5 pr-1.5 pl-3.5">
-      <code
-        className={
-          mono
-            ? "min-w-0 flex-1 py-1 font-mono text-xs leading-5 break-all text-ddc-text"
-            : "min-w-0 flex-1 py-1 font-sans text-sm leading-5 break-words text-ddc-text"
-        }
-      >
-        {text}
-      </code>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={label}
-        title={label}
-        onClick={onCopy}
-      >
-        {copied ? <CheckIcon className="text-ddc-success-text" /> : <CopyIcon />}
-      </Button>
-    </div>
-  );
-}
-
 export function Dashboard() {
   const navigate = useNavigate();
-  const [copied, setCopied] = useState<string | null>(null);
   const { t } = useI18n();
   const statsQuery = useApiQuery<Stats>("/v1/oma/stats");
   const sessionsQuery = useApiQuery<{
@@ -107,13 +66,6 @@ export function Dashboard() {
   const statsLoading = statsQuery.isLoading;
   const recentSessions = sessionsQuery.data?.data.slice(0, 5) ?? [];
 
-  const copy = async (text: string, key: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(key);
-    toast.success(t.common.copied);
-    window.setTimeout(() => setCopied(null), 1600);
-  };
-
   const primaryKpis = [
     { label: t.nav.agents, value: stats?.agents, to: "/agents", icon: NAV_ICONS.agents },
     { label: t.nav.sessions, value: stats?.sessions, to: "/sessions", icon: NAV_ICONS.sessions },
@@ -125,18 +77,13 @@ export function Dashboard() {
     { label: t.nav.modelCards, value: stats?.model_cards, to: "/model-cards" },
   ];
 
-  const command = "npx -y -p @openma/cli oma";
-  const globalCommand = "npm i -g @openma/cli";
-  const examplePrompt =
-    "Используй oma, чтобы создать исследовательского агента, который каждый день следит за новыми статьями по машинному обучению на arXiv";
-
   return (
     <DashboardLayout
       intro={
         <PageHeader
           className="mb-0"
           title="Начало работы"
-          description={t.dashboard.handPlatformToAgent}
+          description={t.dashboard.intro}
         />
       }
       kpis={primaryKpis.map((kpi) => (
@@ -171,44 +118,38 @@ export function Dashboard() {
         title="Запуск агента"
         description="Короткий путь от пустого рабочего пространства до первого запуска."
       >
-        <QuickstartStep number="1" title={t.dashboard.installCli}>
-          <p>{t.dashboard.installCliDesc}</p>
-          <CopyBlock
-            mono
-            text={command}
-            label="Скопировать команду"
-            copied={copied === "command"}
-            onCopy={() => void copy(command, "command")}
-          />
-          <p className="text-xs">
-            или глобально:{" "}
-            <Button
-              variant="link"
-              type="button"
-              className="h-auto px-0 py-0 font-mono text-xs"
-              onClick={() => void copy(globalCommand, "global-command")}
-            >
-              {globalCommand}
-            </Button>
+        <QuickstartStep number="1" title="Опишите задачу">
+          <p>
+            Опишите задачу, и ассистент поможет собрать агента, окружение и первую сессию.
+            Агента можно создать и вручную.
           </p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={() => navigate("/quickstart")}>
+              Быстрый старт
+              <ArrowRightIcon />
+            </Button>
+            <Button type="button" variant="outline" onClick={() => navigate("/agents/new")}>
+              Новый агент
+            </Button>
+          </div>
         </QuickstartStep>
 
-        <QuickstartStep number="2" title={t.dashboard.mintApiKey}>
-          <p>{t.dashboard.mintApiKeyDesc}</p>
-          <Button type="button" onClick={() => navigate("/api-keys")}>
-            {t.dashboard.generateApiKey}
-            <ArrowRightIcon />
-          </Button>
+        <QuickstartStep number="2" title="Настройте окружение">
+          <p>Окружение задаёт песочницу агента: образ, пакеты и сеть.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => navigate("/environments")}>
+              Окружения
+            </Button>
+          </div>
         </QuickstartStep>
 
-        <QuickstartStep number="3" title={t.dashboard.handItReins}>
-          <p>{t.dashboard.handItReinsDesc}</p>
-          <CopyBlock
-            text={examplePrompt}
-            label="Скопировать запрос"
-            copied={copied === "prompt"}
-            onCopy={() => void copy(examplePrompt, "prompt")}
-          />
+        <QuickstartStep number="3" title="Запустите сессию">
+          <p>Сессия запускает агента в окружении. Дальше вы пишете ему в чате сессии.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => navigate("/sessions")}>
+              Сессии
+            </Button>
+          </div>
         </QuickstartStep>
       </ConsolePanel>
 

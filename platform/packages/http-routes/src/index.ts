@@ -49,7 +49,6 @@ export type { TenantRoutesDeps, MeRoutesDeps } from "./tenants";
 
 export {
   buildApiKeyRoutes,
-  mintApiKeyOnStorage,
   sha256Hex,
 } from "./api-keys";
 export type {

@@ -18,6 +18,7 @@ const FORBIDDEN: [string, string][] = [
   ["GET", "/v1/oma/dependencies/harness_card/hc_1"],
   ["GET", "/v1/oma/api_keys"],
   ["POST", "/v1/oma/api_keys"],
+  // The route went away with the oma CLI on 2026-10-19; the entry stays as a guard.
   ["GET", "/v1/oma/me/cli-tokens"],
   ["POST", "/v1/oma/tenants/ws_1/members"],
   ["GET", "/v1/oma/tenants"],

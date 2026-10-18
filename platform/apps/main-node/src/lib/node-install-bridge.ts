@@ -303,7 +303,7 @@ export class NodeInstallBridge implements InstallBridge {
   ): Promise<StartInstallationResult> {
     // Same publication-create wire shapes as apps/integrations/src/routes/
     // {linear,github,slack}/publications.ts. Status codes (200 / 400 / 500)
-    // and JSON envelopes preserved verbatim — Console + CLI talk to either.
+    // and JSON envelopes preserved verbatim; the console talks to either.
     const containers = this.buildContainers();
     const providers = {
       linear: new LinearProvider(containers.linear, {

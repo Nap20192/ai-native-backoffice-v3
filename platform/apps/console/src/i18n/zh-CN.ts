@@ -111,17 +111,7 @@ export const zhCN: Messages = {
 
   dashboard: {
     getStarted: "开始使用 openma",
-    handPlatformToAgent:
-      "将平台交给你的智能体 — 安装 CLI、生成密钥、指向平台。",
-    installCli: "安装 CLI",
-    installCliDesc:
-      "oma CLI 让你的智能体（或你）可以从终端驱动平台。",
-    mintApiKey: "生成 API 密钥",
-    mintApiKeyDesc: "你的智能体需要此密钥进行认证，请妥善保存。",
-    generateApiKey: "生成 API 密钥",
-    handItReins: "交付控制权",
-    handItReinsDesc:
-      "将你的智能体指向 openma-cli 或 openma-api 技能，然后提出你的需求：",
+    intro: "工作区概览，以及首次运行智能体的快捷路径。",
     recentSessions: "最近会话",
     noSessionsYet: "还没有会话 — 马厩是空的。",
     visitSessionsPage: "会话页面",

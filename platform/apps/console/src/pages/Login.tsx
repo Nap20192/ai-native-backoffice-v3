@@ -108,9 +108,10 @@ export function Login() {
   const [turnstileNonce, setTurnstileNonce] = useState(0);
   const otpRef = useRef<HTMLInputElement>(null);
 
-  // Honor `?next=` so callers (e.g. /cli/login) can bounce through here and
-  // land back where they started after sign-in. Restricted to same-origin
-  // paths so a malicious link can't trick the user into redirecting offsite.
+  // Honor `?next=` so callers (e.g. the /join invite link in
+  // WorkspaceMembers.tsx) can bounce through here and land back where they
+  // started after sign-in. Restricted to same-origin paths so a malicious
+  // link can't trick the user into redirecting offsite.
   const nextUrl = (() => {
     const raw = new URLSearchParams(window.location.search).get("next");
     if (!raw) return "/";

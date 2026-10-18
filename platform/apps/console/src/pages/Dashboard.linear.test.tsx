@@ -40,7 +40,7 @@ describe("Dashboard Linear density", () => {
   });
 
   it("shows the dashboard in Russian with icon KPI tiles and numbered steps", () => {
-    render(
+    const { container } = render(
       <MemoryRouter>
         <I18nProvider>
           <Dashboard />
@@ -56,7 +56,13 @@ describe("Dashboard Linear density", () => {
     expect(within(primary).getByRole("button", { name: "Сессии: 2" })).toBeInTheDocument();
     expect(screen.getByText("Шаг 1")).toBeInTheDocument();
     expect(screen.getByText("Шаг 3")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Скопировать команду" })).toBeInTheDocument();
+    // The CLI quickstart was removed with the oma CLI on 2026-10-19.
+    // The steps now lead to the console's own pages.
+    expect(screen.getByRole("button", { name: "Быстрый старт" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Новый агент" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Окружения" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Сессии" })).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/CLI|@openma\/cli/);
     expect(screen.getByText("Сессий пока нет")).toBeInTheDocument();
   });
 });

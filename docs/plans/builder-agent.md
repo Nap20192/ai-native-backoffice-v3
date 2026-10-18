@@ -248,7 +248,7 @@
 - значения секретов: `GET /v1/oma/model_cards/:id/key` (ключ провайдера открытым текстом, `P/http-routes/src/model-cards/index.ts:323`), `/v1/tunnels/:id/reveal_token`, создание и правка учётных данных (`POST /v1/vaults/:id/credentials` и `/:credential_id`);
 - создание карточки модели (`POST /v1/oma/model_cards`): маршрут требует ключ (`index.ts:156`), карточку создаёт консоль по форме (1.4);
 - создание карточки harness (`POST /v1/oma/harness_cards`): ID, команду, аргументы и рабочую папку вводит человек, карточку создаёт консоль по форме (1.4);
-- права и доступ: `/v1/oma/api_keys`, `/v1/oma/me/cli-tokens`, `/v1/oma/tenants` (участники, приглашения, роли), выключатель ассистента `/v1/oma/platform-mcp/settings` (3.7);
+- права и доступ: `/v1/oma/api_keys`, `/v1/oma/tenants` (участники, приглашения, роли), выключатель ассистента `/v1/oma/platform-mcp/settings` (3.7);
 - команда в песочнице: `POST /v1/oma/sessions/:id/exec`;
 - служебное: `/metrics`, `/v1/oma/internal`, `/v1/oma/mcp-proxy`, `/v1/environments/:id/work`, `/v1/oma/platform-mcp/preview`, `/v1/oma/platform-mcp/confirm`.
 

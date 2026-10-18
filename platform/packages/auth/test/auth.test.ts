@@ -287,6 +287,7 @@ describe("platform MCP actor token", () => {
     ["/v1/oma/mcp-proxy/sesn_1/platform", "/v1/oma/mcp-proxy/sesn_1/platform", false],
     ["/v1/oma/internal/x", "/v1/oma/internal/x", false],
     ["/v1/oma/api_keys", "/v1/oma/api_keys", false],
+    // The route went away with the oma CLI on 2026-10-19; the entry stays as a guard.
     ["/v1/oma/me/cli-tokens", "/v1/oma/me/cli-tokens", false],
     ["/v1/oma/tenants/ws_1/members", "/v1/oma/tenants/ws_1/members", false],
     ["/v1/oma/inference-proxy/sesn_1/v1/messages", "/v1/oma/inference-proxy/sesn_1/v1/messages", false],

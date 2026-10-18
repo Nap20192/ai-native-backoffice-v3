@@ -131,43 +131,4 @@ export function buildApiKeyRoutes(deps: ApiKeyRoutesDeps) {
   return app;
 }
 
-/** Helper exposed for /me/cli-tokens — same KV/SQL row shape, just the
- *  insert step. Returns the meta the route should echo back. */
-export async function mintApiKeyOnStorage(
-  storage: ApiKeyStorage,
-  input: {
-    tenantId: string;
-    userId: string;
-    name: string;
-    source?: string;
-    environmentId?: string;
-  },
-): Promise<{ id: string; key: string; prefix: string; createdAt: string }> {
-  const credential = input.environmentId === undefined
-    ? { type: "workspace" as const }
-    : { type: "environment" as const, environmentId: input.environmentId };
-  const raw = generateRawKey(
-    credential.type === "environment" ? "oma_env_" : "oma_",
-  );
-  const prefix = raw.slice(0, credential.type === "environment" ? 12 : 8);
-  const hash = await sha256Hex(raw);
-  const id = `ak_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  const now = new Date().toISOString();
-  await storage.insert({
-    id,
-    hash,
-    prefix,
-    record: {
-      id,
-      tenant_id: input.tenantId,
-      user_id: input.userId,
-      name: input.name,
-      created_at: now,
-      source: input.source,
-      credential,
-    },
-  });
-  return { id, key: raw, prefix, createdAt: now };
-}
-
 export { sha256Hex };

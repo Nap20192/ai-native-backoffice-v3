@@ -35,7 +35,7 @@ import {
 
 import { listAuthProviders } from "@open-managed-agents/shared";
 
-import { buildAgentRoutes as buildLegacyAgentRoutes, buildVaultRoutes as buildLegacyVaultRoutes, buildModelCardRoutes, buildEnvironmentRoutes as buildLegacyEnvironmentRoutes, buildSessionRoutes, buildMemoryRoutes as buildLegacyMemoryRoutes, buildDreamRoutes, buildTenantRoutes, buildMeRoutes, buildApiKeyRoutes, buildEvalRoutes, buildIntegrationsRoutes, buildIntegrationsGatewayRoutes, type InstallProxyForwarder, mintApiKeyOnStorage, sha256Hex } from "@open-managed-agents/http-routes";
+import { buildAgentRoutes as buildLegacyAgentRoutes, buildVaultRoutes as buildLegacyVaultRoutes, buildModelCardRoutes, buildEnvironmentRoutes as buildLegacyEnvironmentRoutes, buildSessionRoutes, buildMemoryRoutes as buildLegacyMemoryRoutes, buildDreamRoutes, buildTenantRoutes, buildMeRoutes, buildApiKeyRoutes, buildEvalRoutes, buildIntegrationsRoutes, buildIntegrationsGatewayRoutes, type InstallProxyForwarder, sha256Hex } from "@open-managed-agents/http-routes";
 import { buildAgentRoutes as buildManagedAgentRoutes, buildManagedSessionsApi } from "@open-managed-agents/managed-agents-api";
 import { SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService } from "@open-managed-agents/managed-agents-application";
 
@@ -516,16 +516,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
         .all<{ id: string; name: string; role: string; created_at: number }>();
       return r.results ?? [];
     },
-    hasMembership: async (userId, tenantId) => {
-      const row = await sql
-        .prepare(
-          `SELECT 1 AS one FROM membership WHERE user_id = ? AND tenant_id = ? LIMIT 1`,
-        )
-        .bind(userId, tenantId)
-        .first<{ one: number }>();
-      return row !== null;
-    },
-    mintApiKey: (input) => mintApiKeyOnStorage(apiKeyStorage, input),
   }));
   v1.route("/oma/tenants", buildTenantRoutes({ services, memberSql: sql, loadMemberUser: async (id) => {
     const user = auth ? await auth.findUser(id) : null;

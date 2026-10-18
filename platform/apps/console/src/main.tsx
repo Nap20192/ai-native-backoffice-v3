@@ -33,7 +33,6 @@ import { MemoryStoreDetail } from "./pages/MemoryStoreDetail";
 import { ModelCardsList } from "./pages/ModelCardsList";
 import { WorkspaceMembers, JoinWorkspace } from "./pages/WorkspaceMembers";
 import { ApiKeysList } from "./pages/ApiKeysList";
-import { CliLogin } from "./pages/CliLogin";
 import { EvalRunsList } from "./pages/EvalRunsList";
 import { EvalRunDetail } from "./pages/EvalRunDetail";
 import {
@@ -339,7 +338,6 @@ const protectedRoutes: RouteObject[] = [
 const router = createBrowserRouter([
   { path: "join", element: <JoinWorkspace /> },
   { path: "login", element: <Login /> },
-  { path: "cli/login", element: <CliLogin /> },
   {
     element: <AppShell />,
     children: protectedRoutes,

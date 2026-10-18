@@ -112,18 +112,7 @@ export const ru: Messages = {
 
   dashboard: {
     getStarted: "Начало работы",
-    handPlatformToAgent:
-      "Передайте платформу своему агенту: установите CLI, выпустите ключ и укажите его агенту.",
-    installCli: "Установите CLI",
-    installCliDesc:
-      "CLI oma позволяет агенту (или вам) управлять платформой из терминала.",
-    mintApiKey: "Выпустите API-ключ",
-    mintApiKeyDesc:
-      "Ключ нужен агенту для авторизации. Храните его там, где агент сможет его прочитать.",
-    generateApiKey: "Создать API-ключ",
-    handItReins: "Передайте управление",
-    handItReinsDesc:
-      "Подключите агента к навыку openma-cli или openma-api и опишите, что нужно сделать:",
+    intro: "Сводка рабочего пространства и короткий путь к первому запуску агента.",
     recentSessions: "Последние сессии",
     noSessionsYet: "Сессий пока нет.",
     visitSessionsPage: "Страница сессий",

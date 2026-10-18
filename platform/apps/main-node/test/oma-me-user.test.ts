@@ -77,3 +77,30 @@ describe("GET /v1/oma/me on main-node", () => {
     expect(body.tenant.id).toMatch(/^tn_/u);
   });
 });
+
+// The oma CLI is gone (D41, removed for good on 2026-10-19). Its login page
+// minted long-lived API keys through POST /v1/oma/me/cli-tokens; the route
+// is removed, so even a signed-in user gets 404 and no key.
+describe("POST /v1/oma/me/cli-tokens on main-node", () => {
+  it("answers 404 for a signed-in user since the oma CLI was removed", async () => {
+    const cp = await boot();
+    const signUp = await cp.fetch(new Request(`${BASE}/auth/sign-up/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: BASE },
+      body: JSON.stringify({
+        email: "cli@verify.test",
+        password: "password-123456",
+        name: "Cli Gone",
+      }),
+    }));
+    expect(signUp.status).toBe(200);
+    const cookie = cookiesFrom(signUp);
+
+    const res = await cp.fetch(new Request(`${BASE}/v1/oma/me/cli-tokens`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "CLI" }),
+    }));
+    expect(res.status).toBe(404);
+  });
+});

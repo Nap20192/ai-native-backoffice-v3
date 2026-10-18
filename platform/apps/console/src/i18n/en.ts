@@ -111,18 +111,7 @@ export const en: Messages = {
 
   dashboard: {
     getStarted: "Get started with openma",
-    handPlatformToAgent:
-      "Hand the platform to your agent — install the CLI, mint a key, point them at it.",
-    installCli: "Install the CLI",
-    installCliDesc:
-      "The oma CLI lets your agent (or you) drive the platform from the terminal.",
-    mintApiKey: "Mint an API key",
-    mintApiKeyDesc:
-      "Your agent needs this to authenticate. Keep it somewhere it can read.",
-    generateApiKey: "Generate API key",
-    handItReins: "Hand it the reins",
-    handItReinsDesc:
-      "Point your agent at the openma-cli or openma-api skill, then ask for what you want:",
+    intro: "Workspace summary and a short path to your first agent run.",
     recentSessions: "Recent sessions",
     noSessionsYet: "No sessions yet — the stable's empty.",
     visitSessionsPage: "Sessions page",

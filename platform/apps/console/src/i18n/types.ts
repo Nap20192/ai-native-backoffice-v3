@@ -125,14 +125,7 @@ export interface Messages {
   // Dashboard
   dashboard: {
     getStarted: string;
-    handPlatformToAgent: string;
-    installCli: string;
-    installCliDesc: string;
-    mintApiKey: string;
-    mintApiKeyDesc: string;
-    generateApiKey: string;
-    handItReins: string;
-    handItReinsDesc: string;
+    intro: string;
     recentSessions: string;
     noSessionsYet: string;
     visitSessionsPage: string;

@@ -180,7 +180,7 @@ export function ApiKeysList() {
       emptySubtitle={
         search.trim()
           ? "Измените поисковый запрос."
-          : "Создайте API-ключ, чтобы работать с платформой из CLI или SDK."
+          : "Создайте API-ключ, чтобы работать с платформой из SDK или скриптов."
       }
       emptyAction={
         !search.trim() && (

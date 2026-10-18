@@ -194,6 +194,7 @@ describe("routes outside the allowlist", () => {
     ["POST", "/v1/oma/harness_cards"],
     ["GET", "/v1/oma/api_keys"],
     ["POST", "/v1/oma/api_keys"],
+    // The route went away with the oma CLI on 2026-10-19; the entry stays as a guard.
     ["POST", "/v1/oma/me/cli-tokens"],
     ["GET", "/v1/oma/tenants"],
     ["POST", "/v1/oma/tenants/ws_1/members"],

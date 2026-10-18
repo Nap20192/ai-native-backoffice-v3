@@ -104,7 +104,7 @@ sequenceDiagram
   - консоль не рендерит сырой HTML: `rehype-raw` и `dangerouslySetInnerHTML` не найдены, держать так и проверить контрактным тестом;
   - security-review консоли перед выкаткой.
 - **Токен портала на сервере агентов.** Хранится только в памяти процесса рядом с сеансом и пропадает с ним. Не пишется в базу, журналы, ответы и песочницы. Ключ сеанса в памяти: sha256 от значения cookie. Тест проверяет, что журнал сервера не содержит токена. По сравнению с общим origin это не новая поверхность: кто управляет ответами `/agents`, тот и так читает `vibe.token` в браузере.
-- **Ключи API.** API-ключ проверяется раньше cookie, а членство его владельца проверяется только при использовании (`packages/auth/src/index.ts:158`). Если сотрудник потерял право в портале, его ключ работал бы, пока он сам не зайдёт в конструктор. Поэтому в режиме портала выпуск ключей (`POST /v1/oma/api_keys`, `POST /v1/oma/me/cli-tokens`) и статический `API_KEY` выключены. Токены окружений и песочниц (`oma_env_`, Bearer работ) остаются: это не вход людей.
+- **Ключи API.** API-ключ проверяется раньше cookie, а членство его владельца проверяется только при использовании (`packages/auth/src/index.ts:158`). Если сотрудник потерял право в портале, его ключ работал бы, пока он сам не зайдёт в конструктор. Поэтому в режиме портала выпуск ключей (`POST /v1/oma/api_keys`) и статический `API_KEY` выключены. Токены окружений и песочниц (`oma_env_`, Bearer работ) остаются: это не вход людей.
 
 ## 2. Пользователи и права
 
@@ -134,7 +134,7 @@ sequenceDiagram
 - новый workspace: `POST /v1/oma/tenants`;
 - приглашения: `/v1/oma/tenants/:id/invitations*`, `/v1/oma/tenants/invitations/accept`;
 - смена роли и удаление участника: `PATCH|DELETE /v1/oma/tenants/:id/members/:userId`;
-- выпуск ключей: `POST /v1/oma/api_keys`, `POST /v1/oma/me/cli-tokens`.
+- выпуск ключей: `POST /v1/oma/api_keys`.
 
 Личные workspace «<имя>'s workspace» не создаются: в режиме портала `ensureTenantForUser` (`modules/node-http.ts:285`) добавляет членство в банковский workspace вместо `ensureTenantSqlite`.
 
@@ -270,7 +270,7 @@ sequenceDiagram
 |---|---|---|
 | `vite.config.ts` | `base: process.env.VITE_BASE ?? "/"`, прокси dev-сервера под базой | +6 |
 | `src/lib/base.ts` (новый) | `BASE_PATH` из `import.meta.env.BASE_URL`, `withBase(path)` | +15 |
-| `src/main.tsx:259-268` | `createBrowserRouter(routes, { basename })`. В режиме портала нет маршрутов `login` (с формой), `join`, `cli/login`. Внутренняя страница списка агентов `/agents` станет `/agents/agents`, это допустимо | +10 |
+| `src/main.tsx:259-268` | `createBrowserRouter(routes, { basename })`. В режиме портала нет маршрутов `login` (с формой) и `join`. Внутренняя страница списка агентов `/agents` станет `/agents/agents`, это допустимо | +10 |
 | `src/lib/api.ts:1,104-112` | `BASE = BASE_PATH`. В режиме портала 401 на `/v1/*` → один обмен (общий для всех запросов) и один повтор | +30 |
 | `src/lib/auth-client.ts` | `basePath: withBase("/auth")` | +1 |
 | `src/lib/portal-session.ts` (новый) | Чтение `localStorage[VITE_PORTAL_TOKEN_KEY ?? "vibe.token"]`, обмен, разбор 401/403/503, слушатель `storage` (токен стёрт: выход и в портал; токен сменился: новый обмен), переход в портал | ~100 |
@@ -281,7 +281,7 @@ sequenceDiagram
 | `src/components/UserProfile.tsx:53` | «Выйти» → «Вернуться в портал». Выход один, в портале | +8 |
 | `src/components/AppSidebar.tsx` | Ссылка «Портал» вверху: конструктор выглядит частью портала | +8 |
 | `src/pages/WorkspaceMembers.tsx`, страница ключей API, выбор и создание workspace | В режиме портала только чтение, подпись «Состав и роли задаёт портал» | ~30 |
-| Абсолютные пути, около 20 мест | `withBase()`: `UserProfile.tsx:54`, `ConnectRuntime.tsx:82-114`, `CliLogin.tsx:144-214`, `WorkspaceMembers.tsx:230,532`, `Login.tsx:308`, `lib/branding.ts:114`, `components/SkillSources.tsx:72`, `integrations/api/request.ts:15`, `integrations/pages/*Wizard.tsx` (адреса возврата), `pages/session-detail/Panels.tsx:237` (ссылка скачивания, работает по cookie) | ~30 |
+| Абсолютные пути, около 20 мест | `withBase()`: `UserProfile.tsx:54`, `WorkspaceMembers.tsx:230,532`, `Login.tsx:308`, `lib/branding.ts:114`, `components/SkillSources.tsx:72`, `integrations/api/request.ts:15`, `integrations/pages/*Wizard.tsx` (адреса возврата), `pages/session-detail/Panels.tsx:237` (ссылка скачивания, работает по cookie) | ~30 |
 | `index.html:50-57` | Скрипт темы в `public/theme.js` (под CSP без inline), убрать `preconnect` к `challenges.cloudflare.com` | ~10 |
 | Тесты | П. 5.3 | ~200 |
 

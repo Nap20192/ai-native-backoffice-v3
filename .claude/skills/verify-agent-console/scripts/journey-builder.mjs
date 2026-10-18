@@ -77,6 +77,24 @@ const created = { sessions: [], agents: [], environments: [] };
 const covered = new Set();
 const cover = (...list) => list.forEach((id) => covered.add(id));
 
+// Таблица инструментов платформы (platform/apps/main-node/src/lib/platform-mcp/tool-table.ts) по группам
+// комплекта ассистента (builder-template.ts, builder-bundle.ts). Модель видит ровно эти имена с приставкой
+// mcp__platform__. Инструментов карточек harness (D41), создания карточки модели и exec в таблице нет.
+// Опасный класс (crud.md 3.1) только у архива и удаления, возврат из архива идёт правкой.
+// Новый или пропавший инструмент валит vb.fake_tools и vb.danger_class, пока таблицу здесь не сверят с кодом.
+const PLATFORM_TOOL_GROUPS = {
+  read: ["help", "search_docs", "search_config", "list", "get", "read_content", "get_session_events", "get_trajectory", "request_secret", "get_dependencies"],
+  draft: ["preview_change"],
+  write: [
+    "create_agent", "create_environment", "create_skill", "upload_file", "create_memory_store", "create_deployment",
+    "create_session", "send_message", "update_session", "add_session_resource", "write_memory", "update_agent",
+    "restore_agent_version", "update_environment", "create_skill_version", "update_memory_store", "update_deployment",
+    "update_model_card", "pause_deployment", "unpause_deployment", "run_deployment", "unarchive_object", "apply_changes",
+  ],
+  danger: ["archive_object", "delete_object"],
+};
+const PLATFORM_TOOLS = Object.values(PLATFORM_TOOL_GROUPS).flat();
+
 const require = createRequire(join(run.PLATFORM_DIR, "package.json"));
 const { chromium } = require("@playwright/test");
 
@@ -859,15 +877,40 @@ async function stepMain() {
     assert(tc.length === 5, `user.tool_confirmation ${tc.length}`);
     return `${allow.length} подтверждений`;
   });
-  await check("vb.fake_tools", "в запросах сессии ассистента к модели только mcp__platform__*, без инструментов карточек harness и запрещённых", () => {
+  await check("vb.fake_tools", `в каждом запросе сессии ассистента к модели ровно ${PLATFORM_TOOLS.length} инструментов таблицы платформы: имени вне таблицы нет, ни один не пропал`, () => {
     const reqs = fakeFor("BUILDER_MAIN");
     assert(reqs.length >= 7, `запросов ${reqs.length}`);
-    const all = new Set(reqs.flatMap((r) => r.tools ?? []));
-    const bad = [...all].filter((n) => !n.startsWith("mcp__platform__") || /harness_card|create_model_card|exec|archive|delete/.test(n));
-    assert(bad.length === 0, `лишние имена: ${bad.join(", ")}`);
+    const want = new Set(PLATFORM_TOOLS.map((name) => `mcp__platform__${name}`));
+    for (const r of reqs) {
+      const got = new Set(r.tools ?? []);
+      const extra = [...got].filter((name) => !want.has(name));
+      const missing = [...want].filter((name) => !got.has(name));
+      assert(extra.length === 0, `запрос ${r.n}: имён нет в таблице: ${extra.join(", ")}`);
+      assert(missing.length === 0, `запрос ${r.n}: нет инструментов таблицы: ${missing.join(", ")}`);
+    }
     const fails = reqs.filter((r) => String(r.decision).startsWith("fail"));
     assert(fails.length === 0, `решения фейка: ${fails.map((r) => r.reply_text).join(" | ")}`);
-    return `${all.size} инструментов`;
+    return `${want.size} инструментов в ${reqs.length} запросах`;
+  });
+  const bundle = await apiRaw("GET", "/v1/oma/platform-mcp/builder-bundle");
+  await check("vb.danger_class", "archive_object и delete_object в комплекте ассистента только в группе «Архив и удаление» с подтверждением, остальные группы совпадают с таблицей; у агента ассистента они на always_ask", () => {
+    assert(bundle.status === 200, `builder-bundle ${bundle.status} ${bundle.text.slice(0, 160)}`);
+    const groups = bundle.json?.tool_groups ?? [];
+    const sorted = (list) => JSON.stringify([...(list ?? [])].sort());
+    assert(sorted(groups.map((g) => g.id)) === sorted(Object.keys(PLATFORM_TOOL_GROUPS)), `группы ${groups.map((g) => g.id).join(", ")}`);
+    for (const [id, tools] of Object.entries(PLATFORM_TOOL_GROUPS)) {
+      const group = groups.find((g) => g.id === id);
+      assert(sorted(group.tools) === sorted(tools), `группа ${id}: ${(group.tools ?? []).join(", ")}`);
+      assert(group.confirm === (id === "write" || id === "danger"), `группа ${id}: confirm ${group.confirm}`);
+    }
+    const danger = groups.find((g) => g.id === "danger");
+    assert(danger.title === "Архив и удаление", `заголовок группы «${danger.title}»`);
+    const mcp = (ids.builderTools ?? []).find((t) => t.type === "mcp_toolset");
+    assert(mcp?.default_config?.permission_policy?.type === "always_ask", `политика по умолчанию ${JSON.stringify(mcp?.default_config)}`);
+    const quiet = [...PLATFORM_TOOL_GROUPS.read, ...PLATFORM_TOOL_GROUPS.draft];
+    const loose = (mcp.configs ?? []).filter((c) => c.permission_policy?.type !== "always_ask" && !quiet.includes(c.name));
+    assert(loose.length === 0, `без подтверждения: ${loose.map((c) => `${c.name}=${c.permission_policy?.type}`).join(", ")}`);
+    return `danger: ${danger.tools.join(", ")}; без подтверждения только чтение и черновик (${(mcp.configs ?? []).length})`;
   });
 
   // Вкладка «Изменения» и лист на 390 px.

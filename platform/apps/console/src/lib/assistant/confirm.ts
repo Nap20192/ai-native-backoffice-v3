@@ -79,8 +79,9 @@ export function blockFromDecision(
 ): Block | null {
   switch (outcome.reason) {
     case "class": {
+      // Карточка на экране собрана до смены состояния. Причину по новому состоянию пишет сервер в ответе 409.
       const out = preview?.operations.find((o) => o.class === "out_of_v1");
-      return { reason: "class", text: classText(out?.tool || tool, out?.outOfV1Reason ?? null) };
+      return { reason: "class", text: classText(out?.tool || tool, out?.outOfV1Reason ?? (outcome.message || null)) };
     }
     case "secret":
       return { reason: "secret", text: SECRET_TEXT };

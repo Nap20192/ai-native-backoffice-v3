@@ -94,6 +94,17 @@ describe("blockFromDecision", () => {
     const b = blockFromDecision({ ok: false, reason: "class", status: 409, message: "" }, p, "send_message");
     expect(b?.text).toContain("только первое сообщение");
   });
+  it("class берёт причину сервера по новому состоянию, а не текст по инструменту", () => {
+    // Карточка собрана, пока деплоймент был на паузе; его отправили в архив, сервер ответил 409 class.
+    const card = normalizePreview({
+      tool: "update_deployment",
+      preview_digest: "d1",
+      operations: [{ index: 0, tool: "update_deployment", kind: "deployment", target_id: "depl_1", class: "edit" }],
+    });
+    const reason = "Объект в архиве. В первой версии ассистент его не меняет";
+    const b = blockFromDecision({ ok: false, reason: "class", status: 409, message: reason }, card, "update_deployment");
+    expect(b).toEqual({ reason: "class", text: reason });
+  });
   it("stale и other не блокируют", () => {
     expect(blockFromDecision({ ok: false, reason: "stale", status: 409, message: "" }, p, "update_agent")).toBeNull();
     expect(blockFromDecision({ ok: false, reason: "other", status: 500, message: "" }, p, "update_agent")).toBeNull();

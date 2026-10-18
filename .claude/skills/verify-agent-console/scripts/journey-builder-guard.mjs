@@ -129,6 +129,8 @@ export function guardSteps(ctx) {
     ctx.cover("builder-stale");
   }
 
+  // С волны crud (docs/plans/crud.md 3.1) правка работающего деплоймента это правка с предупреждением.
+  // Поэтому снятие с паузы после preview даёт 409 stale и новую разницу, а 409 class даёт архив.
   async function stepClass() {
     const dep = await ctx.apiRaw("POST", "/v1/deployments", {
       name: `vb-dep2-${n}`, agent: { type: "agent", id: ids.agent }, environment_id: ids.env,
@@ -137,6 +139,15 @@ export function guardSteps(ctx) {
     });
     ctx.assert(dep.status < 300 && dep.json.status === "paused", `деплоймент: ${dep.status} ${dep.text.slice(0, 160)}`);
     const depId = dep.json.id;
+    const initialKept = async () => {
+      const now = await ctx.api("GET", `/v1/deployments/${depId}`);
+      ctx.assert(ctx.textOf(now.initial_events?.[0]?.content).includes(`исходное vb-${n}`), "initial_events изменились");
+      return now;
+    };
+    const noAllow = async (sid, useId) => {
+      const { confirmations } = await ctx.actions(sid);
+      ctx.assert(!confirmations.some((x) => x.tool_use_id === useId && x.result === "allow"), "есть allow");
+    };
     await ctx.openPanel();
     await ctx.newConversation();
     const turn = await ctx.sendPanel([`VERIFY_BUILDER_CLASS nonce=${n}`, `Цель: ${depId}`].join("\n"));
@@ -144,27 +155,60 @@ export function guardSteps(ctx) {
     await ctx.cardReady(c);
     const title = (await c.getByRole("heading").first().textContent()) ?? "";
     const use = ctx.mcpUses(turn.events, "update_deployment")[0];
+    const apply = () => c.getByRole("button", { name: "Применить", exact: true });
+
+    // Сняли с паузы: карточка получает 409 stale и сама загружает новую разницу с предупреждением.
     await ctx.api("POST", `/v1/deployments/${depId}/unpause`, {});
-    await c.getByRole("button", { name: "Применить", exact: true }).click();
-    const text = "Деплоймент работает. В первой версии ассистент меняет только деплоймент на паузе";
-    await c.getByText(text).waitFor({ timeout: 15_000 });
-    await ctx.shot("class-card");
-    const disabled = await c.getByRole("button", { name: "Применить", exact: true }).isDisabled();
-    const pv = await ctx.apiRaw("POST", "/v1/oma/platform-mcp/preview", { session_id: turn.sid, tool_use_id: use.id });
-    const cf = await ctx.apiRaw("POST", "/v1/oma/platform-mcp/confirm", { session_id: turn.sid, tool_use_id: use.id, result: "allow", preview_digest: pv.json?.preview_digest ?? "x" });
-    await ctx.check("vb.class", "деплоймент сняли с паузы: 409 class, причина на карточке, кнопка выключена, confirm с новым отпечатком 409 class, initial_events прежние", async () => {
+    await apply().click();
+    const activeWarning = "Следующий запуск возьмёт новую конфигурацию";
+    await c.getByText("Деплоймент изменился после предложения").waitFor({ timeout: 15_000 });
+    await c.getByText(activeWarning).waitFor({ timeout: 15_000 });
+    await ctx.waitFor("«Применить» после новой разницы", async () => (await apply().isEnabled()) || undefined, 15_000, 200);
+    await ctx.shot("class-unpaused-stale");
+    const reloaded = ctx.previews.filter((p) => p.tool_use_id === use.id && p.status === 200).at(-1)?.body;
+    await ctx.check("vb.class_unpaused", "деплоймент сняли с паузы: 409 stale, «Деплоймент изменился после предложения», новая разница с классом правки и предупреждением «Следующий запуск возьмёт новую конфигурацию», «Применить» включена; запись не прошла", async () => {
       ctx.assert(/деплоймент на паузе/.test(title), `заголовок «${title}»`);
+      ctx.assert(ctx.confirms.some((x) => x.tool_use_id === use.id && x.status === 409 && x.error === "stale"), "консоль не получила 409 stale");
+      ctx.assert(!ctx.confirms.some((x) => x.tool_use_id === use.id && x.status === 409 && x.error === "class"), "консоль получила 409 class на работающем деплойменте");
+      ctx.assert(reloaded?.class === "update", `класс новой разницы ${reloaded?.class}`);
+      ctx.assert((reloaded?.warnings ?? []).includes(activeWarning), `предупреждения ${JSON.stringify(reloaded?.warnings)}`);
+      const now = await initialKept();
+      ctx.assert(now.status === "active", `статус ${now.status}`);
+      await noAllow(turn.sid, use.id);
+      return `409 stale, класс ${reloaded.class}`;
+    });
+
+    // Отправили в архив: правка вышла за v1, сервер отвечает 409 class с причиной.
+    let archived = await ctx.apiRaw("POST", `/v1/deployments/${depId}/archive`, {});
+    if (archived.status >= 300) {
+      await ctx.api("POST", `/v1/deployments/${depId}/pause`, {});
+      archived = await ctx.apiRaw("POST", `/v1/deployments/${depId}/archive`, {});
+    }
+    ctx.assert(archived.status < 300, `архив деплоймента: ${archived.status} ${archived.text.slice(0, 160)}`);
+    const pv = await ctx.apiRaw("POST", "/v1/oma/platform-mcp/preview", { session_id: turn.sid, tool_use_id: use.id });
+    await apply().click();
+    const alert = c.getByRole("alert");
+    await alert.waitFor({ timeout: 15_000 });
+    await ctx.waitFor("«Применить» выключена", async () => (await apply().isDisabled()) || undefined, 10_000, 200);
+    // Кнопка гаснет переходом opacity: без паузы снимок ловит её почти яркой.
+    await ctx.sleep(400);
+    await ctx.shot("class-card");
+    const shown = ((await alert.textContent()) ?? "").trim();
+    const disabled = await apply().isDisabled();
+    // Деплоймент в архиве: confirm с новым отпечатком ничего не пишет, класс проверяется до отпечатка.
+    const cf = await ctx.apiRaw("POST", "/v1/oma/platform-mcp/confirm", { session_id: turn.sid, tool_use_id: use.id, result: "allow", preview_digest: pv.json?.preview_digest ?? "x" });
+    await ctx.check("vb.class", "деплоймент отправили в архив после preview: 409 class, на карточке причина сервера, кнопка выключена, confirm с новым отпечатком 409 class, initial_events прежние", async () => {
+      ctx.assert(pv.status === 200 && pv.json?.class === "out_of_v1" && pv.json?.reason, `preview ${pv.status} ${pv.text.slice(0, 160)}`);
       ctx.assert(ctx.confirms.some((x) => x.tool_use_id === use.id && x.status === 409 && x.error === "class"), "консоль не получила 409 class");
+      ctx.assert(shown === pv.json.reason, `на карточке «${shown}», причина сервера «${pv.json.reason}»`);
       ctx.assert(disabled, "кнопка включена");
       ctx.assert(cf.status === 409 && cf.json?.error?.type === "class", `confirm ${cf.status} ${cf.text.slice(0, 160)}`);
-      const now = await ctx.api("GET", `/v1/deployments/${depId}`);
-      ctx.assert(ctx.textOf(now.initial_events?.[0]?.content).includes(`исходное vb-${n}`), "initial_events изменились");
-      const { confirmations } = await ctx.actions(turn.sid);
-      ctx.assert(!confirmations.some((x) => x.tool_use_id === use.id && x.result === "allow"), "есть allow");
-      return "409 class";
+      await initialKept();
+      await noAllow(turn.sid, use.id);
+      return `409 class: ${shown}`;
     });
-    await ctx.api("POST", `/v1/deployments/${depId}/pause`, {});
-    await ctx.denyCard(turn.sid, c, "деплоймент работает");
+    await ctx.api("POST", `/v1/deployments/${depId}/unarchive`, {});
+    await ctx.denyCard(turn.sid, c, "деплоймент в архиве");
     ctx.cover("builder-class");
   }
 
@@ -261,7 +305,7 @@ export function guardSteps(ctx) {
   return [
     ["6.5 подложенные указания", stepInject],
     ["6.6 устаревшая правка", stepStale],
-    ["6.6 деплоймент сняли с паузы", stepClass],
+    ["6.6 деплоймент сняли с паузы и в архив", stepClass],
     ["6.6 путь памяти заняли", stepMemPath, ["контрольные секреты"]],
     ["6.6 в сессию уже написали", stepMsg],
   ];

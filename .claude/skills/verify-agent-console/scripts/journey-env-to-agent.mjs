@@ -130,6 +130,17 @@ let context;
 const screens = [];
 let lastStepShot = null;
 const duplicateShots = [];
+// Запросы консоли к каталогу образов (env.sandbox_catalog). До 45694b6 маршрут не был смонтирован,
+// и каждая страница окружений получала 404, а консоль молчала (quiet).
+const CATALOG_PATH = "/v1/oma/sandbox-catalog";
+const catalogRequests = [];
+const isCatalogUrl = (url) => {
+  try {
+    return new URL(url).pathname === CATALOG_PATH;
+  } catch {
+    return false;
+  }
+};
 // Высота внутренней прокрутки: оболочка консоли прокручивает main, а не документ,
 // поэтому fullPage её не снимает. Если открыт диалог, считается только он.
 async function hiddenScrollHeight() {
@@ -782,7 +793,10 @@ async function stepLogin() {
 }
 
 async function stepCreateEnvironment() {
+  // Ждём ответ каталога, иначе проверка гонится с запросом страницы.
+  const catalogLoaded = page.waitForResponse((r) => isCatalogUrl(r.url()), { timeout: 20_000 }).catch(() => null);
   const wasEmpty = await openSection("Окружения", "Окружений пока нет");
+  await catalogLoaded;
   await shot("environments-list");
   await check("env.list_empty", "на старте список окружений пуст: видно «Окружений пока нет»", () => {
     assert(wasEmpty, "пустого состояния нет: в свежей базе уже есть окружения");
@@ -826,6 +840,15 @@ async function stepCreateEnvironment() {
   await check("env.detail_ui", "карточка окружения в консоли показывает созданное окружение", async () => {
     assert((await page.locator("#env-name").inputValue()) === names.env, "в #env-name другое значение");
     return ariaFile;
+  });
+  const catalogApi = await api("GET", CATALOG_PATH).catch((error) => ({ error: error.message }));
+  const catalogFile = saveJson("10-sandbox-catalog", { requests: [...catalogRequests], response: catalogApi });
+  await check("env.sandbox_catalog", `список и карточка окружений получают каталог образов: каждый запрос консоли к ${CATALOG_PATH} отвечает 200`, () => {
+    assert(catalogRequests.length > 0, `на страницах окружений консоль не запрашивала ${CATALOG_PATH}`);
+    const bad = catalogRequests.filter((r) => r.status !== 200);
+    assert(bad.length === 0, `неудачные запросы: ${bad.map((r) => `${r.status || r.failure} на ${r.page}`).join("; ")}; маршрут монтирует apps/main-node/src/modules/node-http.ts`);
+    assert(!catalogApi?.error, `GET ${CATALOG_PATH} по API: ${catalogApi?.error}`);
+    return `${catalogFile}; запросов ${catalogRequests.length}, enabled=${catalogApi?.enabled}, образов ${(catalogApi?.images ?? []).length}`;
   });
   const probeButtons = await page.getByRole("button", { name: /провер|запуст|тест/i }).count();
   record("env.no_check_action", "в консоли нет действия «проверить окружение» и статуса (пробел продукта)",
@@ -1889,6 +1912,12 @@ try {
   context = await browser.newContext({ baseURL: BASE, viewport: VIEW, locale: "ru-RU" });
   page = await context.newPage();
   page.setDefaultTimeout(20_000);
+  page.on("response", (response) => {
+    if (isCatalogUrl(response.url())) catalogRequests.push({ status: response.status(), page: new URL(page.url()).pathname, at: new Date().toISOString() });
+  });
+  page.on("requestfailed", (request) => {
+    if (isCatalogUrl(request.url())) catalogRequests.push({ status: 0, failure: request.failure()?.errorText ?? "", page: new URL(page.url()).pathname, at: new Date().toISOString() });
+  });
   log(`процессов браузера записано в state/pids: ${recordJourneyChildren()}`);
   // critical=false: сбой шага пишется провалом, а сценарий идёт дальше (настройки окружения
   // не нужны агенту и сессии). Сбой обязательного шага прерывает сценарий.

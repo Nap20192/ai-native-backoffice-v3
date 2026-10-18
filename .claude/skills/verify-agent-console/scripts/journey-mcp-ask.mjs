@@ -503,15 +503,34 @@ async function stepWriteWaits() {
     return `${evFile}, ${sessionFile}`;
   });
   // Строка вызова в ходе. Ожидаемая подпись «Ждёт вас» (ToolStatus в CanonicalSessionTurn.tsx).
-  // collectToolCalls (lib/session-stats.ts) закрывает вызов на session.status_idle и пишет «Прервано»:
-  // дефект был до функции 3.1, поэтому строка «внимание», а не провал. Блок над полем ввода проверяет mcp.write_waits.
-  if (use) {
+  // До 2026-10-18 строка писала «Прервано» по двум причинам: collectToolCalls (lib/session-stats.ts)
+  // закрывал вызов на любом session.status_idle, а после перезагрузки подтверждение и результат
+  // уходили в следующий ход. Первую ловит mcp.ui_waiting_row, вторую mcp.ui_waiting_row_reload.
+  if (use && waits) {
     const row = page.locator(`[data-tool-call][data-event-id="${use.id}"]`).first();
-    const rowText = await row.waitFor({ timeout: 10_000 }).then(() => row.innerText()).then(plain).catch(() => "");
-    const label = rowText.includes("Ждёт вас") ? "Ждёт вас" : rowText.includes("Прервано") ? "Прервано" : rowText ? "без подписи" : "строки нет";
+    const readRow = async () => {
+      const text = await row.waitFor({ timeout: 15_000 }).then(() => row.innerText()).then(plain).catch(() => "");
+      const label = text.includes("Ждёт вас") ? "Ждёт вас" : text.includes("Прервано") ? "Прервано" : text ? "без подписи" : "строки нет";
+      return { text, label };
+    };
+    const live = await readRow();
+    await check("mcp.ui_waiting_row", "строка вызова write_act в ходе подписана «Ждёт вас», пока вызов ждёт подтверждения", () => {
+      assert(live.label === "Ждёт вас", `подпись «${live.label}»: смотрите collectToolCalls в apps/console/src/lib/session-stats.ts; строка: ${live.text.slice(0, 160)}`);
+      return `${turnShot}; строка: ${live.text.slice(0, 160)}`;
+    });
+    // Свежая загрузка страницы: ход строится из истории журнала, а не из живого потока.
+    await page.goto(`${BASE}/sessions/${encodeURIComponent(ids.session)}`);
+    const reloaded = await readRow();
+    const cardBack = await cardVisible("write_act", 20_000);
+    const rowAria = await aria("write-row-reload", row).catch(() => null);
+    await check("mcp.ui_waiting_row_reload", "после перезагрузки страницы строка write_act по-прежнему «Ждёт вас», блок «Ожидает подтверждения» на месте", () => {
+      assert(reloaded.label === "Ждёт вас", `подпись «${reloaded.label}» после перезагрузки: смотрите опцию toolCalls у buildTranscriptBlocks (ManagedSessionConversation.tsx); строка: ${reloaded.text.slice(0, 160)}`);
+      assert(cardBack, "после перезагрузки нет блока «Ожидает подтверждения» с write_act");
+      return `${rowAria ?? "aria нет"}; строка: ${reloaded.text.slice(0, 160)}`;
+    });
+  } else if (use) {
     record("mcp.ui_waiting_row", "строка вызова write_act в ходе подписана «Ждёт вас», пока вызов ждёт подтверждения",
-      label === "Ждёт вас" ? "проверено" : "внимание", `${turnShot}; строка: ${rowText.slice(0, 160)}`,
-      label === "Ждёт вас" ? "" : `подпись «${label}»: collectToolCalls (apps/console/src/lib/session-stats.ts) закрывает вызов на session.status_idle, дефект был до функции 3.1`);
+      "не проверено", turnShot, "вызов не ждёт подтверждения, см. mcp.write_waits");
   }
   if (waits) cover("mcp-ask-waits");
   return waits;
@@ -666,6 +685,26 @@ async function stepDeny() {
     return `${denyShot}, ${evFile}, logs/fake-mcp.jsonl`;
   });
   if (ok) cover("mcp-ask-deny");
+  // Свежая загрузка: ход с подтверждением кончается session.status_idle, и @openma/common кладёт
+  // подтверждение с результатом в следующий ход. До 2026-10-18 строки таких вызовов писали «Прервано».
+  await page.goto(`${BASE}/sessions/${encodeURIComponent(ids.session)}`);
+  await page.getByText(`VERIFY_TOOL_NOT_OK_${n}`).first().waitFor({ timeout: 30_000 }).catch(() => {});
+  const rowOf = async (id) => {
+    const row = page.locator(`[data-tool-call][data-event-id="${id}"]`).first();
+    const text = await row.waitFor({ timeout: 15_000 }).then(() => row.innerText()).then(plain).catch(() => "");
+    const file = text ? await aria(`row-after-reload-${id === use.id ? "deny" : "allow"}`, row).catch(() => null) : null;
+    return { text, file };
+  };
+  const allowRow = ids.allowUse ? await rowOf(ids.allowUse) : { text: "", file: null };
+  const denyRow = await rowOf(use.id);
+  await check("mcp.ui_rows_after_reload", "после перезагрузки страницы строка исполненного write_act без подписи «Прервано», «Ждёт вас» и «Выполняется», строка отклонённого подписана «Отклонено»", () => {
+    const stale = ["Прервано", "Ждёт вас", "Выполняется", "Отклонено", "Ошибка"].filter((label) => allowRow.text.includes(label));
+    assert(allowRow.text, "строки исполненного write_act нет");
+    assert(stale.length === 0, `строка исполненного write_act: ${stale.join(", ")}; строка: ${allowRow.text.slice(0, 160)}`);
+    assert(denyRow.text.includes("Отклонено"), `строка отклонённого write_act: ${denyRow.text.slice(0, 160) || "нет"}`);
+    assert(!denyRow.text.includes("Прервано"), `строка отклонённого write_act подписана «Прервано»: ${denyRow.text.slice(0, 160)}`);
+    return `${allowRow.file ?? "aria нет"}, ${denyRow.file ?? "aria нет"}; исполненный: ${allowRow.text.slice(0, 100)}; отклонённый: ${denyRow.text.slice(0, 100)}`;
+  });
 }
 
 /**

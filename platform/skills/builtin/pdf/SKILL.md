@@ -1,147 +1,94 @@
 ---
 name: pdf
-description: "PDF files: create, read, merge, split, fill forms, stamp, secure."
+description: "Create PDF reports with Russian text: DejaVu Sans font, tables, a page check after writing. Other helpers read, merge, split, stamp, secure PDFs and fill forms."
 display_title: PDF
-version: 1.1.0
+version: 1.2.0
 author: Nous Research
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [pdf, documents, forms, ocr, text-extraction, reportlab, pypdf, pdfplumber, pymupdf, marker]
+    tags: [pdf, documents, forms, reportlab, pypdf, pdfplumber]
     category: productivity
     related_skills: [docx, xlsx, pptx]
 ---
 
-# PDF Skill
+# PDF
 
-Create PDFs from structured specs, build and fill AcroForm forms (with layout linting and visual overlays), extract text/tables/metadata, merge/split/rotate/watermark/stamp pages, export page images, manage metadata and attachments, and encrypt/decrypt — using pypdf, reportlab, and pdfplumber.
+## Paths
 
-## Platform notes (OpenMA)
+- The skill folder is `/workspace/.openma/skills/pdf/latest/pdf/`. An agent that
+  pins a version finds it at `/workspace/.openma/skills/pdf/<version>/pdf/`, the
+  folder of this SKILL.md. Use that folder in every command below.
+- Save the file for the user directly in `/mnt/session/outputs/`, without
+  subfolders. Keep specs and drafts in `/workspace/`.
 
-- This skill is mounted at `/workspace/.openma/skills/pdf/latest/pdf/`. Run helpers by full path, for example
-  `python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/<script>.py --help`. Use `python3`: the sandbox
-  may have no `python` command.
-- These paths are for an agent that takes the latest version. If the agent
-  pins a version, the skill is at `/workspace/.openma/skills/pdf/<version>/pdf/`,
-  the folder of this SKILL.md. Use that folder in place of
-  `/workspace/.openma/skills/pdf/latest/pdf/` in every command.
-- Save every file the user should receive directly in `/mnt/session/outputs/`.
-  Do not create subfolders there: the session file list shows top-level files
-  only. Keep JSON specs, drafts and intermediate files in `/workspace/`.
-- Tools: write specs with `write`, read files with `read` (it also shows PNG
-  images), run commands with `bash`.
-- Dependencies: check with `python3 -c "import pypdf"`. If it fails,
-  run `python3 -m pip install --break-system-packages pypdf reportlab pdfplumber`. If pip
-  itself is missing, run `apt-get update && apt-get install -y python3-pip`
-  first. An environment created from the "Документы" template installs
-  pypdf and the other document packages when the sandbox starts.
-- Fonts: `pdf_create.py`, `pdf_stamp.py` and `pdf_make_form.py` draw text with
-  DejaVu Sans when it is installed (`apt-get install -y fonts-dejavu-core`), so
-  Cyrillic renders. Without it they fall back to Helvetica and print a warning.
-  Set `"page_number_format": "Страница {page}"` in a spec for a Russian footer.
+## 1. Russian text needs DejaVu Sans
 
-## When to Use
+The reportlab fonts Helvetica, Times and Courier have no Cyrillic. Every Russian
+letter prints as a box, digits stay readable, and nothing fails.
 
-- Generate a report, invoice, or multi-page document as PDF.
-- Build a fillable AcroForm (text/checkbox/radio/dropdown) from a JSON spec, linting the layout first.
-- Pull text, tables (JSON/CSV), metadata, or form-field values out of a PDF.
-- Merge, split, rotate, extract page subsets, watermark, stamp text/images at coordinates, bookmark, or compress PDFs.
-- Export pages as PNGs for visual review or for OCR hand-off; set/clear document metadata; add/extract file attachments.
-- Fill or flatten AcroForm forms; encrypt or decrypt with passwords.
-- NOT for OCR of scanned/image-only PDFs (export page images and look at them with `read`) and NOT for pixel-perfect HTML-to-PDF rendering (use a headless browser).
+- `pdf_create.py` loads DejaVu Sans by itself. If it prints
+  `Warning: DejaVuSans.ttf not found`, run `apt-get install -y fonts-dejavu-core`
+  and build again.
+- In your own reportlab code, register the font and set it on every style and
+  table:
 
-## Prerequisites
-
-- Python 3.10+ with `pypdf`, `reportlab`, `pdfplumber`:
-  `python -m pip install pypdf reportlab pdfplumber`
-- Optional, for page rasterization (`pdf_page_image.py`, overlay rendering): `python -m pip install pypdfium2`, or poppler's `pdftoppm` on PATH. Scripts fall back pypdfium2 → pdftoppm and report `{"rendered": false, "missing": [...]}` (exit 0) when neither exists.
-- Each helper script checks imports lazily and prints an install hint if a dependency is missing.
-
-## How to Run
-
-All helpers live in `scripts/` and are argparse CLIs — run them with the `bash` tool; every one supports `--help`. They read/write JSON strictly as UTF-8, print JSON results to stdout, and exit non-zero on failure.
-
-```bash
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_create.py spec.json -o /mnt/session/outputs/out.pdf         # build PDF from JSON spec
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_make_form.py formspec.json -o form.pdf # build fillable AcroForm from JSON spec
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_form_layout.py formspec.json           # lint form layout BEFORE building
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_form_layout.py formspec.json --render-overlay boxes.png [--pdf form.pdf]
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_read.py doc.pdf --text                 # per-page text (JSON)
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_read.py doc.pdf --tables --csv-dir t/  # tables to JSON + CSV files
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_read.py doc.pdf --meta                 # metadata, page sizes, encrypted/scanned flags
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_read.py form.pdf --fields              # form fields: name, type, value
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_merge.py a.pdf b.pdf -o merged.pdf [--bookmarks]
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_split.py doc.pdf --pages 1-3,7 -o part.pdf [--rotate 90]
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_fill_form.py form.pdf --fields-json values.json -o filled.pdf [--flatten]
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_secure.py doc.pdf --encrypt -o enc.pdf --user-password your-password
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_secure.py enc.pdf --decrypt -o dec.pdf --password your-password
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_watermark.py doc.pdf --stamp mark.pdf -o stamped.pdf [--under]
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_stamp.py doc.pdf -o out.pdf --text "DRAFT" --x 150 --y 400 \
-    --font-size 60 --rotation 45 --opacity 0.3 --color "#cc0000" [--pages 1-3]
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_stamp.py doc.pdf -o out.pdf --image sig.png --x 400 --y 60 --width 120
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_page_image.py doc.pdf --pages 1-3 --dpi 150 --out-dir imgs/
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_meta.py doc.pdf --set-meta --title "T" --author "A" -o out.pdf
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_meta.py doc.pdf --attach data.csv -o out.pdf
-python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_meta.py doc.pdf --list-attachments | --extract-attachments dir/
+```python
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+pdfmetrics.registerFont(TTFont("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
 ```
 
-## Quick Reference
+## 2. Create with pdf_create.py
 
-| Task | Tool | Command / API |
-|---|---|---|
-| Create doc (headings, tables, images) | reportlab platypus | `pdf_create.py spec.json -o out.pdf` |
-| Build fillable form | reportlab acroForm | `pdf_make_form.py formspec.json -o form.pdf` |
-| Lint form layout / overlay image | pure python + PIL | `pdf_form_layout.py formspec.json [--render-overlay o.png]` |
-| Per-page text | pdfplumber | `pdf_read.py f.pdf --text` |
-| Tables → JSON/CSV | pdfplumber | `pdf_read.py f.pdf --tables` |
-| Metadata / sizes / encrypted / scanned | pypdf + pdfplumber | `pdf_read.py f.pdf --meta` |
-| Merge (+ outline) | pypdf | `pdf_merge.py a.pdf b.pdf -o m.pdf` |
-| Split / extract / rotate | pypdf | `pdf_split.py f.pdf --pages 2-5 --rotate 90` |
-| List / fill / flatten form | pypdf | `pdf_read.py --fields`, `pdf_fill_form.py` |
-| Encrypt / decrypt (AES-256) | pypdf | `pdf_secure.py --encrypt/--decrypt` |
-| Watermark / stamp PDF page | pypdf | `pdf_watermark.py f.pdf --stamp w.pdf` |
-| Stamp text/image at coordinates | reportlab + pypdf | `pdf_stamp.py f.pdf --text "Sign here" --x 400 --y 60` |
-| Pages → PNG (review / OCR hand-off) | pypdfium2 or pdftoppm | `pdf_page_image.py f.pdf --pages 1-3 --out-dir imgs/` |
-| Set/clear metadata, attachments | pypdf | `pdf_meta.py --set-meta / --attach / --extract-attachments` |
-| Compress content streams | pypdf | `pdf_split.py f.pdf --pages 1-N --compress` |
+Write the spec with `write`, then run:
 
-## Procedure
+```bash
+python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_create.py /workspace/spec.json -o /mnt/session/outputs/report.pdf
+```
 
-1. **Inspect first.** Run `pdf_read.py file.pdf --meta`. Check `encrypted` (if true, decrypt first with `pdf_secure.py --decrypt`) and `likely_scanned_pages`. If pages are image-only, export them with `pdf_page_image.py --pages <scanned> --dpi 300 --out-dir imgs/` and read the PNGs with the `read` tool — do not report empty text as "no content".
-2. **Create.** Write a JSON spec with `write` (elements: `heading`, `paragraph`, `table`, `image`, `pagebreak`; optional `title`/`author` metadata; page numbers are added automatically), then run `pdf_create.py`. Verify visually with `read` on a rendered page image if layout matters.
-3. **Extract.** `--text` gives a JSON list of per-page strings; `--tables` gives row arrays per page and can also emit CSV files. Read results with `read`; never eyeball a binary PDF directly.
-4. **Manipulate.** `pdf_merge.py` concatenates and can add one bookmark per source file; `pdf_split.py` handles page ranges (1-based, e.g. `1-3,5,9-`), rotation in 90° steps, and `--compress`. Watermark by preparing a single-page stamp PDF (e.g. via `pdf_create.py`) and overlaying it with `pdf_watermark.py`; for one-liner stamps ("sign here", diagonal DRAFT, corner labels) use `pdf_stamp.py` with text or an image at explicit coordinates.
-5. **Build forms.** Write one form-spec JSON (fields with `label_box`/`entry_box` in PDF points — see `references/forms.md`), lint it with `pdf_form_layout.py` and fix every reported problem, optionally review the `--render-overlay` PNG with `read`, then build with `pdf_make_form.py` and confirm with `pdf_read.py --fields`.
-6. **Fill forms.** List fields (`--fields`) to learn exact names and types, write a UTF-8 JSON of `{"FieldName": "value"}` with `write` (checkboxes accept `true`/`false`; radio/choice values must match the field's export options), then `pdf_fill_form.py`. Re-read with `--fields` to confirm values landed.
-7. **Metadata & attachments.** `pdf_meta.py --set-meta` writes Title/Author/Subject/Keywords (DocInfo); `--clear-meta` drops them; `--attach`/`--list-attachments`/`--extract-attachments` round-trip embedded files.
-8. **Secure.** Encrypt with distinct user/owner passwords and AES-256. To remove a password you know, `--decrypt` writes an unencrypted copy.
-9. **Verify** (see below) before reporting success.
+Example spec:
 
-## Pitfalls
+```json
+{
+  "title": "Отчёт о расходах",
+  "page_number_format": "Страница {page}",
+  "elements": [
+    {"type": "heading", "text": "Отчёт о расходах", "level": 1},
+    {"type": "paragraph", "text": "Расходы за месяц составили 131 700 руб."},
+    {"type": "table", "headers": ["Статья", "Сумма, руб."],
+     "rows": [["Аренда", "120 000"], ["Связь", "11 700"], ["Итого", "131 700"]]}
+  ]
+}
+```
 
-- **Scanned PDFs**: empty `extract_text()` plus page images means there is no text layer. Export page images and read them; do not fabricate text.
-- **Flattening limits**: `pdf_fill_form.py --flatten` uses pypdf's flatten support, which converts widget appearances into page content. It is reliable for plain text fields and checkboxes but can drop or misrender exotic widgets (rich text, custom appearance streams, some radio groups). Verify the flattened output visually with `read`; for bulletproof flattening use an external renderer (e.g. Ghostscript or `pdftoppm`+reassembly) as a fallback.
-- **NeedAppearances**: after filling, viewers only render values if appearance streams exist. The fill script sets the AcroForm `NeedAppearances` flag so conforming viewers regenerate them; some minimal viewers ignore it — flatten if display fidelity matters.
-- **Non-Latin form values**: values are stored correctly (UTF-16), but the field's default font may lack glyphs, so a viewer can show blanks even though the data round-trips. Verify with `--fields`, not just visually.
-- **Compression expectations**: `--compress` only deflates content streams. Typical savings are 0–20%; it does nothing for PDFs dominated by images or already-compressed streams. It is not a substitute for image downsampling (Ghostscript territory).
-- **Permission flags don't enforce**: owner-password permission bits (no-print, no-copy) are polite requests that viewers may honor; any library (including pypdf) can read and strip them. Only the user password actually gates content via encryption. Never present permission flags as security.
-- **Table extraction is heuristic**: pdfplumber detects tables from ruling lines/word alignment; borderless or merged-cell tables may need `table_settings` tuning or manual cleanup.
-- **Page indexing**: helper CLIs take 1-based pages; pypdf APIs are 0-based. The scripts convert — don't double-convert.
-- **Rotated stamp text extraction**: pdfplumber's line grouping scrambles rotated glyphs (a 45° "DRAFT" extracts as stray letters); verify rotated stamps with `pypdf`'s `extract_text()` or a rendered image instead.
-- **Radio groups**: reportlab needs ≥2 `radio()` widgets per group, fills need the slashed export value (`"/red"`), and flatten fidelity is worst for radios — see `references/forms.md`.
-- **Metadata scope**: `pdf_meta.py` writes the classic DocInfo dictionary only; embedded XMP metadata (if any) is left untouched and may show different values in some viewers.
-- **PDF/A is out of scope**: pypdf/reportlab cannot produce or validate conformant PDF/A. If archival conformance is required, run Ghostscript via the `bash` tool (e.g. `gs -dPDFA=2 -dPDFACompatibilityPolicy=1 -sColorConversionStrategy=UseDeviceIndependentColor -sDEVICE=pdfwrite -o out.pdf in.pdf` with a suitable ICC profile) and validate with veraPDF — both are external installs, and the result still needs validation, not assumption.
-- Rotation must be a multiple of 90; encrypted inputs must be decrypted before any other operation.
+- Element types: `heading` (`text`, `level` 1 to 3), `paragraph` (`text`),
+  `table`, `image` (`path`, `width`, `height`), `pagebreak`.
+- A table takes its header row from `headers`. Without `headers` the first row of
+  `rows` is the header. Every row has as many cells as the header.
+- The script stops with an error on an unknown key or element type. Fix the spec
+  and run it again. `pdf_create.py --help` shows every key.
 
-## Verification
+## 3. Check the file after writing
 
-- After create/merge/split: `pdf_read.py out.pdf --meta` — confirm `page_count`, and per-page `rotation` when you rotated.
-- After extraction: check the JSON is non-empty and spot-check a known string or cell.
-- Form design loop: `pdf_form_layout.py spec.json` must exit 0; then `--render-overlay boxes.png --pdf form.pdf` and review the PNG with `read` (red = entry boxes with field names, blue = label boxes) asking about overlaps, misalignment, and labels detached from their fields. Iterate spec → lint → overlay until clean.
-- After building a form: `pdf_read.py form.pdf --fields` lists every spec field with the right type and options.
-- After form fill: `pdf_read.py filled.pdf --fields` and compare values (exact match, including non-ASCII).
-- After stamping: re-extract text (pypdf for rotated stamps) or render the page with `pdf_page_image.py` and inspect with `read`.
-- After metadata/attachment edits: `pdf_read.py --meta` / `pdf_meta.py --list-attachments`, and re-extract an attachment to byte-compare.
-- After encrypt: `--meta` shows `"encrypted": true` and opening without a password fails; after decrypt, text extraction matches the original.
-- For anything visual (watermarks, flattened forms), render and inspect with `read`.
+`ls` only shows that the file exists. Check the text and the page:
+
+```bash
+python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_read.py /mnt/session/outputs/report.pdf --text
+python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_page_image.py /mnt/session/outputs/report.pdf --pages 1 --out-dir /workspace/pages/
+```
+
+- The Russian words must come back exactly as written. Letters turned into
+  `nnnnn` mean the font has no Cyrillic, see step 1.
+- Open the page PNG with `read`. Check the page count, the table header row, and
+  that no text runs off the page.
+
+## Other helpers
+
+Each script in `scripts/` takes `--help`: `pdf_read.py` (text, tables, metadata,
+form fields), `pdf_merge.py`, `pdf_split.py` (pages, rotation), `pdf_stamp.py`,
+`pdf_watermark.py`, `pdf_meta.py`, `pdf_secure.py` (passwords), and for forms
+`pdf_form_layout.py`, `pdf_make_form.py`, `pdf_fill_form.py` with
+`references/forms.md`.

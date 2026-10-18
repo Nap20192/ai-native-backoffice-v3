@@ -461,3 +461,74 @@ def test_make_form_cyrillic_labels(workdir: Path):
     run("pdf_make_form.py", str(spec_path), "-o", str(out))
     from pypdf import PdfReader
     assert "Фамилия" in PdfReader(str(out)).pages[0].extract_text()
+
+
+# --- OpenMA platform port: table spec after the Qwen evaluation -------------
+# Qwen passed the header row as "headers"; pdf_create.py dropped the key and
+# made the first data row the header (.verify-evidence/skill-eval-qwen).
+
+def _create(workdir: Path, name: str, spec: dict, expect: int = 0):
+    spec_path = workdir / f"{name}.json"
+    spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    out = workdir / f"{name}.pdf"
+    proc = run("pdf_create.py", str(spec_path), "-o", str(out), expect=expect)
+    return out, proc
+
+
+def _first_table(pdf: Path) -> list:
+    return json.loads(run("pdf_read.py", str(pdf), "--tables").stdout)["tables"][0]["rows"]
+
+
+def test_create_table_headers_key_is_the_header_row(workdir: Path):
+    spec = {"elements": [{"type": "table", "headers": ["Статья", "Сумма, руб."],
+                          "rows": [["Аренда", "120 000"], ["Итого", "131 700"]]}]}
+    out, _ = _create(workdir, "table_headers", spec)
+    assert _first_table(out) == [["Статья", "Сумма, руб."], ["Аренда", "120 000"],
+                                 ["Итого", "131 700"]]
+    import pdfplumber
+    with pdfplumber.open(str(out)) as pdf:
+        words = pdf.pages[0].extract_words(extra_attrs=["fontname"])
+    font = {w["text"]: w["fontname"] for w in words}
+    assert font["Статья"].endswith("Bold")
+    assert not font["Аренда"].endswith("Bold")
+
+
+def test_create_table_first_row_header_still_works(workdir: Path):
+    spec = {"elements": [{"type": "table", "rows": [["Статья", "Сумма, руб."],
+                                                    ["Аренда", "120 000"]]}]}
+    out, _ = _create(workdir, "table_first_row", spec)
+    assert _first_table(out) == [["Статья", "Сумма, руб."], ["Аренда", "120 000"]]
+
+
+@pytest.mark.parametrize("spec, named", [
+    ({"elements": [{"type": "table", "columns": ["A", "B"], "rows": [["a", "b"]]}]},
+     ["elements[0]", "'columns'", "headers"]),
+    ({"elements": [{"type": "paragraph", "content": "x"}]}, ["elements[0]", "'content'"]),
+    ({"elements": [{"type": "text", "text": "x"}]}, ["elements[0]", "'text'", "paragraph"]),
+    ({"footer": "x", "elements": []}, ["'footer'", "page_number_format"]),
+    ({"elements": [{"type": "table", "headers": ["A", "B"], "rows": [["a", "b", "c"]]}]},
+     ["elements[0]", "3 cells", "2"]),
+    ({"elements": [{"type": "table", "rows": ["ab", "cd"]}]}, ["elements[0]", "list"]),
+    ({"elements": [{"type": "table", "headers": ["A"], "header": False, "rows": [["a"]]}]},
+     ["elements[0]", "header"]),
+], ids=["table-key", "paragraph-key", "element-type", "top-level-key", "row-width",
+        "row-not-list", "headers-without-header"])
+def test_create_rejects_a_spec_it_would_misread(workdir: Path, spec: dict, named: list,
+                                               request):
+    out, proc = _create(workdir, f"bad_{request.node.callspec.id}", spec, expect=1)
+    for text in named:
+        assert text in proc.stderr, proc.stderr
+    assert not out.exists()
+
+
+def test_skill_md_example_spec_builds(workdir: Path):
+    import re
+    manifest = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    block = re.search(r"```json\n(.*?)\n```", manifest, re.S)
+    assert block, "SKILL.md has no json example spec"
+    spec = json.loads(block.group(1))
+    table = next(el for el in spec["elements"] if el["type"] == "table")
+    out, _ = _create(workdir, "skill_md_example", spec)
+    assert _first_table(out)[0] == table["headers"]
+    page = json.loads(run("pdf_read.py", str(out), "--text").stdout)["pages"][0]
+    assert "Страница 1" in page

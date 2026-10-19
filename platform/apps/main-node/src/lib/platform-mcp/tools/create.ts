@@ -217,7 +217,8 @@ const createSkillArgs = z.object({ display_title: z.string().min(1).max(200), fi
 export const createSkillTool: ToolDef<z.infer<typeof createSkillArgs>> = {
   name: "create_skill",
   group: "write",
-  description: "Создать навык из файлов: SKILL.md и остальные, всего до 1 МБ. Ждёт подтверждения.",
+  description:
+    "Создать навык из файлов: SKILL.md и остальные, всего до 1 МБ. SKILL.md начинается с frontmatter между строками ---: name (1-64 знака: строчные латинские буквы, цифры, дефис внутри) и description (до 1024 знаков, когда применять навык). Без frontmatter сервер отклонит навык. Ждёт подтверждения.",
   args: createSkillArgs,
   routes: [ROUTES.skillCreate],
   precondition: "new_object",

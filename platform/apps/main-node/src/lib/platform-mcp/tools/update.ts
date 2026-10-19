@@ -207,7 +207,8 @@ const skillVersionArgs = z
 export const createSkillVersionTool: ToolDef<z.infer<typeof skillVersionArgs>> = {
   name: "create_skill_version",
   group: "write",
-  description: "Новая версия навыка из файлов. Ждёт подтверждения.",
+  description:
+    "Новая версия навыка из файлов. SKILL.md начинается с frontmatter между строками ---: name (1-64 знака: строчные латинские буквы, цифры, дефис внутри) и description (до 1024 знаков). Без frontmatter сервер отклонит версию. Ждёт подтверждения.",
   args: skillVersionArgs,
   routes: [ROUTES.skillVersionCreate],
   precondition: "if_match",

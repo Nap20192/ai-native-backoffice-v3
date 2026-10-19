@@ -73,6 +73,18 @@ describe("platform MCP tool table", () => {
     for (const name of DRAFT_SET) expect(TOOL_TABLE.has(name)).toBe(true);
   });
 
+  it("tells the model that SKILL.md needs frontmatter with name and description", () => {
+    // 2026-10-19: the assistant wrote a skill without frontmatter, the preview
+    // refused it as invalid and the card could only be denied. The rule lived
+    // only in help and the docs, which the model had not read.
+    for (const name of ["create_skill", "create_skill_version"]) {
+      const description = TOOL_TABLE.get(name)!.description;
+      expect(description, name).toMatch(/frontmatter/);
+      expect(description, name).toMatch(/name/);
+      expect(description, name).toMatch(/description/);
+    }
+  });
+
   it("gives every write a precondition, an operation and routes", () => {
     for (const tool of TOOL_TABLE.values()) {
       expect(tool.description.length, tool.name).toBeGreaterThan(10);

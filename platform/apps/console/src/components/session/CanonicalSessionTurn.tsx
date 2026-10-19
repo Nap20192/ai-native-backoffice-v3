@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { PlainButton } from "@/components/ui/plain-button";
 import { cn } from "@/lib/utils";
 import { formatToolOutput } from "../../lib/tool-output";
+import { explainSessionNote } from "../../lib/session-note";
 import {
   toolInputPreview,
   type RequestItem,
@@ -349,11 +350,15 @@ export function CanonicalSessionTurn({
         </ol>
       ) : null}
       {nodes}
-      {notes.map((note, index) => (
-        <p className="callout-warning" key={`${turn.id}:note:${index}`} role="status">
-          {note}
-        </p>
-      ))}
+      {notes.map((note, index) => {
+        const explained = explainSessionNote(note);
+        return (
+          <div className="callout-warning flex-col items-stretch gap-1" key={`${turn.id}:note:${index}`} role="status">
+            <p>{explained.text}</p>
+            {explained.detail ? <p className="text-xs opacity-75">{explained.detail}</p> : null}
+          </div>
+        );
+      })}
     </article>
   );
 }

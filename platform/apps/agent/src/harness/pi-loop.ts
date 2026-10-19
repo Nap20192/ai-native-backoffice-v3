@@ -71,7 +71,17 @@ export interface PiHarnessOptions {
   compaction?: PiCompactionPolicy;
   /** Pause before each retry of a model request the network dropped. Tests pass zeros. */
   transientRetryDelaysMs?: readonly number[];
+  /** A request with no stream data for this long is ended and retried. */
+  modelRequestIdleMs?: number;
+  /** A request that runs longer than this is ended and retried. */
+  modelRequestMaxMs?: number;
 }
+
+// Healthy requests on our gateway took at most 17 s (2026-10-19, 83 requests),
+// with the first chunk after 0.4 s. A minute of silence or five minutes in all
+// means the request hung, not that the model is busy.
+const DEFAULT_MODEL_REQUEST_IDLE_MS = 60_000;
+const DEFAULT_MODEL_REQUEST_MAX_MS = 300_000;
 
 export const MODEL_REQUEST_RETRY_WARNING_SOURCE = "oma.model_request_retry";
 const DEFAULT_TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000] as const;
@@ -82,7 +92,7 @@ const DEFAULT_TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000] as const;
  * proxy. A provider refusal or a bad request is not transient.
  */
 const TRANSIENT_PROVIDER_FAILURE =
-  /\bterminated\b|other side closed|socket hang up|fetch failed|network error|connection error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_|\b50[234]\b|bad gateway|service unavailable|gateway time-?out/i;
+  /\bterminated\b|model request hung|other side closed|socket hang up|fetch failed|network error|connection error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_|\b50[234]\b|bad gateway|service unavailable|gateway time-?out/i;
 
 /**
  * Pi-backed implementation of the OpenMA Harness Port.
@@ -186,6 +196,13 @@ export class PiHarness implements HarnessInterface {
     let providerFailure: AssistantMessage | undefined;
     let producedOutput = false;
     let stopReason: AssistantMessage["stopReason"] | undefined;
+    let lastAssistant: AssistantMessage | undefined;
+    let hungReason: string | undefined;
+    const watchdog = new ModelRequestWatchdog(
+      this.options.modelRequestIdleMs ?? DEFAULT_MODEL_REQUEST_IDLE_MS,
+      this.options.modelRequestMaxMs ?? DEFAULT_MODEL_REQUEST_MAX_MS,
+      (reason) => { hungReason = reason; },
+    );
 
     const signal = ctx.runtime.abortSignal;
     if (signal?.aborted) return { producedOutput };
@@ -220,10 +237,11 @@ export class PiHarness implements HarnessInterface {
           if (!ctx.runtime.limitReached) broadcastModelRequestStart(ctx, state);
         }
         if (ctx.runtime.limitReached) throw sessionLimitError();
+        const requestSignal = watchdog.start(options?.signal);
         return ctx.pi!.models.streamSimple(
           model,
           context,
-          withPiRuntimeRequestOptions(ctx.pi!, options, context),
+          withPiRuntimeRequestOptions(ctx.pi!, { ...options, signal: requestSignal }, context),
         );
       },
       toolExecution: "parallel",
@@ -231,6 +249,11 @@ export class PiHarness implements HarnessInterface {
     toolAssembly.attach(agent);
 
     const unsubscribe = agent.subscribe(async (event) => {
+      if (event.type === "message_update" && event.message.role === "assistant") watchdog.touch();
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        watchdog.stop();
+        lastAssistant = event.message;
+      }
       const result = await translatePiEvent(event, ctx, state);
       producedOutput ||= result.producedOutput;
       if (result.providerFailure) providerFailure = result.providerFailure;
@@ -252,9 +275,21 @@ export class PiHarness implements HarnessInterface {
       if (ctx.runtime.keepAliveWhile) await ctx.runtime.keepAliveWhile(run);
       else await run();
     } finally {
+      watchdog.stop();
       unsubscribe();
       signal?.removeEventListener("abort", abort);
       await closeLiveStreams(ctx, state, signal?.aborted ? "aborted" : "completed");
+    }
+
+    // The watchdog ended a hung request: Pi saw an abort, the turn sees a
+    // network failure, so the retry path picks it up. A person's interrupt
+    // stays an interrupt.
+    if (hungReason !== undefined && !signal?.aborted) {
+      providerFailure = {
+        ...(lastAssistant ?? emptyAssistantMessage(ctx.pi!.model)),
+        stopReason: "error",
+        errorMessage: hungReason,
+      };
     }
 
     return {
@@ -987,6 +1022,90 @@ function isTransientProviderFailure(message: AssistantMessage, model: Model<Api>
   if (message.stopReason !== "error") return false;
   if (isContextOverflow(message, model.contextWindow)) return false;
   return TRANSIENT_PROVIDER_FAILURE.test(message.errorMessage ?? "");
+}
+
+/**
+ * Ends one model request that hangs: no stream data for `idleMs`, or longer
+ * than `maxMs` in all. Each request gets its own abort signal tied to Pi's,
+ * so a person's interrupt still reaches the provider.
+ */
+class ModelRequestWatchdog {
+  private controller: AbortController | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private maxTimer: ReturnType<typeof setTimeout> | undefined;
+  private detachParent: (() => void) | undefined;
+
+  constructor(
+    private readonly idleMs: number,
+    private readonly maxMs: number,
+    private readonly onHung: (reason: string) => void,
+  ) {}
+
+  start(parent: AbortSignal | undefined): AbortSignal {
+    this.stop();
+    const controller = new AbortController();
+    this.controller = controller;
+    if (parent?.aborted) {
+      controller.abort(parent.reason);
+    } else if (parent) {
+      const forward = () => controller.abort(parent.reason);
+      parent.addEventListener("abort", forward, { once: true });
+      this.detachParent = () => parent.removeEventListener("abort", forward);
+    }
+    this.armIdle();
+    this.maxTimer = setTimeout(
+      () => this.fire(`model request hung: ran longer than ${seconds(this.maxMs)} s`),
+      this.maxMs,
+    );
+    return controller.signal;
+  }
+
+  touch(): void {
+    if (this.controller) this.armIdle();
+  }
+
+  stop(): void {
+    clearTimeout(this.idleTimer);
+    clearTimeout(this.maxTimer);
+    this.detachParent?.();
+    this.idleTimer = undefined;
+    this.maxTimer = undefined;
+    this.detachParent = undefined;
+    this.controller = undefined;
+  }
+
+  private armIdle(): void {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(
+      () => this.fire(`model request hung: no data from the model for ${seconds(this.idleMs)} s`),
+      this.idleMs,
+    );
+  }
+
+  private fire(reason: string): void {
+    const controller = this.controller;
+    if (!controller || controller.signal.aborted) return;
+    this.onHung(reason);
+    this.stop();
+    controller.abort(new Error(reason));
+  }
+}
+
+function seconds(ms: number): number {
+  return Math.round(ms / 100) / 10;
+}
+
+function emptyAssistantMessage(model: Model<Api>): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "error",
+    timestamp: Date.now(),
+  } as AssistantMessage;
 }
 
 function waitUnlessAborted(ms: number, signal: AbortSignal | undefined): Promise<void> {

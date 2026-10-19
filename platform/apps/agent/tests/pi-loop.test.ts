@@ -524,6 +524,77 @@ describe("PiHarness", () => {
       expect(faux.state.callCount).toBe(3);
     });
 
+    // 2026-10-19, later the same day: two requests got their first chunk in
+    // 0.4 s and then hung for 58 s and 6 min until a person pressed interrupt.
+    // Nothing failed, so nothing retried. A watchdog now ends such a request.
+    const hang = (): Parameters<ReturnType<typeof makeContext>["faux"]["setResponses"]>[0][number] =>
+      (_context, options) => new Promise((resolve) => {
+        options?.signal?.addEventListener("abort", () => resolve(
+          fauxAssistantMessage([], { stopReason: "aborted", errorMessage: "Request was aborted" }),
+        ), { once: true });
+      });
+
+    it("ends a request that stays silent and retries it", async () => {
+      const { ctx, events, faux } = makeContext([]);
+      faux.setResponses([hang(), fauxAssistantMessage("ответ после тишины")]);
+
+      await new PiHarness({
+        compaction: noCompaction, transientRetryDelaysMs: [0, 0], modelRequestIdleMs: 30, modelRequestMaxMs: 60_000,
+      }).run(ctx);
+
+      expect(faux.state.callCount).toBe(2);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "agent.message",
+        content: [{ type: "text", text: "ответ после тишины" }],
+      }));
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "session.warning",
+        source: "oma.model_request_retry",
+        message: expect.stringContaining("no data from the model"),
+      }));
+    });
+
+    it("ends a request that runs longer than the limit and retries it", async () => {
+      const { ctx, events, faux } = makeContext([]);
+      faux.setResponses([hang(), fauxAssistantMessage("ответ после лимита")]);
+
+      await new PiHarness({
+        compaction: noCompaction, transientRetryDelaysMs: [0, 0], modelRequestIdleMs: 60_000, modelRequestMaxMs: 30,
+      }).run(ctx);
+
+      expect(faux.state.callCount).toBe(2);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "session.warning",
+        source: "oma.model_request_retry",
+        message: expect.stringContaining("longer than"),
+      }));
+    });
+
+    it("gives up with a clear error when every attempt hangs", async () => {
+      const { ctx, faux } = makeContext([]);
+      faux.setResponses([hang(), hang(), hang()]);
+
+      await expect(new PiHarness({
+        compaction: noCompaction, transientRetryDelaysMs: [0, 0], modelRequestIdleMs: 30, modelRequestMaxMs: 60_000,
+      }).run(ctx)).rejects.toThrow(/no data from the model/);
+      expect(faux.state.callCount).toBe(3);
+    });
+
+    it("does not retry a request a person interrupted", async () => {
+      const { ctx, events, faux } = makeContext([]);
+      faux.setResponses([hang(), fauxAssistantMessage("не должно дойти")]);
+      const controller = new AbortController();
+      (ctx.runtime as { abortSignal?: AbortSignal }).abortSignal = controller.signal;
+      setTimeout(() => controller.abort(), 20);
+
+      await new PiHarness({
+        compaction: noCompaction, transientRetryDelaysMs: [0, 0], modelRequestIdleMs: 60_000, modelRequestMaxMs: 60_000,
+      }).run(ctx);
+
+      expect(faux.state.callCount).toBe(1);
+      expect(events.some((event) => event.type === "session.warning" && event.source === "oma.model_request_retry")).toBe(false);
+    });
+
     it("does not retry a provider error that is not a network failure", async () => {
       const { ctx, events, faux } = makeContext([
         fauxAssistantMessage([], { stopReason: "error", errorMessage: "provider failed" }),

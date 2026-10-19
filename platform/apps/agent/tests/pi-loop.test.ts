@@ -469,6 +469,73 @@ describe("PiHarness", () => {
     }
   });
 
+  describe("network failures of a model request", () => {
+    // 2026-10-19: the LLM gateway closed one streaming request after 89 s with
+    // undici's "terminated". The other 83 requests of those sessions took at
+    // most 17 s, so a retry would have passed, but the whole turn died.
+    const noCompaction = { name: "disabled", shouldCompact: () => false, compact: async () => null };
+    const harness = () => new PiHarness({ compaction: noCompaction, transientRetryDelaysMs: [0, 0] });
+
+    it("retries a request the connection dropped and finishes the turn", async () => {
+      const { ctx, events, faux } = makeContext([
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "terminated" }),
+        fauxAssistantMessage("ответ после повтора"),
+      ]);
+
+      await harness().run(ctx);
+
+      expect(faux.state.callCount).toBe(2);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "agent.message",
+        content: [{ type: "text", text: "ответ после повтора" }],
+      }));
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "session.warning",
+        source: "oma.model_request_retry",
+        details: expect.objectContaining({ attempt: 1, of: 2 }),
+      }));
+    });
+
+    it("keeps the earlier tool work of the turn and retries only the failed request", async () => {
+      const { ctx, events, faux, echo } = makeContext([
+        fauxAssistantMessage([fauxToolCall("echo", { value: "раз" })], { stopReason: "toolUse" }),
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "other side closed" }),
+        fauxAssistantMessage("готово"),
+      ]);
+
+      await harness().run(ctx);
+
+      expect(echo).toHaveBeenCalledTimes(1);
+      expect(faux.state.callCount).toBe(3);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "agent.message",
+        content: [{ type: "text", text: "готово" }],
+      }));
+    });
+
+    it("gives up after two retries with the provider's own error", async () => {
+      const { ctx, faux } = makeContext([
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "terminated" }),
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "terminated" }),
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "terminated" }),
+      ]);
+
+      await expect(harness().run(ctx)).rejects.toThrow("terminated");
+      expect(faux.state.callCount).toBe(3);
+    });
+
+    it("does not retry a provider error that is not a network failure", async () => {
+      const { ctx, events, faux } = makeContext([
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "provider failed" }),
+        fauxAssistantMessage("не должно дойти"),
+      ]);
+
+      await expect(harness().run(ctx)).rejects.toThrow("provider failed");
+      expect(faux.state.callCount).toBe(1);
+      expect(events.some((event) => event.type === "session.warning" && event.source === "oma.model_request_retry")).toBe(false);
+    });
+  });
+
   it("does one forced compact-and-retry when Pi classifies a context overflow", async () => {
     const { ctx, events, faux } = makeContext([]);
     events.unshift(

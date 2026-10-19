@@ -69,7 +69,20 @@ interface PiRunOutcome {
 export interface PiHarnessOptions {
   /** Replace the required default policy; the compaction capability remains active. */
   compaction?: PiCompactionPolicy;
+  /** Pause before each retry of a model request the network dropped. Tests pass zeros. */
+  transientRetryDelaysMs?: readonly number[];
 }
+
+export const MODEL_REQUEST_RETRY_WARNING_SOURCE = "oma.model_request_retry";
+const DEFAULT_TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+
+/**
+ * A request the connection or the gateway dropped: undici's "terminated" when
+ * the peer closes a streaming body, resets, timeouts and 502/503/504 from a
+ * proxy. A provider refusal or a bad request is not transient.
+ */
+const TRANSIENT_PROVIDER_FAILURE =
+  /\bterminated\b|other side closed|socket hang up|fetch failed|network error|connection error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_|\b50[234]\b|bad gateway|service unavailable|gateway time-?out/i;
 
 /**
  * Pi-backed implementation of the OpenMA Harness Port.
@@ -104,6 +117,7 @@ export class PiHarness implements HarnessInterface {
       const recovered = await this.compactBeforeTurn(ctx, true);
       if (recovered && !signal?.aborted) outcome = await this.runAgentOnce(ctx);
     }
+    outcome = await this.retryTransientProviderFailures(ctx, outcome);
     if (signal?.aborted) return;
     // The request the limit stopped never left: the turn ends here, and the
     // runner reads the error as budget_reached, not as a model failure.
@@ -125,6 +139,33 @@ export class PiHarness implements HarnessInterface {
         `silent_stop: model returned finish_reason=${outcome.stopReason ?? "stop"} with empty text and no tool calls`,
       );
     }
+  }
+
+  /**
+   * Retry a model request the network dropped. The tool calls and results of
+   * the turn before it are in the stored history, and the failed request ran
+   * no tool, so a new run continues from where the turn stopped.
+   */
+  private async retryTransientProviderFailures(ctx: HarnessContext, first: PiRunOutcome): Promise<PiRunOutcome> {
+    const delays = this.options.transientRetryDelaysMs ?? DEFAULT_TRANSIENT_RETRY_DELAYS_MS;
+    const signal = ctx.runtime.abortSignal;
+    let outcome = first;
+    for (let attempt = 1; attempt <= delays.length; attempt++) {
+      const failure = outcome.providerFailure;
+      if (!failure || !isTransientProviderFailure(failure, ctx.pi!.model)) return outcome;
+      if (signal?.aborted || ctx.runtime.limitReached) return outcome;
+      ctx.runtime.broadcast({
+        type: "session.warning",
+        source: MODEL_REQUEST_RETRY_WARNING_SOURCE,
+        message: `Model request failed (${failure.errorMessage?.trim().slice(0, 200) || "network error"}); retry ${attempt} of ${delays.length}`,
+        details: { attempt, of: delays.length },
+      } as SessionEvent);
+      await waitUnlessAborted(delays[attempt - 1], signal);
+      if (signal?.aborted) return outcome;
+      if (await sessionLimitReached(ctx)) throw sessionLimitError();
+      outcome = await this.runAgentOnce(ctx);
+    }
+    return outcome;
   }
 
   private async runAgentOnce(ctx: HarnessContext): Promise<PiRunOutcome> {
@@ -940,6 +981,25 @@ function isPiCompactionRecoverableAssistantEnd(
   if (contextWindow && isContextOverflow(message, contextWindow)) return true;
   if (isPiLengthStopWithNoDeliverableOutput(message)) return true;
   return desiredMaxOutput !== undefined && isRecoverableLength(message, desiredMaxOutput);
+}
+
+function isTransientProviderFailure(message: AssistantMessage, model: Model<Api>): boolean {
+  if (message.stopReason !== "error") return false;
+  if (isContextOverflow(message, model.contextWindow)) return false;
+  return TRANSIENT_PROVIDER_FAILURE.test(message.errorMessage ?? "");
+}
+
+function waitUnlessAborted(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 /**

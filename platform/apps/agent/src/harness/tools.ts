@@ -657,9 +657,15 @@ export async function buildTools(
   // playwright-core / CDP / Disabled. The agent must opt in to "browser"
   // in its toolset; the Disabled adapter throws at first launch() with
   // an LLM-readable install-instructions message.
+  // Our Node server passes no BrowserHarness (docs/plans/cleanup.md, 3.3):
+  // an agent that opted in gets no browser_* tools and no web_fetch hint
+  // about them. No /v1 agent can carry browser (the /v1/agents schema
+  // rejects the name), so the build stays silent instead of warning.
+  let browserBuilt = false;
   if (env?.browser && enabled.has("browser")) {
     const { buildBrowserTools } = await import("@open-managed-agents/browser-harness");
     Object.assign(tools, buildBrowserTools(env.browser, env.browserBillingHook ?? null));
+    browserBuilt = true;
   }
 
   if (enabled.has("bash")) {
@@ -977,9 +983,12 @@ export async function buildTools(
     tools.web_fetch = tool({
       description:
         "Fetch a URL and return clean markdown — strips boilerplate (nav/ads/scripts), " +
-        "preserves headings and links. Use this as the default way to read web pages; " +
-        "fall back to browser_* tools only if you need to interact (click, fill forms) " +
-        "or if the page is JS-rendered (SPA) and returns empty markdown. Large pages " +
+        "preserves headings and links. Use this as the default way to read web pages" +
+        (browserBuilt
+          ? "; fall back to browser_* tools only if you need to interact (click, fill forms) " +
+            "or if the page is JS-rendered (SPA) and returns empty markdown. "
+          : ". ") +
+        "Large pages " +
         "may be auto-summarized when an aux model is configured on the agent — the " +
         "full raw markdown is then saved to /workspace/.web/, readable via the `read` " +
         "tool when you need detail beyond the summary.",

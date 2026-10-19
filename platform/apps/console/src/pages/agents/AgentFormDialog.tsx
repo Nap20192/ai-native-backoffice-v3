@@ -59,6 +59,7 @@ import {
   type McpPermission,
   type SkillEntry,
   type ToolOverride,
+  type ToolsetToolName,
 } from "./agentFormCodec";
 import { findModel, pickDefaultModel } from "./agent-model";
 import { ModelPicker } from "./ModelPicker";
@@ -77,11 +78,13 @@ const ANTHROPIC_SKILLS = [
   { id: "docx", label: "Word (docx)" },
 ];
 
-// Имена встроенных инструментов AMA должны совпадать с enum
-// `BetaManagedAgentsAgentToolConfig.name` в SDK. Источник правды это набор
-// agent_toolset_20260401: неизвестное имя прошло бы проверку API, но
-// рантайм такой инструмент не подключит.
-const BUILTIN_TOOLS: Array<{ name: string; label: string; description: string }> = [
+// Имена встроенных инструментов совпадают с `TOOLSET_TOOL_NAMES` кодека и с
+// enum `BetaManagedAgentsAgentToolConfig.name` в SDK. Схема /v1/agents
+// отклоняет любое другое имя с 400, поэтому форма его не предлагает.
+// Инструмента browser в списке нет: сервер Node его не подключает. Запись
+// browser у старого агента форма не показывает, а кодек убирает её при
+// сохранении, иначе агента нельзя было бы сохранить.
+const BUILTIN_TOOLS: Array<{ name: ToolsetToolName; label: string; description: string }> = [
   { name: "bash", label: "bash", description: "Выполнение команд оболочки в песочнице" },
   { name: "edit", label: "edit", description: "Правка файлов на месте" },
   { name: "read", label: "read", description: "Чтение файлов из файловой системы песочницы" },
@@ -90,7 +93,6 @@ const BUILTIN_TOOLS: Array<{ name: string; label: string; description: string }>
   { name: "grep", label: "grep", description: "Поиск по содержимому файлов" },
   { name: "web_fetch", label: "web_fetch", description: "Загрузка страницы по URL в markdown. Основной способ читать из веба." },
   { name: "web_search", label: "web_search", description: "Веб-поиск через DuckDuckGo. Основной способ искать в вебе." },
-  { name: "browser", label: "browser (по запросу)", description: "Тяжёлый многошаговый сеанс браузера: переходы, клики, скриншоты. По умолчанию выключен, потому что модели часто тянутся к нему в простых запросах. Включайте, только если нужна интерактивная навигация, страницы на JS или вход в аккаунт." },
 ];
 
 /** Названия режимов разрешения для людей. Значения для API остаются прежними. */

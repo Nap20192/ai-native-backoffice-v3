@@ -757,3 +757,56 @@ describe("AgentFormDialog: мультиагент (план multiagent, 3.2, с�
     });
   });
 });
+
+// План cleanup, шаг 1, пункт 3.3. Сервер Node не подключает browser, а схема
+// /v1/agents не знает такого имени. Форма его не предлагает.
+describe("AgentFormDialog: инструмента browser нет", () => {
+  const OFFERED_TOOLS = ["bash", "edit", "read", "write", "glob", "grep", "web_fetch", "web_search"];
+
+  it("вкладка инструментов предлагает восемь инструментов без browser", async () => {
+    renderDialog();
+    await pickBlankTemplate();
+    await userEvent.click(screen.getByRole("tab", { name: "Инструменты" }));
+
+    const names = screen
+      .getAllByRole("combobox", { name: /^Режим инструмента / })
+      .map((select) => select.getAttribute("aria-label"));
+    expect(names).toEqual(OFFERED_TOOLS.map((name) => `Режим инструмента ${name}`));
+    expect(screen.queryByText(/^browser/)).toBeNull();
+    expect(screen.queryByText(/браузер/i)).toBeNull();
+  });
+
+  // Схема /v1/agents отклоняет запись browser с 400. Если форма отправит её
+  // обратно, старого агента нельзя будет сохранить, а выключить browser
+  // в форме уже нечем.
+  it("старый агент с browser открывается, а при сохранении запись browser уходит из тела", async () => {
+    managed.update.mockResolvedValue({ ...existingAgent, version: 3 });
+    renderDialog({
+      agent: {
+        ...existingAgent,
+        tools: [
+          {
+            type: "agent_toolset_20260401",
+            configs: [
+              { name: "browser", enabled: true, permission_policy: { type: "always_allow" } },
+              { name: "bash", enabled: false },
+            ],
+          },
+        ],
+      } as unknown as Agent,
+    });
+
+    // Счётчик на вкладке считает только запись bash. Если бы форма прочла
+    // browser, на вкладке стояло бы 2.
+    const toolsTab = screen.getByRole("tab", { name: /^Инструменты/ });
+    expect(toolsTab).toHaveTextContent(/^Инструменты1$/);
+    await userEvent.click(toolsTab);
+    expect(screen.queryByRole("combobox", { name: "Режим инструмента browser" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить изменения" }));
+
+    await waitFor(() => expect(managed.update).toHaveBeenCalledOnce());
+    const body = managed.update.mock.calls[0][1] as { tools: Array<Record<string, unknown>> };
+    const toolset = body.tools.find((tool) => tool.type === "agent_toolset_20260401");
+    expect(toolset?.configs).toEqual([{ name: "bash", enabled: false }]);
+  });
+});

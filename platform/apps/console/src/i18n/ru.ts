@@ -134,7 +134,6 @@ export const ru: Messages = {
 
   profile: {
     accountMenu: "Меню учётной записи",
-    documentation: "Документация",
     theme: "Тема",
     light: "Светлая",
     dark: "Тёмная",

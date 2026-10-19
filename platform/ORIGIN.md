@@ -12,6 +12,12 @@
 (2026-10-16, как есть): его импортирует `apps/main-node/test/managed-agents-route.test.ts`,
 без него этот тест не загружался.
 
+2026-10-19 из того же коммита 1e44c89 как есть взят `test/fakes/scripted-mcp-server.ts`
+(221 строка). Его импортирует `apps/main-node/test/session-resume-mcp-live.test.ts`, без него
+этот тест не загружался. Файлы `test/fixtures/oauth-mcp-local-server.ts` и
+`oauth-mcp-validate-scenarios.ts` для `apps/main-node/test/mcp-oauth-validate.e2e.test.ts`
+написаны у нас заново, это не копия файлов upstream с теми же именами.
+
 Изменения поверх исходного кода фиксируются в истории git этого репозитория.
 
 ## Докопировано 2026-10-15, удалено 2026-10-17: CLI и мост локальной среды

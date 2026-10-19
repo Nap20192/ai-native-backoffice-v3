@@ -202,7 +202,7 @@ export function VaultsList() {
   return (
     <DataTable<Vault>
       title={t.nav.credentialVaults}
-      subtitle="Учётные данные и делегированный доступ, с которыми агенты ходят на MCP-серверы и в CLI."
+      subtitle="Учётные данные и делегированный доступ, с которыми агенты ходят на MCP-серверы."
       createLabel={t.vaults.newVault}
       onCreate={() => setShowCreateVault(true)}
       searchPlaceholder={t.vaults.searchVaults}
@@ -240,7 +240,7 @@ export function VaultsList() {
       emptySubtitle={
         filtered
           ? "Измените фильтры, чтобы увидеть другие хранилища."
-          : "В хранилище лежат учётные данные, с которыми агенты ходят на MCP-серверы и в CLI."
+          : "В хранилище лежат учётные данные, с которыми агенты ходят на MCP-серверы."
       }
       emptyAction={
         !filtered && <Button onClick={() => setShowCreateVault(true)}><PlusIcon />{t.vaults.newVault}</Button>

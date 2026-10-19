@@ -35,7 +35,7 @@ import {
 
 import { listAuthProviders } from "@open-managed-agents/shared";
 
-import { buildAgentRoutes as buildLegacyAgentRoutes, buildVaultRoutes as buildLegacyVaultRoutes, buildModelCardRoutes, buildEnvironmentRoutes as buildLegacyEnvironmentRoutes, buildSessionRoutes, buildMemoryRoutes as buildLegacyMemoryRoutes, buildDreamRoutes, buildTenantRoutes, buildMeRoutes, buildApiKeyRoutes, buildEvalRoutes, buildIntegrationsRoutes, buildIntegrationsGatewayRoutes, type InstallProxyForwarder, sha256Hex } from "@open-managed-agents/http-routes";
+import { buildAgentRoutes as buildLegacyAgentRoutes, buildModelCardRoutes, buildEnvironmentRoutes as buildLegacyEnvironmentRoutes, buildSessionRoutes, buildMemoryRoutes as buildLegacyMemoryRoutes, buildDreamRoutes, buildTenantRoutes, buildMeRoutes, buildApiKeyRoutes, buildEvalRoutes, buildIntegrationsRoutes, buildIntegrationsGatewayRoutes, type InstallProxyForwarder, sha256Hex } from "@open-managed-agents/http-routes";
 import { buildAgentRoutes as buildManagedAgentRoutes, buildManagedSessionsApi } from "@open-managed-agents/managed-agents-api";
 import { SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService } from "@open-managed-agents/managed-agents-application";
 
@@ -47,7 +47,6 @@ import { isCurrentEnvironmentWorkClaim } from "@open-managed-agents/environment-
 import { buildOmaModelsHttpRoutes } from "@open-managed-agents/managed-agents-adapters-http";
 import { buildNodeRepos, SqlFeishuInstallationRepo, SqlFeishuPublicationRepo, SqlSlackInstallationRepo, SqlSlackPublicationRepo, SqlSlackAppRepo, CryptoIdGenerator, WorkerHttpClient, type NodeReposEnv } from "@open-managed-agents/integrations-adapters-node";
 import { NodeInstallBridge, buildNodeProvidersForRequest } from "../lib/node-install-bridge.js";
-import { OmaVaultResolver } from "@open-managed-agents/oma-cap-adapter";
 import { NodeSessionRouter } from "../lib/node-session-router.js";
 import { configureFeishuAgentTools, sqlSessionMetadataReader } from "../lib/feishu-agent-tools.js";
 import { nodeOutputsAdapter } from "../lib/node-outputs-adapter.js";
@@ -469,7 +468,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   v1.route("/vaults", managedVaultsRoutes);
   v1.route("/vaults", managedCredentialsRoutes);
   v1.route("/user_profiles", managedUserProfilesRoutes);
-  v1.route("/oma/vaults", buildLegacyVaultRoutes({ services }));
   v1.route("/memory_stores", managedMemoryStoresRoutes);
   v1.route("/memory_stores", managedMemoriesRoutes);
   v1.route("/memory_stores", managedMemoryVersionsRoutes);
@@ -988,26 +986,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       }),
     );
   }
-
-  // oma-cap-adapter wire — exposes a Resolver against the in-process vault
-  // services so a future Node outbound proxy (mirroring CF's mcp-proxy) can
-  // inject cap_cli credentials into sandbox traffic. Wired here at the
-  // services construction site so the resolver is available even before
-  // the outbound surface lands.
-  const _capResolver = new OmaVaultResolver({
-    sessions: {
-      get: ({ tenantId, sessionId }) => sessionsService.get({ tenantId, sessionId }) as never,
-    },
-    credentials: {
-      listByVaults: ({ tenantId, vaultIds }) =>
-        credentialService.listByVaults({ tenantId, vaultIds }) as never,
-      update: ({ tenantId, vaultId, credentialId, auth }) =>
-        credentialService.update({ tenantId, vaultId, credentialId, auth }) as never,
-      create: ({ tenantId, vaultId, displayName, auth }) =>
-        credentialService.create({ tenantId, vaultId, displayName, auth }) as never,
-    },
-  });
-  void _capResolver;
 
   // ── Console branding (optional) ──
   // Served whether or not this process serves the console, so a console on

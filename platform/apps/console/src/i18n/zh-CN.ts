@@ -133,7 +133,6 @@ export const zhCN: Messages = {
 
   profile: {
     accountMenu: "账户菜单",
-    documentation: "文档",
     theme: "主题",
     light: "浅色",
     dark: "深色",

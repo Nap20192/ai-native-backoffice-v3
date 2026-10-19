@@ -16,9 +16,6 @@ export { resolveServices } from "./types";
 export { buildAgentRoutes } from "./agents";
 export type { AgentRoutesDeps } from "./agents";
 
-export { buildVaultRoutes } from "./vaults";
-export type { VaultRoutesDeps } from "./vaults";
-
 export { buildModelCardRoutes } from "./model-cards";
 export { modelCardProbeUrl } from "./model-cards";
 export type {

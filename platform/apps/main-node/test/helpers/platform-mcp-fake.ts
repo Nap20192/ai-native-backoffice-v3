@@ -53,7 +53,8 @@ export function createFakePlatform() {
   const files = new Map<string, Json & { bytes: Uint8Array }>();
   const skills = new Map<string, Json & { rev: number; versions: Map<string, Record<string, Uint8Array>> }>();
   const credentials: Json[] = [];
-  const trajectories = new Map<string, unknown>();
+  /** Bodies of `GET /v1/oma/sessions/:id/trace` by session id. */
+  const traces = new Map<string, unknown>();
   /** Handles of the built-in catalog, as with a server ANTHROPIC_API_KEY. */
   const builtinModels: string[] = [];
   /** Off by default: older tests use model names no catalog has. */
@@ -168,9 +169,12 @@ export function createFakePlatform() {
     const written = body.events.map((event: Json) => api.pushEvent(session.id, event));
     return c.json({ data: written }, 200, { etag: etag(session.rev) });
   });
-  app.get("/v1/oma/sessions/:id/trajectory", (c) => {
-    const value = trajectories.get(c.req.param("id"));
-    return value === undefined ? notFound(c) : c.json(value);
+  // As lib/trace/routes.ts: 404 only for an unknown session, a known session
+  // without turns gets empty lists.
+  app.get("/v1/oma/sessions/:id/trace", (c) => {
+    const id = c.req.param("id");
+    if (!sessions.has(id)) return notFound(c);
+    return c.json(traces.get(id) ?? { trace_id: `trace_${id}`, session_id: id, turns: [], spans: [], spans_next: null });
   });
 
   // memory
@@ -772,8 +776,8 @@ export function createFakePlatform() {
     addCredential(credential: Json) {
       credentials.push(credential);
     },
-    setTrajectory(sessionId: string, value: unknown) {
-      trajectories.set(sessionId, value);
+    setTrace(sessionId: string, value: unknown) {
+      traces.set(sessionId, value);
     },
     /** The assistant agent, its environment and its session owned by `OWNER`. */
     setupAssistant() {

@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button";
 import {
-  BookOpenIcon,
   CheckIcon,
   LogOutIcon,
   MonitorIcon,
@@ -26,11 +25,13 @@ import { useI18n, AVAILABLE_LOCALES } from "../i18n";
 
 /**
  * Меню пользователя внизу бокового меню. Одна точка нажатия открывает список
- * из трёх групп настроек учётной записи:
+ * из двух групп настроек учётной записи:
  *
- *   - документация (сайт документации в новой вкладке);
  *   - язык интерфейса (русский, английский, китайский);
  *   - тема (светлая, тёмная, системная) и выход.
+ *
+ * Пункта документации нет: своей документации у консоли нет, а ссылка вела
+ * на сайт OpenMA.
  *
  * Строка-триггер использует тот же класс `console-sidebar-row`, что и пункты
  * меню и блок рабочего пространства: знак стоит в колонке иконок, подпись
@@ -98,21 +99,6 @@ export function UserProfile() {
             </div>
           )}
         </DropdownMenuLabel>
-
-        <DropdownMenuSeparator />
-
-        <DropdownMenuGroup>
-          <DropdownMenuItem asChild>
-            <a
-              href="https://docs.openma.dev"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <BookOpenIcon className="size-4" />
-              {t.profile.documentation}
-            </a>
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
 
         <DropdownMenuSeparator />
 

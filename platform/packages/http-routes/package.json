@@ -27,7 +27,6 @@
     "@open-managed-agents/sessions-store": "workspace:*",
     "@open-managed-agents/shared": "workspace:*",
     "@open-managed-agents/sql-client": "workspace:*",
-    "@open-managed-agents/vault-forward": "workspace:*",
     "@open-managed-agents/vaults-store": "workspace:*",
     "hono": "^4.7.0",
     "nanoid": "^5.1.0"

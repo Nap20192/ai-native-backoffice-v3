@@ -501,6 +501,57 @@ describe("platform MCP end to end", () => {
     expect(warning?.message).toContain('MCP setup failed for "platform"');
   });
 
+  // cleanup.md 3.4: the tool read the legacy /trajectory route, which only
+  // knows the old `sessions` table, and answered 404 for every /v1 session.
+  it("get_trajectory reads the trace of a /v1 session without a confirmation", async () => {
+    const environment = await ok<{ id: string }>("POST", "/v1/environments", { name: "E2E trace env", config: { type: "cloud", networking: { type: "unrestricted" } } });
+    const agent = await ok<{ id: string }>("POST", "/v1/agents", { name: "E2E trace agent", model: MODEL, system: "Ты рабочий агент." });
+    const session = await ok<{ id: string }>("POST", "/v1/sessions", { agent: agent.id, environment_id: environment.id });
+    // /v1 sessions on Node get `session_<nanoid>` ids (node-managed.ts, nextSessionId).
+    expect(session.id).toMatch(/^session_/);
+    steps.set("traced", () => [{ type: "text", text: "TRACED" }]);
+    expect((await say(session.id, "E2E:traced")).stop).toMatchObject({ type: "end_turn" });
+    // The trace settles after the idle event; read it closed, as the trace tests do.
+    await waitFor("a settled trace", async () => {
+      const trace = await ok<{ collecting: boolean; turns: Array<{ state: string }> }>("GET", `/v1/oma/sessions/${session.id}/trace`);
+      const state = trace.turns.at(-1)?.state;
+      return !trace.collecting && (state === "complete" || state === "repaired") ? trace : undefined;
+    });
+
+    steps.set("trajectory", (results) =>
+      results.length === 0
+        ? [{ type: "tool_use", name: "mcp__platform__get_trajectory", input: { session_id: session.id } }]
+        : [{ type: "text", text: "Путь прочитан." }],
+    );
+    innerCalls.length = 0;
+    const done = await say(assistantSessionId, "E2E:trajectory");
+    expect(done.stop).toMatchObject({ type: "end_turn" });
+    const asked = done.all.slice(done.all.findIndex((event) => event.id === done.eventId));
+    const use = asked.find((event) => event.type === "agent.mcp_tool_use" && event.name === "mcp__platform__get_trajectory");
+    expect(use).toBeDefined();
+    const result = asked.find((event) => event.type === "agent.mcp_tool_result" && event.mcp_tool_use_id === use.id);
+    expect(result?.is_error ?? false, resultText(result)).toBe(false);
+    // A read tool runs without a confirmation, on the Pi auto-run path. There
+    // the whole MCP CallToolResult travels as JSON text (pi-loop-tools.ts,
+    // valueToPiContent); the confirmed path spreads its content blocks
+    // instead. Unwrap it here. If the bridge ever unwraps, this parse fails
+    // and the test must be revisited on purpose.
+    const envelope = JSON.parse(resultText(result));
+    expect(envelope.isError ?? false).toBe(false);
+    const text = textOf(envelope.content);
+    expect(text.startsWith(`<data source="trajectory" id="${session.id}">`), text).toBe(true);
+    expect(text).not.toContain("Сессия не найдена");
+    expect(text).not.toContain("Ходов у сессии ещё нет");
+    expect(innerCalls).toContainEqual({ method: "GET", path: `/v1/oma/sessions/${session.id}/trace` });
+    expect(innerCalls.some((entry) => entry.path.endsWith("/trajectory"))).toBe(false);
+
+    const trajectory = JSON.parse(text.replace(/^<data[^>]*>/, "").replace(/<\/data>$/, ""));
+    expect(trajectory.session_id).toBe(session.id);
+    expect(trajectory.turns.length).toBeGreaterThan(0);
+    expect(trajectory.turns.at(-1)).toMatchObject({ status: "ok" });
+    expect(trajectory.steps.some((step: any) => step.kind === "model_call")).toBe(true);
+  });
+
   it("an object changed between confirm and execution gives refused_stale and no write", async () => {
     const environment = await ok<{ id: string }>("POST", "/v1/environments", { name: "E2E stale env", config: { type: "cloud", networking: { type: "unrestricted" } } });
     runtime.platformMcp.hooks.afterConfirm = async () => {

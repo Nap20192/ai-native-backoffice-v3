@@ -47,6 +47,7 @@ describe("Node MCP OAuth credential validation", () => {
     await runMcpOauthValidationScenarios({
       origin,
       request: (path, init) => current.fetch(new Request(`http://localhost${path}`, init)),
+      requests: server.requests,
     });
     expect(origin.startsWith("http://127.0.0.1:")).toBe(true);
   }, 60_000);

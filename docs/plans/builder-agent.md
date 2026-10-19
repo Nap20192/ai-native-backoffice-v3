@@ -184,7 +184,7 @@
 | `get` | `kind`, `id`, `version?` | `GET /v1/<ресурс>/:id`; поля по белому списку 2.6 |
 | `read_content` | `kind`: `file`, `skill_file`, `memory`; `id`; `path?`; `version?`; `max_bytes?` (20 000) | `GET /v1/files/:id/content`, `GET /v1/skills/:id/versions/:version/content`, `GET /v1/memory_stores/:id/memories/:memory_id` |
 | `get_session_events` | `session_id`, `types?`, `after_id?`, `limit?` (50) | `GET /v1/sessions/:id/events`; событие сжато до типа, времени, первых 500 знаков, ошибки, длительности; `model_usage` у `span.model_request_end` и `usage` у `session.usage` остаются целиком. Сессии ассистента, своя и чужие, закрыты (2.6) |
-| `get_trajectory` | `session_id` | `GET /v1/oma/sessions/:id/trajectory`; сессии ассистента закрыты, как у `get_session_events` |
+| `get_trajectory` | `session_id` | `GET /v1/oma/sessions/:id/trace`; ответ сжат до ходов (статус, начало, длительность, число шагов и ошибок) и шагов двух последних ходов (вид, имя, статус, длительность, инструмент, модель, ошибка до 300 знаков). При нехватке места остаются новые записи и `truncated: true`. Сессии ассистента закрыты, как у `get_session_events` ([cleanup.md](cleanup.md), 3.4) |
 | `request_secret` | `kind`: `static_bearer`, `mcp_oauth`, `environment_variable`, `model_card_key`; `name`; `vault_id?`; `mcp_server_url?`; `model_card_id?` | нет; отдаёт ссылку на форму консоли с заполненными полями, значение секрета вводит пользователь |
 
 О расходе ассистент говорит только то, что видно в событиях одной сессии: токены из `model_usage` и `session.usage`. Сводок по агентам, моделям и периодам у него нет, стоимость он не считает: владелец отменил аналитику.
@@ -776,7 +776,7 @@
 Уже в коммитах, ждать не нужно:
 
 - план моделей и harness целиком: S1, HC, S2, C1, WIRE (e309c26). Есть `N/lib/harness-cards/`, `N/lib/models-harness-wiring.ts`, `C/pages/harnesses/`, правки `P/auth`. Ожидания HC, C1, WIRE и обоих S2 из черновика 5 сняты;
-- трейс, волна 1 (e309c26): `N/lib/trace/`, `GET /v1/oma/sessions/:id/trace`, вид «Трейс» на странице сессии. Маршрут `GET /v1/oma/sessions/:id/trajectory` для `get_trajectory` остался (`P/http-routes/src/sessions/index.ts:868`). Папки `C/components/timeline/` больше нет, ссылка в 1.4 исправлена;
+- трейс, волна 1 (e309c26): `N/lib/trace/`, `GET /v1/oma/sessions/:id/trace`, вид «Трейс» на странице сессии. `get_trajectory` читает этот трейс ([cleanup.md](cleanup.md), 3.4). Старый маршрут `GET /v1/oma/sessions/:id/trajectory` (`P/http-routes/src/sessions/index.ts:868`) видит только старую таблицу `sessions` и ждёт решения по старым сессиям. Папки `C/components/timeline/` больше нет, ссылка в 1.4 исправлена;
 - страница сессии по плану session-page (5293acc, e309c26): `beforeComposer` у `ManagedSessionConversation.tsx:37`, метка «Ждёт вас» у вызова с `ask`, выключенная кнопка «Спросить помощника», `DefineOutcomeDialog` и `ShortcutsDialog` в `SessionDialogs.tsx`. Файлы K5 в `C/pages/session-detail/` не появятся;
 - потоки RS и CC из console-parity;
 - пустая сессия создаётся в покое (36132d9), на этом стоит `create_session`.

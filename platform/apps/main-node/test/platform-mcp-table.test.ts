@@ -25,6 +25,11 @@ const FORBIDDEN: [string, string][] = [
   ["GET", "/v1/oma/platform-mcp/settings"],
   ["POST", "/v1/oma/platform-mcp/settings"],
   ["POST", "/v1/oma/sessions/sesn_1/exec"],
+  // get_trajectory reads the trace now (cleanup.md 3.4): the legacy route and
+  // the trace search and download stay closed.
+  ["GET", "/v1/oma/sessions/sesn_1/trajectory"],
+  ["GET", "/v1/oma/sessions/sesn_1/trace/search"],
+  ["GET", "/v1/oma/sessions/sesn_1/trace/otlp.json"],
   ["GET", "/metrics"],
   ["GET", "/v1/oma/internal/x"],
   ["POST", "/v1/oma/mcp-proxy/sesn_1/platform"],
@@ -87,6 +92,7 @@ describe("platform MCP tool table", () => {
 
   it("keeps every forbidden route out of the allowlist", () => {
     for (const [method, path] of FORBIDDEN) expect(routeAllowlist.match(method, path), `${method} ${path}`).toBeNull();
+    expect(routeAllowlist.match("GET", "/v1/oma/sessions/sesn_1/trace")?.pattern).toBe("/v1/oma/sessions/:id/trace");
     expect(allRouteRules().every((rule) => ["GET", "POST", "DELETE"].includes(rule.method))).toBe(true);
     expect(allRouteRules().some((rule) => rule.pattern.includes("vault") && rule.method !== "GET")).toBe(false);
   });

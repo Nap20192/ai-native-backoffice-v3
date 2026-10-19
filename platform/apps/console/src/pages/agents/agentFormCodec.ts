@@ -380,6 +380,29 @@ export function agentToPreservedConfig(agent: Agent): Record<string, unknown> {
   return out;
 }
 
+/**
+ * Имена записей набора agent_toolset_20260401, которые принимает схема
+ * /v1/agents (`agent-input-components.ts`, строгий union по `name`). Запись с
+ * другим именем, например browser старого агента, API отклоняет с 400.
+ * Поэтому форма её не читает и при сохранении убирает.
+ */
+export const TOOLSET_TOOL_NAMES = [
+  "bash",
+  "edit",
+  "read",
+  "write",
+  "glob",
+  "grep",
+  "web_fetch",
+  "web_search",
+] as const;
+export type ToolsetToolName = (typeof TOOLSET_TOOL_NAMES)[number];
+const TOOLSET_TOOL_NAME_SET: ReadonlySet<string> = new Set(TOOLSET_TOOL_NAMES);
+
+function isToolsetToolName(name: unknown): name is ToolsetToolName {
+  return typeof name === "string" && TOOLSET_TOOL_NAME_SET.has(name);
+}
+
 /** Pull default_config + per-tool overrides out of an agent_toolset_20260401 entry. */
 export function parseToolPolicy(tools: unknown[] | undefined): {
   toolDefaultEnabled: boolean;
@@ -402,7 +425,7 @@ export function parseToolPolicy(tools: unknown[] | undefined): {
   }>;
   const overrides: Record<string, ToolOverride> = {};
   for (const c of cfgs) {
-    if (!c?.name) continue;
+    if (!c?.name || !isToolsetToolName(c.name)) continue;
     if (c.enabled === false) overrides[c.name] = "disabled";
     else if (c.permission_policy?.type === "always_ask") overrides[c.name] = "always_ask";
     else if (c.permission_policy?.type === "always_allow") overrides[c.name] = "always_allow";
@@ -650,10 +673,14 @@ export function buildManagedToolset(
   form: FormState,
   existing?: Record<string, unknown>,
 ): Record<string, unknown> {
+  // Записи с именем вне TOOLSET_TOOL_NAMES API отклонил бы, поэтому они уходят.
   const priorConfigs = Array.isArray(existing?.configs)
     ? existing.configs.filter(
         (entry): entry is Record<string, unknown> =>
-          !!entry && typeof entry === "object" && !Array.isArray(entry),
+          !!entry &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          isToolsetToolName((entry as { name?: unknown }).name),
       )
     : [];
   const priorByName = new Map(
@@ -691,7 +718,7 @@ export function buildManagedToolset(
   }
 
   for (const [name, mode] of Object.entries(form.toolOverrides)) {
-    if (priorByName.has(name) || mode === "default") continue;
+    if (priorByName.has(name) || mode === "default" || !isToolsetToolName(name)) continue;
     configs.push(
       mode === "disabled"
         ? { name, enabled: false }

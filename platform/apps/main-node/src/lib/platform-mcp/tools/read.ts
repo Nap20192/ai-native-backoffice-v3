@@ -475,21 +475,100 @@ export const getSessionEventsTool: ToolDef<z.infer<typeof eventsArgs>> = {
 
 const trajectoryArgs = z.object({ session_id: z.string().min(1) }).strict();
 
+/** Turns the trajectory lists, newest last. */
+const TRAJECTORY_TURNS = 20;
+const TRAJECTORY_ERROR_CHARS = 300;
+
+function spanDuration(span: any): number | null {
+  return typeof span?.start_ms === "number" && typeof span?.end_ms === "number"
+    ? Math.max(0, span.end_ms - span.start_ms)
+    : null;
+}
+
+/** One turn of the trace route: status, start, duration and counts. */
+function trajectoryTurn(summary: any): Record<string, unknown> {
+  const turn = summary?.turn ?? {};
+  return {
+    turn_id: turn.turn_id ?? null,
+    status: turn.status ?? null,
+    state: summary?.state ?? null,
+    started_at: typeof turn.start_ms === "number" ? new Date(turn.start_ms).toISOString() : null,
+    duration_ms: spanDuration(turn),
+    steps: summary?.span_count ?? null,
+    errors: summary?.error_count ?? null,
+    ...(turn.error ? { error: turn.error } : {}),
+  };
+}
+
+/** One span of the trace route: a model call, a tool call, a sandbox phase. */
+function trajectoryStep(span: any): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    turn_id: span?.turn_id ?? null,
+    kind: span?.kind ?? null,
+    name: span?.name ?? null,
+    status: span?.status ?? null,
+    duration_ms: spanDuration(span),
+  };
+  if (typeof span?.tool?.name === "string") out.tool = span.tool.name;
+  if (typeof span?.model === "string") out.model = span.model;
+  if (span?.usage) out.usage = span.usage;
+  if (span?.error) out.error = span.error;
+  return out;
+}
+
+/** Cuts long error texts after the scan, so a cut never splits a secret. */
+function cutError(item: Record<string, unknown>): Record<string, unknown> {
+  const error = item.error;
+  if (error === null || typeof error !== "object") return item;
+  const message = (error as { message?: unknown }).message;
+  if (typeof message !== "string" || message.length <= TRAJECTORY_ERROR_CHARS) return item;
+  return { ...item, error: { ...(error as Record<string, unknown>), message: `${message.slice(0, TRAJECTORY_ERROR_CHARS)}…` } };
+}
+
 export const getTrajectoryTool: ToolDef<z.infer<typeof trajectoryArgs>> = {
   name: "get_trajectory",
   group: "read",
-  description: "Траектория сессии: шаги, инструменты, ошибки. Сессии ассистента закрыты.",
+  description: "Путь сессии по трейсу: ходы с длительностью, шаги двух последних ходов, вызовы модели и инструментов, ошибки. Сессии ассистента закрыты.",
   args: trajectoryArgs,
-  routes: [ROUTES.session, ROUTES.trajectory],
+  routes: [ROUTES.session, ROUTES.sessionTrace],
   precondition: null,
   async run(ctx, args) {
     const refused = await refuseAssistantSession(ctx, args.session_id);
     if (refused) return refused;
-    const response = await ctx.api.get(`/v1/oma/sessions/${enc(args.session_id)}/trajectory`);
-    if (response.status === 404) return errorOutput("Траектории нет");
+    const response = await ctx.api.get(`/v1/oma/sessions/${enc(args.session_id)}/trace`);
+    // The route answers 404 only for a session it does not know.
+    if (response.status === 404) return errorOutput("Сессия не найдена");
     if (!response.ok) throw new RouteError(response);
-    const out = maskThenCut(ctx, response.text, LIST_BUDGET);
-    return { text: `${wrapData("trajectory", args.session_id, out.text)}${out.cut ? "\n(обрезано)" : ""}`, maskedCount: out.count, prescanned: true };
+    const body = response.json ?? {};
+    const allTurns: any[] = Array.isArray(body.turns) ? body.turns : [];
+    // A known session without turns gets 200 with empty lists.
+    if (allTurns.length === 0) return { text: "Ходов у сессии ещё нет", prescanned: true };
+    const spans: any[] = Array.isArray(body.spans) ? body.spans : [];
+    const turns = allTurns.slice(-TRAJECTORY_TURNS).map(trajectoryTurn);
+    // The route gives the spans of the last two turns, oldest first; the turn span itself is in `turns`.
+    const steps = spans.filter((span) => span?.kind !== "turn").map(trajectoryStep);
+    const scanned = scanValue({ turns, steps }, ctx.known, ctx.libs);
+    const clean = scanned.value as { turns: Record<string, unknown>[]; steps: Record<string, unknown>[] };
+    const cleanTurns = clean.turns.map(cutError);
+    const cleanSteps = clean.steps.map(cutError);
+    // Both lists keep their newest items: the end of the last turn holds the
+    // error a review looks for. Turns get half the budget, steps the rest.
+    const turnFit = fitItems([...cleanTurns].reverse(), LIST_BUDGET / 2);
+    const keptTurns = cleanTurns.slice(cleanTurns.length - turnFit);
+    const stepFit = fitItems([...cleanSteps].reverse(), Math.max(0, LIST_BUDGET - json(keptTurns).length));
+    const keptSteps = cleanSteps.slice(cleanSteps.length - stepFit);
+    const truncated =
+      turnFit < cleanTurns.length ||
+      stepFit < cleanSteps.length ||
+      allTurns.length > TRAJECTORY_TURNS ||
+      (typeof body.spans_next === "string" && body.spans_next.length > 0);
+    const text = json({
+      session_id: args.session_id,
+      turns: keptTurns,
+      steps: keptSteps,
+      ...(truncated ? { truncated: true } : {}),
+    });
+    return { text: wrapData("trajectory", args.session_id, text), maskedCount: scanned.count, prescanned: true };
   },
 };
 

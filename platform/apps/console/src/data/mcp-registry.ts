@@ -3,9 +3,9 @@
  * Users search this list or enter a custom URL.
  * OAuth discovery is handled via .well-known/oauth-protected-resource.
  *
- * CLI tools (GitHub, GitLab, etc.) are NOT here — they don't support MCP OAuth
- * discovery or Dynamic Client Registration. Users add CLI tokens manually
- * via the "Add secret" flow.
+ * CLI tools (GitHub, GitLab, etc.) are not here: they don't support MCP OAuth
+ * discovery or Dynamic Client Registration. The console has no CLI credential
+ * form (cleanup plan, step 1).
  *
  * Иконки: внешних сервисов (favicon с чужих доменов) нет. Консоль работает во
  * внутреннем контуре без обращений наружу, поэтому у записи реестра иконки

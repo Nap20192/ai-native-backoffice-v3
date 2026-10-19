@@ -133,7 +133,6 @@ export const en: Messages = {
 
   profile: {
     accountMenu: "Account menu",
-    documentation: "Documentation",
     theme: "Theme",
     light: "Light",
     dark: "Dark",

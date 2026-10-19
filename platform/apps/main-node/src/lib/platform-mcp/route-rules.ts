@@ -92,7 +92,8 @@ export const ROUTES = {
   sessionResource: get("/v1/sessions/:id/resources/:resource_id"),
   sessionResourceAdd: post("/v1/sessions/:id/resources", "session_resource"),
   sessionResourceDelete: del("/v1/sessions/:id/resources/:resource_id"),
-  trajectory: get("/v1/oma/sessions/:id/trajectory"),
+  /** The agent trace of a `/v1` session (`lib/trace/routes.ts`), read by `get_trajectory`. */
+  sessionTrace: get("/v1/oma/sessions/:id/trace"),
 
   evalRuns: get("/v1/oma/evals/runs"),
   evalRun: get("/v1/oma/evals/runs/:id"),

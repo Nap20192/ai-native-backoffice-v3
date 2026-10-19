@@ -149,7 +149,6 @@ export interface Messages {
   // User profile menu
   profile: {
     accountMenu: string;
-    documentation: string;
     theme: string;
     light: string;
     dark: string;

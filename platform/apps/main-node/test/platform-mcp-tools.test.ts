@@ -90,8 +90,110 @@ describe("platform MCP read tools", () => {
     const other = fake.addSession({ agentId: "agent_assistant", environmentId: "env_assistant" });
     expect((await fake.call("get_session_events", { session_id: other })).text).toBe("События разговоров с ассистентом закрыты");
     expect((await fake.call("get_trajectory", { session_id: other })).text).toBe("События разговоров с ассистентом закрыты");
-    fake.setTrajectory(sessionId, { steps: [{ tool: "bash", ok: true }] });
-    expect((await fake.call("get_trajectory", { session_id: sessionId })).text).toContain('<data source="trajectory"');
+    // get_trajectory reads the trace route of a /v1 session (cleanup.md 3.4).
+    // The route answers 200 with empty lists for a session without turns.
+    const empty = await fake.call("get_trajectory", { session_id: sessionId });
+    expect([empty.isError ?? false, empty.text]).toEqual([false, "Ходов у сессии ещё нет"]);
+    const unknown = await fake.call("get_trajectory", { session_id: "session_missing" });
+    expect([unknown.isError, unknown.text]).toEqual([true, "Сессия не найдена"]);
+    const start = Date.parse("2026-10-16T10:00:00.000Z");
+    fake.setTrace(sessionId, {
+      trace_id: "trace_1",
+      session_id: sessionId,
+      turns: [{
+        turn: { turn_id: "sexe_1", kind: "turn", status: "error", start_ms: start, end_ms: start + 5000, error: { type: "tool_error", message: "tok-123 упал" } },
+        state: "complete",
+        span_count: 3,
+        error_count: 1,
+      }],
+      spans: [
+        { span_id: "s0", turn_id: "sexe_1", kind: "turn", name: "turn", status: "error", start_ms: start, end_ms: start + 5000 },
+        { span_id: "s1", turn_id: "sexe_1", kind: "model_call", name: "qwen", status: "ok", start_ms: start + 100, end_ms: start + 1300, model: "qwen3.6-35b", usage: { input: 10, output: 5, cache_read: 0, cache_write: 0 }, attrs: { prompt: "длинный" }, event_ids: ["sevt_1"] },
+        { span_id: "s2", turn_id: "sexe_1", kind: "tool_call", name: "bash", status: "error", start_ms: start + 1400, end_ms: start + 1600, tool: { name: "bash", call_id: "c1", kind: "builtin", mcp_server: null }, error: { type: "exit", message: `tok-123 ${"e".repeat(400)}` } },
+      ],
+      spans_next: null,
+    });
+    const traced = await fake.call("get_trajectory", { session_id: sessionId });
+    expect(traced.isError ?? false).toBe(false);
+    expect(traced.text).toMatch(new RegExp(`^<data source="trajectory" id="${sessionId}">`));
+    expect(traced.text).not.toContain("tok-1");
+    const trajectory = parse(traced.text.replace(/^<data[^>]*>/, "").replace(/<\/data>$/, ""));
+    expect(trajectory.turns).toEqual([expect.objectContaining({ turn_id: "sexe_1", status: "error", started_at: "2026-10-16T10:00:00.000Z", duration_ms: 5000, steps: 3, errors: 1 })]);
+    expect(trajectory.steps.map((step: any) => [step.kind, step.duration_ms])).toEqual([["model_call", 1200], ["tool_call", 200]]);
+    expect(trajectory.steps[0]).toMatchObject({ model: "qwen3.6-35b", usage: { input: 10, output: 5 } });
+    expect(trajectory.steps[0].attrs).toBeUndefined();
+    expect(trajectory.steps[1].tool).toBe("bash");
+    expect(trajectory.steps[1].error.message.length).toBeLessThanOrEqual(301);
+    expect(trajectory.truncated).toBeUndefined();
+  });
+
+  it("get_trajectory keeps the newest turns and steps under 8 KB", async () => {
+    const fake = setup();
+    const agent = fake.addAgent({ name: "Рабочий" });
+    const env = fake.addEnvironment({ name: "Рабочее" });
+    const start = Date.parse("2026-10-16T10:00:00.000Z");
+    const turnSummary = (turn: number, error?: string) => ({
+      turn: {
+        turn_id: `sexe_${turn}`,
+        kind: "turn",
+        status: error ? "error" : "ok",
+        start_ms: start + turn * 100_000,
+        end_ms: start + turn * 100_000 + 5000,
+        ...(error ? { error: { type: "tool_error", message: error } } : {}),
+      },
+      state: "complete",
+      span_count: 40,
+      error_count: error ? 1 : 0,
+    });
+    const span = (turn: number, index: number) => ({
+      span_id: `s${turn}_${index}`,
+      turn_id: `sexe_${turn}`,
+      kind: index % 2 === 0 ? "model_call" : "tool_call",
+      name: `step_${turn}_${index}`,
+      status: "ok",
+      start_ms: start + turn * 100_000 + index * 100,
+      end_ms: start + turn * 100_000 + index * 100 + 50,
+      ...(index % 2 === 0 ? { model: "qwen3.6-35b" } : { tool: { name: "bash", call_id: `c${turn}_${index}`, kind: "builtin", mcp_server: null } }),
+    });
+    const strip = (text: string) => text.replace(/^<data[^>]*>/, "").replace(/<\/data>$/, "");
+
+    // 20 failed turns with a 300-char error each do not fit: the newest stay
+    // and the answer is still whole JSON inside a closed <data> wrapper.
+    const failing = fake.addSession({ agentId: agent.id, environmentId: env.id });
+    fake.setTrace(failing, {
+      trace_id: "trace_failing",
+      session_id: failing,
+      turns: Array.from({ length: 20 }, (_, turn) => turnSummary(turn, `ошибка ${turn} ${"e".repeat(290)}`)),
+      spans: [18, 19].flatMap((turn) => [span(turn, 0), span(turn, 1)]),
+      spans_next: null,
+    });
+    const failed = await fake.call("get_trajectory", { session_id: failing });
+    expect(failed.text.length).toBeLessThanOrEqual(8000);
+    expect(failed.text.endsWith("</data>")).toBe(true);
+    const failedBody = parse(strip(failed.text));
+    expect(failedBody.truncated).toBe(true);
+    expect(failedBody.turns.length).toBeLessThan(20);
+    expect(failedBody.turns.at(-1).turn_id).toBe("sexe_19");
+    expect(failedBody.steps.map((step: any) => step.name)).toEqual(["step_18_0", "step_18_1", "step_19_0", "step_19_1"]);
+
+    // Two turns of 40 spans each do not fit: every step of the last turn stays,
+    // the older turn loses its first steps.
+    const busy = fake.addSession({ agentId: agent.id, environmentId: env.id });
+    fake.setTrace(busy, {
+      trace_id: "trace_busy",
+      session_id: busy,
+      turns: [turnSummary(0), turnSummary(1)],
+      spans: [0, 1].flatMap((turn) => Array.from({ length: 40 }, (_, index) => span(turn, index))),
+      spans_next: null,
+    });
+    const traced = await fake.call("get_trajectory", { session_id: busy });
+    expect(traced.text.length).toBeLessThanOrEqual(8000);
+    const busyBody = parse(strip(traced.text));
+    expect(busyBody.truncated).toBe(true);
+    expect(busyBody.steps.length).toBeLessThan(80);
+    expect(busyBody.steps.filter((step: any) => step.turn_id === "sexe_1")).toHaveLength(40);
+    expect(busyBody.steps.at(-1).name).toBe("step_1_39");
+    expect(busyBody.steps.some((step: any) => step.name === "step_0_0")).toBe(false);
   });
 
   it("searches docs and config, gives a secret link and help", async () => {

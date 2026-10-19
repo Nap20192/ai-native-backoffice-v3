@@ -109,9 +109,10 @@ describe("NodeManagedSessionInputPreparer", () => {
     }]);
   });
 
-  it("resolves version-pinned appendable prompts into system prompt reminders", () => {
+  it("adds no system prompt reminder for appendable prompt ids the registry does not know", () => {
+    // The registry is empty since the Linear integration left (cleanup.md 5.1).
     const session = managedSession();
-    session.agent.openma = { appendablePrompts: ["linear-mcp", "missing"] };
+    session.agent.openma = { appendablePrompts: ["linear-mcp", "missing", "constructor"] };
     const buildReminders = (nodeManagedInputs as Record<string, unknown>)
       .buildNodeManagedAppendablePromptReminders as undefined | ((session: Session) => Array<{
         source: string;
@@ -120,12 +121,7 @@ describe("NodeManagedSessionInputPreparer", () => {
     expect(buildReminders).toBeTypeOf("function");
     if (buildReminders === undefined) return;
 
-    expect(buildReminders(session)).toEqual([
-      expect.objectContaining({
-        source: "appendable:linear-mcp",
-        text: expect.stringContaining("linear_say"),
-      }),
-    ]);
+    expect(buildReminders(session)).toEqual([]);
   });
 
   it("prepares local provider outputs without calling a FUSE mount when shared OSS publication is selected", async () => {

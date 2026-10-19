@@ -165,7 +165,7 @@
 | Дерево потоков над лентой | переезжает во вкладку «Потоки». Клик по потоку переключает ленту на этот поток |
 | Кнопка «Файлы» и `FilesPanel` | переезжает во вкладку «Ресурсы» |
 | Боковые панели агента, окружения, хранилищ (`ResourcePanel`) | заменяют ссылки и карточки при наведении |
-| Кнопка «Траектория», чипы итога и оценки траектории | пункт «Траектория» в меню «⋮», окно `TrajectoryViewerModal` остаётся |
+| Кнопка «Траектория», чипы итога и оценки траектории | пункт «Траектория» в меню «⋮», окно `TrajectoryViewerModal` остаётся. Позже волна трейса заменила пункт на «Скачать трейс» ([agent-trace.md](agent-trace.md)), а очистка 2026-10-19 удалила `Trajectory.tsx` |
 | Плашки Linear и Slack | строки «Источник» во вкладке «Сессия» |
 | Живой поток текста, мыслей и ввода инструмента, очередь реплик, «Агент работает…» | остаются в слоте `afterTurns` ленты |
 | Вложение картинок в поле ввода | остаётся, кнопка «+» внутри поля слева |
@@ -255,7 +255,7 @@ A может начать каркас инспектора, адрес и ши�
 Файлы:
 
 - `C/pages/SessionDetail.tsx`, `C/pages/SessionDetail.prompt.test.tsx`, новый `C/pages/SessionDetail.layout.test.tsx`;
-- `C/pages/session-detail/Panels.tsx`, `Panels.test.tsx`, `Trajectory.tsx`, `Trajectory.test.tsx`;
+- `C/pages/session-detail/Panels.tsx`, `Panels.test.tsx`. `Trajectory.tsx` и его тест очистка удалила 2026-10-19;
 - новые `S/SessionHeader.tsx`, `S/SessionHeader.test.tsx`;
 - новые `S/SessionDialogs.tsx` (бюджет, результат, горячие клавиши), `S/SessionDialogs.test.tsx`;
 - новые `S/useSessionCost.ts`, `S/useSessionCost.test.tsx`;

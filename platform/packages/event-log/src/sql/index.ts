@@ -1,19 +1,17 @@
 // SqlClient-backed adapter for EventLogRepo + StreamRepo. Works with any
-// SqlClient (D1 / better-sqlite3 / postgres.js) — schema is plain SQLite-
+// SqlClient (better-sqlite3 / postgres.js) — schema is plain SQLite-
 // flavoured DDL with portable types, with two narrow PG branches noted
 // below (json_insert vs jsonb concat, PRAGMA vs information_schema).
 //
-// This is the self-host cousin of cf-do/index.ts, which scopes everything to a
-// per-DO SQLite namespace. Here we share one SqlClient across all sessions
-// in a process, so every table carries an explicit `session_id` column and
-// every read/write is filtered by it. The repo instance is bound to one
-// session_id at construction.
+// One SqlClient serves all sessions in a process, so every table carries
+// an explicit `session_id` column and every read/write is filtered by it.
+// The repo instance is bound to one session_id at construction.
 
 import type { SessionEvent } from "@open-managed-agents/shared";
 import type { SqlClient } from "@open-managed-agents/sql-client";
 import type { EventLogRepo, StreamRepo, StreamRow } from "../ports";
 
-export type SqlDialect = "sqlite" | "postgres" | "mysql";
+export type SqlDialect = "sqlite" | "postgres";
 
 /**
  * Per-session event log backed by a shared SQL store.
@@ -33,13 +31,13 @@ export class SqlEventLog implements EventLogRepo {
   constructor(
     private sql: SqlClient,
     private sessionId: string,
-    /** Stamps event.id and event.processed_at; mirrors cf-do/index.ts. */
+    /** Stamps event.id and event.processed_at. */
     private stamp: (e: SessionEvent) => void,
   ) {}
 
   /**
-   * append() is documented as sync in the EventLogRepo port to match the
-   * CF DO adapter's free synchronous SQL. The SQL impl wraps async work
+   * append() is documented as sync in the EventLogRepo port, so the SQL
+   * impl wraps async work
    * inside a fire-and-forget Promise; callers that need durability before
    * returning should use {@link appendAsync} instead. Lost-write window:
    * < 1ms in practice (better-sqlite3 sync underneath an async wrap).
@@ -51,7 +49,7 @@ export class SqlEventLog implements EventLogRepo {
 
   async appendAsync(event: SessionEvent): Promise<void> {
     const ts = Date.now();
-    // Mirror cf-do/index.ts: user.* are pending until drained;
+    // user.* rows are pending (processed_at NULL) until drained;
     // everything else is "ingested" at write time. session_thread_id
     // defaults to primary; events from sub-agent threads carry their
     // own session_thread_id on the wire.
@@ -88,7 +86,7 @@ export class SqlEventLog implements EventLogRepo {
    *
    * In practice today (Phase B-resume PoC) all callers are async-friendly,
    * so we route sync `getEvents` to the cache and let async readers refresh
-   * explicitly. SessionDO's CF impl gets sync because DO storage is in-isolate.
+   * explicitly.
    */
   private eventsCache: SessionEvent[] = [];
 
@@ -122,9 +120,9 @@ export class SqlEventLog implements EventLogRepo {
       const ev = JSON.parse(row.data) as SessionEvent & Record<string, unknown>;
       ev.seq = row.seq;
       ev.ts = row.ts;
-      // Stash row-level pending lifecycle onto the event object — same
-      // contract as cf-do/index.ts so eventsToMessages can skip cancelled
-      // events without a separate query path.
+      // Stash row-level pending lifecycle onto the event object
+      // (processed_at_ms, cancelled_at_ms) so eventsToMessages can skip
+      // cancelled events without a separate query path.
       if (row.processed_at !== null) ev.processed_at_ms = row.processed_at;
       if (row.cancelled_at !== null) ev.cancelled_at_ms = row.cancelled_at;
       if (row.session_thread_id != null) ev.session_thread_id = row.session_thread_id;
@@ -171,9 +169,10 @@ export class SqlEventLog implements EventLogRepo {
 }
 
 /**
- * Per-session in-flight LLM stream state. Mirrors CfDoStreamRepo + the
- * recovery semantics in apps/agent/src/runtime/recovery.ts. Schema mirrors
- * the cf-do version with an added `session_id` column.
+ * Per-session in-flight LLM stream state, one row per message_id in
+ * `session_streams`, scoped by `session_id`. A row left in 'streaming'
+ * after a crash is the partial the recovery scan finalizes
+ * (packages/session-runtime/src/recovery.ts).
  */
 export class SqlStreamRepo implements StreamRepo {
   constructor(
@@ -188,11 +187,7 @@ export class SqlStreamRepo implements StreamRepo {
   async start(messageId: string, startedAt: number): Promise<void> {
     // ON CONFLICT … DO NOTHING is the portable upsert no-op; both
     // SQLite and PG accept it (replaces the prior INSERT OR IGNORE).
-    const statement = this.dialect === "mysql"
-      ? `INSERT IGNORE INTO session_streams
-           (session_id, message_id, status, chunks_json, started_at)
-         VALUES (?, ?, 'streaming', '[]', ?)`
-      : `INSERT INTO session_streams
+    const statement = `INSERT INTO session_streams
            (session_id, message_id, status, chunks_json, started_at)
          VALUES (?, ?, 'streaming', '[]', ?)
          ON CONFLICT (session_id, message_id) DO NOTHING`;
@@ -213,11 +208,7 @@ export class SqlStreamRepo implements StreamRepo {
         ? `UPDATE session_streams
              SET chunks_json = ((chunks_json::jsonb) || jsonb_build_array(?::text))::text
            WHERE session_id = ? AND message_id = ? AND status = 'streaming'`
-        : this.dialect === "mysql"
-          ? `UPDATE session_streams
-             SET chunks_json = JSON_ARRAY_APPEND(chunks_json, '$', ?)
-           WHERE session_id = ? AND message_id = ? AND status = 'streaming'`
-          : `UPDATE session_streams
+        : `UPDATE session_streams
              SET chunks_json = json_insert(chunks_json, '$[#]', ?)
            WHERE session_id = ? AND message_id = ? AND status = 'streaming'`;
     await this.sql
@@ -293,8 +284,8 @@ function toStreamRow(r: DbStream): StreamRow {
  *
  * Schema notes:
  *  - PK (session_id, seq) on events: per-session monotone, queried by seq.
- *  - PK (session_id, message_id) on streams: matches CF DO's per-DO PK
- *    semantics with an explicit session scope column added.
+ *  - PK (session_id, message_id) on streams: one in-flight row per
+ *    message within a session.
  *  - JSON1 functions are assumed available; better-sqlite3 bundles SQLite
  *    with JSON1 enabled, D1 also has JSON1, and Postgres has native JSONB
  *    so a future PG flavour will swap to that.
@@ -310,7 +301,7 @@ export async function ensureSchema(
       type TEXT NOT NULL,
       data TEXT NOT NULL,
       ts BIGINT NOT NULL,
-      -- Mirror of cf-do/index.ts pending lifecycle. processed_at is NULL
+      -- Pending lifecycle: processed_at is NULL
       -- for queued user.* events, set to wall-clock ms when the harness
       -- ingests them. cancelled_at is set by user.interrupt's flush
       -- UPDATE. session_thread_id defaults to 'sthr_primary'; sub-agent
@@ -342,8 +333,8 @@ export async function ensureSchema(
     CREATE INDEX IF NOT EXISTS idx_session_events_type
       ON session_events (session_id, type, seq DESC);
   `);
-  // Pending hot-path index. Both SQLite and PG support partial indexes
-  // with WHERE clauses. Mirrors cf-do/index.ts idx_events_pending.
+  // Pending hot-path index: user.* rows not yet processed or cancelled.
+  // Both SQLite and PG support partial indexes with WHERE clauses.
   await sql.exec(`
     CREATE INDEX IF NOT EXISTS idx_session_events_pending
       ON session_events (session_id, session_thread_id, seq)
@@ -373,12 +364,11 @@ async function readSessionEventColumns(
   dialect: SqlDialect,
 ): Promise<Set<string>> {
   const cols = new Set<string>();
-  if (dialect === "postgres" || dialect === "mysql") {
+  if (dialect === "postgres") {
     const r = await sql
       .prepare(
         `SELECT column_name AS name FROM information_schema.columns
-         WHERE table_name = 'session_events'
-           ${dialect === "mysql" ? "AND table_schema = DATABASE()" : ""}`,
+         WHERE table_name = 'session_events'`,
       )
       .all<{ name: string }>();
     for (const row of r.results ?? []) cols.add(row.name);

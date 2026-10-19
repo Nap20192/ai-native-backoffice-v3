@@ -7,8 +7,8 @@
 //   - Node source: chokidar fs watcher (this file) → in-memory or SQL
 //     queue → same handler
 //
-// SQL deployments use one durable queue contract across PostgreSQL, MySQL,
-// and SQLite. Process-local delivery remains an explicit opt-in.
+// SQL deployments use one durable queue contract across PostgreSQL and
+// SQLite. Process-local delivery remains an explicit opt-in.
 //
 // Loop avoidance + idempotency are inherited from the handler — same
 // (storeId, path, etag) dedupe.

@@ -28,8 +28,8 @@ import { useI18n } from "../i18n";
  * обрезает `truncate` у `<BreadcrumbPage>`, шапка не растёт.
  *
  * Маршруты без `crumb` пропускаются. Сегменты URL подписью не служат: для
- * родителей-пустышек (например, `/integrations`, который только держит
- * вложенные маршруты) они были бы шумом.
+ * родителей-пустышек, которые только держат вложенные маршруты, они были бы
+ * шумом.
  */
 type CrumbValue = string | { label: string; to?: string };
 type CrumbHandle = { crumb?: CrumbValue | ((m: UIMatch) => CrumbValue) };

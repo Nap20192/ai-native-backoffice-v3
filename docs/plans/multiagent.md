@@ -88,7 +88,7 @@ flowchart LR
 - Схема знает только `coordinator`, советник там запись списка (`API/contracts/agent-input-components.ts:168-188`). Ответ тоже строго по SDK (`API/contracts/agent-response-components.ts:248`).
 - SDK 0.120 и 0.129 из lock-файла знают только `coordinator` (`agents.d.ts:711`, `:727` в 0.120; `:724`, `:740` в 0.129). Правило `P/managed-agents-api/API_LAYER.md:3-5` велит держать провод `/v1` по SDK 0.120. Подъём SDK новый тип не даёт.
 - Проверки ростера: 1..20 записей (`MA/agents/application.ts:366-371`), советник (`:376-378`), `self` закрепляется своим id и версией (`:380-390`), агент с блоком даёт 400 (`:417-422`).
-- Снимок сессии всегда пишет `coordinator` (`MA/sessions/application.ts:170-173`). Кодек сводит ростер к `callable_agents` (`N/lib/node-managed-agent-codec.ts:230-258`). Делегирование включено при непустом ростере, до 6 детей сразу (`N/openai-subagents.ts:7-12`).
+- Снимок сессии всегда пишет `coordinator` (`MA/sessions/application.ts:170-173`). Кодек сводит ростер к `callable_agents` (`N/lib/node-managed-agent-codec.ts:230-258`). Делегирование включено при непустом ростере, до 6 детей сразу (`nodeManagedSubagentPolicy` в `N/lib/node-managed-subagents.ts`).
 - Агент хранится документом JSON (`P/agent-store-sql/src/index.ts:75-81`), миграция не нужна.
 - Консоль пишет `coordinator` (`C/pages/agents/agentFormCodec.ts:734`), форма «Вызываемые агенты» (`C/pages/agents/AgentFormDialog.tsx:1469`).
 
@@ -161,9 +161,9 @@ flowchart LR
 
 **Что есть у нас.**
 - `call_agent_<id>` блокирует ход (`A/harness/tools.ts:1468-1489`): `delegateToAgent` создаёт ребёнка и ждёт без срока (`N/lib/node-managed-session-runner.ts:599-604`). Инструмент есть только при ключе модели (`A/harness/tools.ts:1469`).
-- Неблокирующие инструменты уже есть для пути `/openai`: create, send, wait, interrupt, close, resume (`N/openai-subagents.ts:30-70`). Они работают на том же `ManagedNodeSubagents` и включаются только для сессий `/openai` (`N/modules/node-managed.ts:586-592`).
+- Неблокирующие инструменты create, send, wait, interrupt, close и resume были только у пути `/openai` и ушли вместе с ним ([cleanup.md](cleanup.md), 5.2). Их основа `ManagedNodeSubagents` осталась.
 - `agent.thread_message_sent` пишется в основной поток (`N/lib/node-managed-subagents.ts:248-251`), `agent.thread_message_received` в поток ребёнка (`:267-269`). Отчёт возвращается только строкой результата инструмента.
-- Лимит 6 одновременно (`N/openai-subagents.ts:11`), счётчик видит только работающих (`N/lib/node-managed-subagents.ts:113-117`), общего потолка нет.
+- Лимит 6 одновременно (`nodeManagedSubagentPolicy` в `N/lib/node-managed-subagents.ts`), счётчик видит только работающих (`N/lib/node-managed-subagents.ts:113-117`), общего потолка нет.
 - Раннер держит состояние по сессии (`N/lib/node-managed-session-runner.ts:259`), прерывание рвёт весь ход (`:422-424`). Консоль шлёт прерывание с потоком (`C/pages/SessionDetail.tsx:1025`). Воркер отменяет только исполнение этой полосы, а у ребёнка полосы нет. По разбору кода прерывание одного потока сейчас ничего не делает.
 
 **Дизайн.**
@@ -239,7 +239,7 @@ flowchart LR
 **Как в CMA.** Inline-агент не сохраняется. Его поток несёт `agent: {type:"inline", name, description, system}`. Флаг `subagents.inline_agents` включён по умолчанию. Ограничить MCP inline-агента нельзя, для этого inline выключают и перечисляют агентов.
 
 **Что есть у нас.**
-- Инструмент `general_subagent` принимает только `task` (`A/harness/tools.ts:1492-1526`). Его включает `_oma.enable_general_subagent` (`N/lib/node-managed-agent-codec.ts:301-303`), и он появляется только при непустом ростере (`N/openai-subagents.ts:11`).
+- Инструмент `general_subagent` принимает только `task` (`A/harness/tools.ts:1492-1526`). Его включает `_oma.enable_general_subagent` (`N/lib/node-managed-agent-codec.ts:301-303`), и он появляется только при непустом ростере (`nodeManagedSubagentPolicy` в `N/lib/node-managed-subagents.ts`).
 - С ростером вызов падает: `resolveSubagentSession` бросает ошибку для `general` (`N/modules/node-managed.ts:381-385`). Inline-логика уже написана в `defaultSession` (`N/lib/node-managed-subagents.ts:185-195`), но на Node до неё ход не доходит.
 - У типа потока нет вида inline (`P/managed-agents-domain/src/sessions/thread.ts:9-23`). Загрузка потока для повторного сообщения отвергает поток, у которого `agent.type` не `agent` (`N/lib/node-managed-subagents.ts:210-212`), так что второе сообщение inline-агенту сейчас упадёт. Проверка MCP на `always_ask` при создании сессии смотрит только на агентов ростера (`MA/sessions/application.ts:307-315`).
 
@@ -269,7 +269,7 @@ flowchart LR
 
 **Как в CMA.** Агент пишет программу под задачу и запускает run в том же ходе, без вызова API и без шага одобрения. Код программы клиент не видит. Run идёт фазами. В фазе программа запускает агентов параллельно, передаёт ответы дальше и повторяет шаг до проверки. Упавшего агента сервер обычно запускает ещё раз в новом потоке. Состояния run: running, idle (пауза, например на бюджете) и ended. События: `workflow_run.created` (`wrun_`, имя, описание, `phases[]` с `wrph_`), `status_running`, `status_idle`, `phase_started`, `phase_ended` с `phase_started_id`, `status_ended` с `result`, а также `workflow_run.error`. Итоги run: `completed`, `stopped` и `error` с `timeout_error`, `program_error`, `thread_limit_error` или `unknown_error`. Лимиты: 64 потока разом, 1000 агентов за run, 24 часа, 10 открытых run на сессию, имя до 64 знаков, описание до 256. Потоки run несут `workflow_run_id`, не входят в лимит 25, сервер архивирует их сам. Прервать или заархивировать их нельзя. `user.interrupt` run не останавливает. Архив сессии при открытом run может дать 400 `workflow_run_open`. Пока run открыт, оценка outcome не начинается. Бюджет ставит run на паузу. После конца run агент получает ход. Вложенных run нет.
 
-**Что есть у нас.** Ничего: `workflow_run` встречается только в разборе вебхуков GitHub (`P/github/src/webhook/parse.ts:47`, `:517-522`). Основа из прошлых шагов: полосы, потоки, inline-агенты, предел сессии.
+**Что есть у нас.** Ничего: `workflow_run` встречался только в разборе вебхуков GitHub (`P/github/src/webhook/parse.ts:47`, `:517-522`), а пакет `P/github` очистка удалила 2026-10-19 ([cleanup.md](cleanup.md), 5.1). Основа из прошлых шагов: полосы, потоки, inline-агенты, предел сессии.
 
 **Дизайн, наименьшая полезная версия.**
 - Где работает программа. Варианты: а) сервер исполняет план JSON, который агент передаёт инструменту; б) код агента работает в VM и зовёт сервер по `http://host.boxlite.internal:<порт>` с токеном run; в) код агента работает в изоляте JS на сервере. Совет: а), вопрос 18. Код модели не исполняется на хосте. Волна 1 уже даёт VM вход на хост для секретов (`OMA_EGRESS_URL`, [cma-wave-1.md](cma-wave-1.md), 3.5), а план JSON второго входа не добавляет. План закрывает главный случай бэк-офиса: разобрать много файлов и свести итог.
@@ -334,7 +334,7 @@ flowchart LR
 - Основной поток в списке потоков, как в CMA. Вебхуки потоков и предпросмотр `event_deltas` в потоках.
 - Заглушка `redacted` для совета.
 - Код программы workflow в VM или в изоляте, вложенные run, 64 потока разом и 1000 агентов.
-- Неблокирующие инструменты пути `/openai`: они уже есть и остаются как есть.
+- Неблокирующие инструменты пути `/openai`: путь удалён ([cleanup.md](cleanup.md), 5.2).
 - Правки outcomes из разбора 07, пункты 2-4.
 
 ## 6. Что исправлено после ревью

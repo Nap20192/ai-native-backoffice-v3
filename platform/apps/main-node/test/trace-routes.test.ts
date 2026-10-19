@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import type { SqlClient } from "@open-managed-agents/sql-client";
 import { decodeCursor } from "../src/lib/trace/cursor";
 import { traceIdFor, turnSpanIdFor } from "../src/lib/trace/ids";
 import { createTraceObserver } from "../src/lib/trace/observer";
@@ -32,24 +31,17 @@ function appFor(routes: Hono<never>) {
 }
 
 /** Confirmation session: turns 1..3 recorded live, turn 4 only in history. */
-async function confirmationSession(options: { dialect?: "sqlite" | "mysql"; now?: () => number } = {}) {
+async function confirmationSession(options: { now?: () => number } = {}) {
   const sql = await createHistoryDb();
   const fixture = loadTraceFixture<TraceMultiTurnFixture>("confirmation-frames.json");
   const scope = { workspaceId: WS, sessionId: fixture.scope.sessionId };
   await insertSession(sql, WS, scope.sessionId, { harness: "pi" });
   for (const turn of fixture.turns) await loadTurnInputsAsHistory(sql, WS, scope.sessionId, turn.executionId, turn.inputs);
-  if ((options.dialect ?? "sqlite") === "sqlite") {
-    const observer = createTraceObserver({ recorder: createTraceRecorder({ store: createTraceStore({ sql, dialect: "sqlite" }) }) });
-    for (const turn of fixture.turns.slice(0, 3)) await drive(observer, scope, turn.inputs);
-  }
+  const observer = createTraceObserver({ recorder: createTraceRecorder({ store: createTraceStore({ sql, dialect: "sqlite" }) }) });
+  for (const turn of fixture.turns.slice(0, 3)) await drive(observer, scope, turn.inputs);
   const now = options.now ?? (() => 1792300000000);
-  const routes = buildTraceRoutes({ sql, dialect: options.dialect ?? "sqlite", now });
+  const routes = buildTraceRoutes({ sql, dialect: "sqlite", now });
   return { sql, fixture, scope, app: appFor(routes as never), root: `/v1/oma/sessions/${scope.sessionId}/trace` };
-}
-
-async function tables(sql: SqlClient): Promise<string[]> {
-  const rows = await sql.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'trace_%' ORDER BY name").all<{ name: string }>();
-  return (rows.results ?? []).map((row) => row.name);
 }
 
 describe("GET /v1/oma/sessions/:id/trace", () => {
@@ -165,36 +157,6 @@ describe("GET /v1/oma/sessions/:id/trace", () => {
     expect(spans.length).toBeGreaterThan(10);
     expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set([traceIdFor(scope.sessionId)]));
     expect(spans.some((span) => span.name === "execute_tool bash")).toBe(true);
-  });
-
-  it("builds the trace from events in memory on MySQL, without trace tables", async () => {
-    const { app, root, sql, fixture } = await confirmationSession({ dialect: "mysql" });
-    const body = await (await app.request(root)).json() as { turns: Array<{ state: string }>; spans: Array<{ kind: string; precision: string; status: string }> };
-    expect(await tables(sql)).toEqual([]);
-    expect(body.turns.map((turn) => turn.state)).toEqual(["repaired", "repaired", "repaired", "repaired"]);
-    expect(body.spans.filter((span) => span.kind === "model_call").every((span) => span.precision === "by_events")).toBe(true);
-    const turn = await (await app.request(`${root}?turn_id=${fixture.turns[0]!.executionId}`)).json() as { spans: Array<{ kind: string; status: string }> };
-    expect(turn.spans.find((span) => span.kind === "tool_call")!.status).toBe("ok");
-    expect(turn.spans.find((span) => span.kind === "tool_wait")!.status).toBe("ok");
-  });
-
-  it("on MySQL rebuilds only new turns and keeps versions growing", async () => {
-    const { app, root, sql, scope, fixture } = await confirmationSession({ dialect: "mysql", now: () => 1792300000000 });
-    const first = await (await app.request(`${root}?turn_id=${fixture.turns[0]!.executionId}`)).json() as { spans: Array<{ span_id: string; version: number }> };
-    const t = 1792200500000;
-    const iso = (ms: number) => new Date(ms).toISOString();
-    await loadTurnInputsAsHistory(sql, WS, scope.sessionId, "sevt_fixtureConfirmUser005", [
-      { kind: "execution_started", atMs: t + 1, events: [{ type: "user.message", id: "sevt_fixtureConfirmUser005", content: [], processedAt: iso(t) }], fence: { executionId: "sevt_fixtureConfirmUser005", attemptId: "attempt_fixtureConfirm005", generation: 1 } },
-      { kind: "frame", frame: { type: "session.status_running", id: "sevt_fixtureConfirmRun005", processed_at: iso(t + 10) } },
-      { kind: "frame", frame: { type: "span.model_request_start", id: "sevt-fixture-confirm-m5", model: "fixture-model", processed_at: iso(t + 20) } },
-      { kind: "frame", frame: { type: "span.model_request_end", id: "sevt_fixtureConfirmEnd005", model_request_start_id: "sevt-fixture-confirm-m5", finish_reason: "stop", processed_at: iso(t + 300) } },
-      { kind: "frame", frame: { type: "session.status_idle", id: "sevt_fixtureConfirmIdle05", stop_reason: { type: "end_turn" }, processed_at: iso(t + 310) } },
-      { kind: "execution_settled", atMs: t + 320, outcome: "completed" },
-    ]);
-    const body = await (await app.request(root)).json() as { turns: Array<{ turn: { turn_id: string }; state: string }> };
-    expect(body.turns.map((turn) => turn.state)).toEqual(["repaired", "repaired", "repaired", "repaired", "repaired"]);
-    const again = await (await app.request(`${root}?turn_id=${fixture.turns[0]!.executionId}`)).json() as { spans: Array<{ span_id: string; version: number }> };
-    expect(again.spans.map((span) => [span.span_id, span.version])).toEqual(first.spans.map((span) => [span.span_id, span.version]));
   });
 
   it("answers for the recorded Pi turn with the contract fixture pi-turn-trace.json", async () => {

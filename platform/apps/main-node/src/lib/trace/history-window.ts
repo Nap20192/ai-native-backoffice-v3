@@ -16,8 +16,6 @@ export interface TraceHistoryWindow {
   read(scope: TraceScope, execution: TraceExecutionRow): Promise<TraceHistoryFrame[]>;
   /** Execution that produced or accepted an event. */
   executionOfEvent(scope: TraceScope, eventId: string): Promise<string | null>;
-  /** Newest event of the session (cache key of the in-memory MySQL trace). */
-  lastEventId(scope: TraceScope): Promise<string | null>;
 }
 
 export interface TraceSessionInfo {
@@ -114,14 +112,6 @@ export function createHistoryWindow(sql: SqlClient): TraceHistoryWindow {
       if (document === null) return null;
       // An accepted event starts its own execution: its id is the execution id.
       return executionIdOf(document) ?? (raw.type.startsWith("user.") ? raw.id : null);
-    },
-
-    async lastEventId(scope) {
-      const raw = await sql.prepare(
-        `SELECT id FROM managed_session_events WHERE workspace_id = ? AND session_id = ?
-         ORDER BY processed_at DESC, id DESC LIMIT 1`,
-      ).bind(scope.workspaceId, scope.sessionId).first<{ id: string }>();
-      return raw?.id ?? null;
     },
   };
 }

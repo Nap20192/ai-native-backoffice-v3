@@ -2,14 +2,14 @@
 // connection, plus the dialect-specific operations that need the driver:
 // running Drizzle migrations and opening the database Better Auth uses.
 //
-// Adapter packages (node-database-sqlite, -postgres, -mysql) implement it and
+// Adapter packages (node-database-sqlite, -postgres) implement it and
 // own the driver imports, so code written against this contract never loads
 // a database driver itself.
 
 import type { OmaDb } from "@open-managed-agents/db-schema";
 import type { SqlClient } from "@open-managed-agents/sql-client";
 
-export type NodeDialect = "postgres" | "mysql" | "sqlite";
+export type NodeDialect = "postgres" | "sqlite";
 
 export interface NodeDatabase {
   readonly dialect: NodeDialect;

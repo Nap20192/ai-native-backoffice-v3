@@ -2,7 +2,7 @@
 //
 //   - cf       wraps a CF Queue binding (producer) and dispatches batches
 //              from CF's `queue(batch, env)` entry (consumer).
-//   - sql      PostgreSQL/MySQL/SQLite table-backed leased delivery.
+//   - sql      PostgreSQL/SQLite table-backed leased delivery.
 //   - in-memory trivial JS Map; setImmediate dispatch for explicit
 //              process-local deployments and unit tests.
 //

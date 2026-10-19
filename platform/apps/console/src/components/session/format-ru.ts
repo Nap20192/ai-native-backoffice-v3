@@ -1,8 +1,6 @@
 /**
  * Русские форматы для страниц сессий: склонение, длительность, возраст,
- * размер файла, дата и время. Общий lib/format.ts отдаёт английские
- * подписи («12s ago», «1.23s»), а им пользуются и другие разделы, поэтому
- * здесь лежат свои версии для сессий.
+ * размер файла, дата и время.
  *
  * Пустое значение рисуется одним средним тире, как в портале DDC.
  */
@@ -23,16 +21,6 @@ export function plural(n: number, one: string, few: string, many: string): strin
 
 function decimal(value: number, digits: number): string {
   return value.toFixed(digits).replace(".", ",");
-}
-
-/** «<1 мс», «123 мс», «1,23 с», «2 мин 17 с». */
-export function formatDurationRu(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return EMPTY_VALUE;
-  if (ms < 1) return "<1 мс";
-  if (ms < 1000) return `${Math.round(ms)} мс`;
-  if (ms < 60_000) return `${decimal(ms / 1000, 2)} с`;
-  const total = Math.round(ms / 1000);
-  return `${Math.floor(total / 60)} мин ${total % 60} с`;
 }
 
 /** Возраст для чипов: «12 с назад», «5 мин назад», «3 ч назад», «4 дн. назад». */

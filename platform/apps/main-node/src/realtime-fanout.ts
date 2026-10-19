@@ -1,4 +1,4 @@
-export type SqlDialect = "sqlite" | "postgres" | "mysql";
+export type SqlDialect = "sqlite" | "postgres";
 
 /**
  * How live Session events reach SSE subscribers attached to other replicas.
@@ -7,7 +7,7 @@ export type SqlDialect = "sqlite" | "postgres" | "mysql";
  *  - `pg-notify`: Postgres LISTEN/NOTIFY for the legacy `/v1/oma` stream,
  *                plus SQL tailing for the official `/v1/sessions` stream.
  *  - `sql-poll`: SQL tailing for both streams. Works on any shared SQL
- *                database; the default for MySQL.
+ *                database; never chosen by `auto`.
  */
 export type RealtimeFanoutMode = "memory" | "pg-notify" | "sql-poll";
 
@@ -27,7 +27,7 @@ export function resolveRealtimeFanout(
   const raw = environment.OMA_REALTIME_FANOUT?.trim() || "auto";
   let mode: RealtimeFanoutMode;
   if (raw === "auto") {
-    mode = dialect === "postgres" ? "pg-notify" : dialect === "mysql" ? "sql-poll" : "memory";
+    mode = dialect === "postgres" ? "pg-notify" : "memory";
   } else if (raw === "memory" || raw === "pg-notify" || raw === "sql-poll") {
     mode = raw;
   } else {

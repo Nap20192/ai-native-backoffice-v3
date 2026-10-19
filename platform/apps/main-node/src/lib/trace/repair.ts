@@ -105,7 +105,7 @@ export function createTraceRepair(options: TraceRepairOptions): TraceRepair {
     const turnId = projector.turnId() ?? full.id;
     const writer = projector.attemptId() ?? "";
     if (!executionStopped(full, now())) {
-      // Forced build of a turn that still runs (MySQL in-memory trace): it stays open.
+      // Forced build of a turn that still runs: it stays open.
       const fenced = await applyResolving(scope, { turnId, attemptId: writer, ops }, visiting);
       return fenced ? "skipped" : "repaired";
     }

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { withReportedArtifactPublication } from "../src/openai-artifact-publication";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 import { SessionLimitError, type SessionEvent } from "@open-managed-agents/shared";
 import type {
@@ -353,16 +352,13 @@ describe("DefaultNodeManagedSessionRunner", () => {
         });
         lifecycle.push("synchronize");
       },
-      afterExecution: withReportedArtifactPublication(async input => {
+      // Runs after the terminal facts, still under the execution fence.
+      afterExecution: async (input) => {
         expect(input.executionFence.executionId).toBe("event_user_01");
+        expect(input.session.id).toBe(session.id);
         expect(lifecycle.at(-1)).toBe("idle");
         lifecycle.push("afterExecution");
-        throw new Error("Output copy failed after completion");
-      }, (error, input) => {
-        expect(error).toMatchObject({ message: "Output copy failed after completion" });
-        expect(input.session.id).toBe(session.id);
-        lifecycle.push("publicationReported");
-      }),
+      },
       buildHarness: () => ({
         run: async (context) => {
           lifecycle.push("run");
@@ -453,7 +449,7 @@ describe("DefaultNodeManagedSessionRunner", () => {
         processed_at: "2026-08-26T02:00:00.002Z",
       },
     ]);
-    expect(lifecycle).toEqual(["run", "dispose", "synchronize", "idle", "afterExecution", "publicationReported"]);
+    expect(lifecycle).toEqual(["run", "dispose", "synchronize", "idle", "afterExecution"]);
   });
 
   async function failingHarnessTurn(run: (context: { runtime: { broadcast(event: unknown): void } }) => Promise<void>) {

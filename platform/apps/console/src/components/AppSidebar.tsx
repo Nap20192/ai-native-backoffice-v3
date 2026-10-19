@@ -6,7 +6,6 @@ import { openCommandPalette } from "./CommandPalette";
 import { NAV_ICONS, type NavIcon } from "./nav-icons";
 import { TenantSwitcher } from "./TenantSwitcher";
 import { UserProfile } from "./UserProfile";
-import { consolePlugins } from "../plugins/registry";
 import { useI18n } from "../i18n";
 
 interface NavItem {
@@ -21,12 +20,9 @@ interface NavGroup {
   items: NavItem[];
 }
 
-/**
- * Группы бокового меню. Группы интеграций (Linear, GitHub, Slack, Feishu)
- * из меню убраны, их маршруты остаются в main.tsx.
- */
+/** Группы бокового меню. */
 function useNavGroups(): NavGroup[] {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   return [
     {
       label: t.nav.overview,
@@ -65,10 +61,7 @@ function useNavGroups(): NavGroup[] {
 export function AppSidebar() {
   const { pathname } = useLocation();
   const { t } = useI18n();
-  const navGroups = [
-    ...useNavGroups(),
-    ...consolePlugins.flatMap((plugin) => plugin.navGroups ?? []),
-  ];
+  const navGroups = useNavGroups();
 
   return (
     <aside

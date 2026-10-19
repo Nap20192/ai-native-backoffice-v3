@@ -110,7 +110,7 @@ export interface SessionRegistryDeps {
   /** SQL dialect under the SqlClient. Threaded through to SqlStreamRepo
    *  so its appendChunk picks the right JSON-array append (json_insert
    *  on sqlite, jsonb concat on postgres). */
-  sqlDialect?: "sqlite" | "postgres" | "mysql";
+  sqlDialect?: "sqlite" | "postgres";
 }
 
 interface SessionEntry {

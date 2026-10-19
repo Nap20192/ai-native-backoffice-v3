@@ -45,11 +45,6 @@ const KIND_TITLE: Record<TraceSpan["kind"], string> = {
   event: "Событие",
 };
 
-/** Подпись вида для заголовка деталей и подсказок. */
-export function kindTitle(kind: TraceSpan["kind"]): string {
-  return KIND_TITLE[kind];
-}
-
 const EVENT_LABEL: Record<string, string> = {
   error: "Ошибка",
   warning: "Предупреждение",

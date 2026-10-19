@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SandboxFactory } from "@open-managed-agents/sandbox";
+import { createSqliteAgentService } from "@open-managed-agents/agents-store";
 import type { BlobStore as MemoryBlobStore } from "@open-managed-agents/memory-store";
 import { InMemoryBlobStore } from "@open-managed-agents/blob-store/adapters/in-memory";
 
@@ -73,9 +74,13 @@ async function legacySession(cp: NodeControlPlane): Promise<string> {
     name: "cp-env",
     config: { type: "cloud", networking: { type: "unrestricted" } },
   }, beta)))).json() as { id: string };
-  const agent = await (await cp.fetch(new Request("http://cp/v1/oma/agents", json({
-    name: "cp", model: "claude-sonnet-4-6", system: "hi",
-  })))).json() as { id: string };
+  // The legacy session stack reads agents from the old `agents` table. Its
+  // HTTP route /v1/oma/agents is gone (docs/plans/cleanup.md, 4.6), so the
+  // agent is seeded through the store over the control plane's own database.
+  const agent = await createSqliteAgentService({ db: cp.components.database.drizzle }).create({
+    tenantId: "default",
+    input: { name: "cp", model: "claude-sonnet-4-6", system: "hi" },
+  });
   const session = await (await cp.fetch(new Request("http://cp/v1/oma/sessions", json({
     agent: agent.id, environment_id: env.id,
   })))).json() as { id: string };
@@ -88,12 +93,14 @@ describe("createNodeControlPlane", () => {
     const [a, b] = await Promise.all([controlPlane(), controlPlane()]);
 
     expect(a.backendDescription).not.toBe(b.backendDescription);
-    const createdOnA = await a.fetch(new Request("http://cp/v1/oma/agents", json({
+    const createdOnA = await a.fetch(new Request("http://cp/v1/agents", json({
       name: "cp-test", model: "claude-sonnet-4-6", system: "hi",
-    })));
+    }, beta)));
     expect(createdOnA.status).toBe(201);
 
-    const listOnB = await (await b.fetch(new Request("http://cp/v1/oma/agents"))).json() as { data: unknown[] };
+    const listOnA = await (await a.fetch(new Request("http://cp/v1/agents", { headers: beta }))).json() as { data: unknown[] };
+    expect(listOnA.data).toHaveLength(1);
+    const listOnB = await (await b.fetch(new Request("http://cp/v1/agents", { headers: beta }))).json() as { data: unknown[] };
     expect(listOnB.data).toHaveLength(0);
   });
 

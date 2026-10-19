@@ -28,7 +28,6 @@ vi.mock("../lib/useApiQuery", () => ({
   useApiQuery: () => ({
     data: {
       providers: ["email", "email-otp", "google", "github"],
-      turnstile_site_key: null,
     },
     error: null,
     isLoading: false,

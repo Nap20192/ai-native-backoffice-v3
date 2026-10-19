@@ -448,7 +448,7 @@ If a library or tool is missing, install it and continue: pip install <name>, ap
 - Ответ сохраняется в KV по сессии, поэтому он доступен и после остановки VM. Без живой VM маршрут отдаёт последний сохранённый.
 - Консоль зовёт маршрут, когда сессия встала в `idle` после хода с вызовом bash. Вызов идёт только по запросу, оценка 0,3-1 с.
 - pip и npm идут с версией (`beautifulsoup4==4.12.3`, `pkg@1.2.3`), apt без версии, потому что в Debian она меняется с обновлениями безопасности.
-- `GET /v1/oma/environments/:id/package-suggestions` собирает сохранённые ответы сессий окружения для блока «Предложено из сессий».
+- `GET /v1/oma/environments/:id/package-suggestions` собирает сохранённые ответы сессий окружения для блока «Предложено из сессий». Старый роутер `/v1/oma/environments` сняла очистка 2026-10-19 ([cleanup.md](cleanup.md), 4.6), поэтому новый маршрут подключается в `N/modules/node-http.ts` отдельно.
 
 ### 5.3 Запись и VM текущей сессии
 
@@ -648,7 +648,7 @@ metadata:
 
 **ES2. Песочница.** Правка `P/sandbox/src/environment-setup.ts`, `P/sandbox/src/index.ts`, `P/sandbox/src/ports.ts` (снимок и слой в спецификации окружения), `P/sandbox-adapter-litebox/src/litebox.ts`; новые `P/sandbox-adapter-litebox/src/prepare-box.ts` (сборочная VM, реализация `LayerPreparer`), `capacity.ts` и тесты. Приёмка на подставном BoxLite: 1.7 целиком; в «Ограниченном» `allowNet` без хоста vault-прокси и без хостов Ubuntu, Alpine, crates, rubygems и Go, в env нет `*_PROXY`; сборочная VM получает только источники и один том, без переменных сессии; рабочая VM получает слой только на чтение, установка идёт с пустым env; при заданных зеркалах в рабочей VM есть `PIP_INDEX_URL`, `UV_INDEX_URL`, `npm_config_registry` и файл источников apt без учётных данных; строка `git status; env` секрет git не получает, строка `git push` получает; сверх предела VM ход ждёт и через 60 с падает с `sandbox_capacity`; несовпадение дайджеста даёт `image_changed_on_disk` без VM; на `node:22-bookworm` без каталога прежние тесты зелёные.
 
-**ES7. Слои.** Новые `N/lib/environment-layers.ts`, `N/lib/environment-layers-routes.ts` (`POST /v1/oma/environments/:id/layer/refresh`), `NT/environment-layers.test.ts`. Приёмка на подставном `LayerPreparer`: два параллельных запроса одного ключа дают одну подготовку; слой больше предела даёт ошибку и не оставляет каталога; `.tmp` переименовывается только после успеха; lock в KV; повторная подготовка по lock даёт те же хеши; «Обновить пакеты» сбрасывает lock; уборка не трогает слои живых снимков.
+**ES7. Слои.** Новые `N/lib/environment-layers.ts`, `N/lib/environment-layers-routes.ts` (`POST /v1/oma/environments/:id/layer/refresh`, подключается отдельно, старого роутера `/v1/oma/environments` нет), `NT/environment-layers.test.ts`. Приёмка на подставном `LayerPreparer`: два параллельных запроса одного ключа дают одну подготовку; слой больше предела даёт ошибку и не оставляет каталога; `.tmp` переименовывается только после успеха; lock в KV; повторная подготовка по lock даёт те же хеши; «Обновить пакеты» сбрасывает lock; уборка не трогает слои живых снимков.
 
 **ES4. Навыки и установленное.** Правка `N/lib/node-skills-routes.ts`, `N/lib/skill-sources.ts`, `N/lib/builtin-skills.ts` (требования встроенных навыков при загрузке папки) и `platform/skills/builtin/*/SKILL.md` (`metadata` с `oma.requires.*`, 6.4), последние два после коммита потока document-skills; новые `N/lib/session-installed-packages-routes.ts`, `NT/session-installed-packages.test.ts`, `NT/skill-requirements-upload.test.ts`. Приёмка на подставной песочнице: 5.2 и 6.2 целиком, включая пределы, `rejected`, `source` и 400 на плохом требовании; API версии встроенного навыка отдаёт его `requirements`.
 
@@ -752,7 +752,7 @@ metadata:
 - cargo, go и gem в образах каталога;
 - закрепление локальных npm-пакетов проекта;
 - образ с Playwright и подключение `browser` на Node;
-- путь Cloudflare (`A/runtime/session-do.ts`).
+- путь Cloudflare. Его код очистка удалила 2026-10-19 ([cleanup.md](cleanup.md), 4.2).
 
 Не проверено: отсутствие pip в `node:22-bookworm`, перенос ENV образа в exec BoxLite, запуск BoxLite из каталога buildx, работа `libreoffice-*-nogui` на docx и pptx, размеры образов и время старта VM из 2,2 ГБ, приём `_meta.systemPrompt` в `claude-agent-acp`, чтение `/root/.claude/CLAUDE.md` в Claude Code внутри VM, `dpkg -i` слоя без сети на чистой VM, доступ VM с узким `allowNet` к адресу хоста с нестандартным портом, приём ключа Tavily в теле запроса, причина «fetch failed» в пробной консоли, выход из VM на хост.
 

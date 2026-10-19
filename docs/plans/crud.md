@@ -342,7 +342,7 @@ API-ключи, участников, хранилища секретов и у�
 |---|---|
 | C1. Клиент: `unarchive`, `delete` агента, зависимости, `If-Match` на архиве и удалении, ошибка 409 со списком | `C/lib/managed-api.ts`, `C/lib/harness-cards-api.ts`, `C/lib/model-cards-api.ts` (новый, сейчас запросы лежат прямо в `ModelCardsList.tsx`) |
 | C2. Окна архива и удаления со списком зависимостей | `C/components/DangerDialog.tsx` (новый), `C/components/DependencyList.tsx` (новый) |
-| C3. Страница деплойментов: список, карточка, создание, правка, состояние, прогоны | `C/pages/deployments/` (новая папка), `C/main.tsx`, `C/components/AppSidebar.tsx`, `C/components/nav-icons.ts`, `C/components/CommandPalette.tsx`, `C/components/EmptyState.tsx`, `C/i18n/ru.ts`, `C/i18n/en.ts`, `C/i18n/zh-CN.ts` |
+| C3. Страница деплойментов: список, карточка, создание, правка, состояние, прогоны | `C/pages/deployments/` (новая папка), `C/main.tsx`, `C/components/AppSidebar.tsx`, `C/components/nav-icons.ts`, `C/components/CommandPalette.tsx`, `C/components/EmptyState.tsx`, `C/i18n/ru.ts`, `C/i18n/types.ts` |
 | C4. Общий редактор ресурсов | `C/components/ResourceListEditor.tsx` (новый), `C/pages/SessionsList.tsx` |
 | C5. Агенты: удаление, из архива, восстановление версии, «Создать деплоймент» | `C/pages/AgentsList.tsx`, `C/pages/AgentDetail.tsx` |
 | C6. Сессии: окно архива, из архива, удаление ресурса | `C/pages/SessionsList.tsx`, `C/pages/SessionDetail.tsx`, `C/pages/session-detail/Panels.tsx` |

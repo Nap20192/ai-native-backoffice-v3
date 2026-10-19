@@ -21,11 +21,11 @@ afterAll(async () => {
 }, 60_000);
 
 describe("PostgreSQL MCP access-loss SQL", () => {
-  it("EXPLAIN shows indexed plans for effect, wakeup, scope, and execution paths", async () => {
+  it("EXPLAIN shows indexed plans for effect, wakeup, and execution paths", async () => {
     const raw = postgres(url, { max: 4 });
     const sql: SqlClient = new PostgresSqlClient(raw as never);
     try {
-      await installIntegrationSchema(sql);
+      await installExecutionSchema(sql);
       await ensureAccessLossSchema(sql);
       const workspaceId = `ws_${randomUUID()}`;
       const sessionId = `sess_${randomBytes(4).toString("hex")}`;
@@ -47,11 +47,6 @@ describe("PostgreSQL MCP access-loss SQL", () => {
             WHERE workspace_id = $1 AND session_id = $2 AND status = 'pending'`,
           [workspaceId, sessionId],
         ),
-        scopeClose: await explainPostgres(raw,
-          `UPDATE slack_thread_sessions SET status = $1, pending_scan_until = NULL
-            WHERE tenant_id = $2 AND session_id = $3 AND status IN ('active', 'pending')`,
-          ["completed", workspaceId, sessionId],
-        ),
         maxGeneration: await explainPostgres(raw,
           `SELECT MAX(generation) AS generation FROM managed_session_executions
             WHERE workspace_id = $1 AND session_id = $2`,
@@ -70,7 +65,6 @@ describe("PostgreSQL MCP access-loss SQL", () => {
       expect(plans.effectStatus.usesIndex).toBe(true);
       expect(plans.effectApply.usesIndex).toBe(true);
       expect(plans.wakeupCancel.usesIndex).toBe(true);
-      expect(plans.scopeClose.usesIndex).toBe(true);
       expect(plans.maxGeneration.usesIndex).toBe(true);
       expect(plans.interruptRunning.usesIndex).toBe(true);
     } finally {
@@ -79,21 +73,9 @@ describe("PostgreSQL MCP access-loss SQL", () => {
   }, 120_000);
 });
 
-async function installIntegrationSchema(sql: SqlClient) {
-  await sql.exec(`
-    CREATE TABLE IF NOT EXISTS slack_thread_sessions (
-      publication_id VARCHAR(128) NOT NULL,
-      tenant_id VARCHAR(128) NOT NULL,
-      scope_key VARCHAR(256) NOT NULL,
-      session_id VARCHAR(128) NOT NULL,
-      status VARCHAR(32) NOT NULL,
-      created_at BIGINT NOT NULL,
-      pending_scan_until BIGINT NULL,
-      PRIMARY KEY (publication_id, scope_key)
-    )`);
-  await sql.exec(`
-    CREATE INDEX IF NOT EXISTS idx_slack_thread_sessions_tenant_session
-      ON slack_thread_sessions (tenant_id, session_id)`);
+// The integration scope tables lost their code (docs/plans/cleanup.md, 5.1),
+// so the scope-close plan is no longer checked here.
+async function installExecutionSchema(sql: SqlClient) {
   await sql.exec(`
     CREATE TABLE IF NOT EXISTS managed_session_executions (
       workspace_id VARCHAR(128) NOT NULL,
@@ -135,11 +117,6 @@ async function seedExplainFixtures(
        (id, workspace_id, session_id, prompt, kind, status, created_at)
      VALUES (?, ?, ?, 'ping', 'once', 'pending', ?)`,
   ).bind(`w_${randomBytes(4).toString("hex")}`, workspaceId, sessionId, new Date().toISOString()).run();
-  await sql.prepare(
-    `INSERT INTO slack_thread_sessions
-       (publication_id, tenant_id, scope_key, session_id, status, created_at, pending_scan_until)
-     VALUES ('pub1', ?, 'scope1', ?, 'active', 1, 999)`,
-  ).bind(workspaceId, sessionId).run();
   await sql.prepare(
     `INSERT INTO managed_session_executions
        (workspace_id, session_id, lane_id, id, admitted_at_ms, events_json, events_fingerprint,

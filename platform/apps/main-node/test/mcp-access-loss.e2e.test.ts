@@ -1,7 +1,8 @@
-// Real Node control-plane process. A local MCP server revokes access
-// (not_in_channel). The session scope must close, the pending wakeup must
-// cancel, and a second identical result must stay idempotent. A generic 401
-// must leave the scope and wakeup alone.
+// Real Node control-plane process behind the legacy MCP proxy. The Slack,
+// Linear and GitHub access-loss catalogs left with the integrations
+// (docs/plans/cleanup.md, 5.1). A provider error such as not_in_channel or
+// token_revoked must now pass through unchanged: no access-loss effect, no
+// reauthorization request, and the pending wakeup stays pending.
 
 import { createServer } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -41,7 +42,7 @@ describe("Node managed MCP proxy access-loss cleanup", () => {
     dataDir = null;
   });
 
-  it("closes the scope, cancels the wakeup, and ignores a repeated trigger and a generic 401", async () => {
+  it("passes provider errors through and records no access-loss effect", async () => {
     dataDir = join(tmpdir(), `oma-access-loss-${randomBytes(4).toString("hex")}`);
     mkdirSync(dataDir, { recursive: true });
     const dbPath = join(dataDir, "oma.db");
@@ -53,19 +54,6 @@ describe("Node managed MCP proxy access-loss cleanup", () => {
     const mockPort = await pickPort();
     mock = createServer((request, response) => {
       const url = request.url ?? "/";
-      if (url.startsWith("/fence")) {
-        const db = new Database(dbPath);
-        db.pragma("busy_timeout = 5000");
-        const now = Date.now();
-        db.prepare(
-          `INSERT INTO managed_session_executions
-             (workspace_id, session_id, lane_id, id, admitted_at_ms, events_json,
-              events_fingerprint, state, generation, attempt_count, max_attempts,
-              deadline_at_ms, revision)
-           VALUES ('default', 'sess_fence', 'lane', 'exec_fence', ?, '[]', 'fp', 'running', 1, 1, 10, ?, 1)`,
-        ).run(now, now + 60_000);
-        db.close();
-      }
       const body = url.startsWith("/unauthorized")
         ? { error: "unauthorized" }
         : url.startsWith("/revoked")
@@ -79,42 +67,9 @@ describe("Node managed MCP proxy access-loss cleanup", () => {
 
     const db = new Database(dbPath);
     const now = Date.now();
-    seed(db, {
-      id: "sess_lost",
-      serverName: "slack",
-      url: `http://127.0.0.1:${mockPort}/lost`,
-      publicationId: "pub_lost",
-      scopeKey: "channel:C123",
-      wakeup: true,
-      now,
-    });
-    seed(db, {
-      id: "sess_401",
-      serverName: "slack",
-      url: `http://127.0.0.1:${mockPort}/unauthorized`,
-      publicationId: "pub_401",
-      scopeKey: "channel:C401",
-      wakeup: true,
-      now,
-    });
-    seed(db, {
-      id: "sess_revoked",
-      serverName: "slack",
-      url: `http://127.0.0.1:${mockPort}/revoked`,
-      publicationId: "pub_revoked",
-      scopeKey: "channel:Crev",
-      wakeup: true,
-      now,
-    });
-    seed(db, {
-      id: "sess_fence",
-      serverName: "slack",
-      url: `http://127.0.0.1:${mockPort}/fence`,
-      publicationId: "pub_fence",
-      scopeKey: "channel:Cfence",
-      wakeup: false,
-      now,
-    });
+    seed(db, { id: "sess_lost", url: `http://127.0.0.1:${mockPort}/lost`, now });
+    seed(db, { id: "sess_401", url: `http://127.0.0.1:${mockPort}/unauthorized`, now });
+    seed(db, { id: "sess_revoked", url: `http://127.0.0.1:${mockPort}/revoked`, now });
     db.close();
 
     handle = await startMainNode(dataDir);
@@ -124,57 +79,37 @@ describe("Node managed MCP proxy access-loss cleanup", () => {
       method: "tools/call",
       params: { name: "slack_post_message", arguments: { channel_id: "C123" } },
     });
-    const first = await post(handle.port, "sess_lost", lostBody);
-    const second = await post(handle.port, "sess_lost", lostBody);
+    const lost = await post(handle.port, "sess_lost", lostBody);
     const unauthorized = await post(handle.port, "sess_401", "{}");
     const revoked = await post(handle.port, "sess_revoked", "{}");
-    const fenced = await post(handle.port, "sess_fence", "{}");
 
-    expect(first.status).toBe(200);
-    expect(first.text).toContain("not_in_channel");
-    expect(second.status).toBe(200);
+    expect(lost.status).toBe(200);
+    expect(lost.text).toContain("not_in_channel");
     expect(unauthorized.status).toBe(401);
     expect(revoked.status).toBe(200);
-    expect(fenced.status).toBe(200);
+    expect(revoked.text).toContain("token_revoked");
 
     const report = readReport(dbPath);
-    console.log(JSON.stringify(report, null, 2));
-    expect(report.scopes).toEqual({
-      sess_lost: "completed",
-      sess_401: "active",
-      sess_revoked: "active",
-      sess_fence: "active",
-    });
     expect(report.wakeups).toEqual({
-      sess_lost: "cancelled",
+      sess_lost: "pending",
       sess_401: "pending",
       sess_revoked: "pending",
     });
-    expect(report.appliedEffects.filter((row) => row.session_id === "sess_lost")).toHaveLength(1);
-    expect(report.reauth).toEqual([{ session_id: "sess_revoked", code: "token_revoked", status: "pending" }]);
-    expect(report.effects.find((row) => row.session_id === "sess_fence")?.status).toBe("superseded");
-    expect(report.lostScan).toBeNull();
+    expect(report.effects).toEqual([]);
+    expect(report.reauth).toEqual([]);
   }, 120_000);
 });
 
 function seed(
   db: Database.Database,
-  input: {
-    id: string;
-    serverName: string;
-    url: string;
-    publicationId: string;
-    scopeKey: string;
-    wakeup: boolean;
-    now: number;
-  },
+  input: { id: string; url: string; now: number },
 ) {
   const snapshot = {
     name: "access-loss",
     model: "claude-sonnet-4-6",
     system: "test",
     mcp_servers: [{
-      name: input.serverName,
+      name: "slack",
       type: "url",
       url: input.url,
       authorization_token: "upstream-token",
@@ -183,37 +118,18 @@ function seed(
   db.prepare(
     `INSERT INTO sessions
        (id, tenant_id, agent_id, environment_id, title, status, agent_snapshot, metadata, created_at, updated_at)
-     VALUES (?, 'default', 'agent_test', 'env_test', '', 'idle', ?, ?, ?, ?)`,
-  ).run(
-    input.id,
-    JSON.stringify(snapshot),
-    JSON.stringify({ slack: { publicationId: input.publicationId, channelId: "C123" } }),
-    input.now,
-    input.now,
-  );
+     VALUES (?, 'default', 'agent_test', 'env_test', '', 'idle', ?, '{}', ?, ?)`,
+  ).run(input.id, JSON.stringify(snapshot), input.now, input.now);
   db.prepare(
-    `INSERT INTO slack_thread_sessions
-       (publication_id, tenant_id, scope_key, session_id, status, created_at, pending_scan_until, channel_name)
-     VALUES (?, 'default', ?, ?, 'active', ?, ?, 'general')`,
-  ).run(input.publicationId, input.scopeKey, input.id, input.now, input.now + 60_000);
-  if (input.wakeup) {
-    db.prepare(
-      `INSERT INTO session_wakeups
-         (id, workspace_id, session_id, prompt, kind, fire_at, status, created_at)
-       VALUES (?, 'default', ?, 'scan channel', 'one_shot', ?, 'pending', ?)`,
-    ).run(`wake_${input.id}`, input.id, new Date(input.now + 3_600_000).toISOString(), new Date(input.now).toISOString());
-  }
+    `INSERT INTO session_wakeups
+       (id, workspace_id, session_id, prompt, kind, fire_at, status, created_at)
+     VALUES (?, 'default', ?, 'scan channel', 'one_shot', ?, 'pending', ?)`,
+  ).run(`wake_${input.id}`, input.id, new Date(input.now + 3_600_000).toISOString(), new Date(input.now).toISOString());
 }
 
 function readReport(dbPath: string) {
   const db = new Database(dbPath, { readonly: true });
   db.pragma("busy_timeout = 5000");
-  const scopes = Object.fromEntries(
-    (db.prepare(`SELECT session_id, status FROM slack_thread_sessions`).all() as Array<{
-      session_id: string;
-      status: string;
-    }>).map((row) => [row.session_id, row.status]),
-  );
   const wakeups = Object.fromEntries(
     (db.prepare(`SELECT session_id, status FROM session_wakeups`).all() as Array<{
       session_id: string;
@@ -221,23 +137,13 @@ function readReport(dbPath: string) {
     }>).map((row) => [row.session_id, row.status]),
   );
   const effects = db.prepare(
-    `SELECT session_id, status, code, publication_id FROM mcp_access_loss_effects ORDER BY session_id`,
-  ).all() as Array<{ session_id: string; status: string; code: string; publication_id: string | null }>;
+    `SELECT session_id, status, code FROM mcp_access_loss_effects ORDER BY session_id`,
+  ).all() as Array<{ session_id: string; status: string; code: string }>;
   const reauth = db.prepare(
     `SELECT session_id, code, status FROM mcp_reauthorization_requests ORDER BY session_id`,
   ).all() as Array<{ session_id: string; code: string; status: string }>;
-  const lostScan = db.prepare(
-    `SELECT pending_scan_until AS until FROM slack_thread_sessions WHERE session_id = 'sess_lost'`,
-  ).get() as { until: number | null };
   db.close();
-  return {
-    scopes,
-    wakeups,
-    effects,
-    appliedEffects: effects.filter((row) => row.status === "applied"),
-    reauth,
-    lostScan: lostScan.until,
-  };
+  return { wakeups, effects, reauth };
 }
 
 async function post(port: number, sessionId: string, body: string) {

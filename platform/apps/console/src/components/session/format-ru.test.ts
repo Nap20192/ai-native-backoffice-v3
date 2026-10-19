@@ -7,7 +7,6 @@ import {
   formatClockRu,
   formatDateRu,
   formatDateTimeRu,
-  formatDurationRu,
   formatEventDateTimeRu,
   formatGapRu,
   formatMinimapTimeRu,
@@ -37,24 +36,6 @@ describe("plural", () => {
     expect(word(12)).toBe("вызовов");
     expect(word(14)).toBe("вызовов");
     expect(word(111)).toBe("вызовов");
-  });
-});
-
-describe("formatDurationRu", () => {
-  it("пишет миллисекунды, секунды и минуты по-русски", () => {
-    expect(formatDurationRu(0.4)).toBe("<1 мс");
-    expect(formatDurationRu(123)).toBe("123 мс");
-    expect(formatDurationRu(1230)).toBe("1,23 с");
-    expect(formatDurationRu(137_000)).toBe("2 мин 17 с");
-  });
-
-  it("не выдаёт «1 мин 60 с» при округлении вверх", () => {
-    expect(formatDurationRu(119_600)).toBe("2 мин 0 с");
-  });
-
-  it("для неверных значений даёт прочерк", () => {
-    expect(formatDurationRu(Number.NaN)).toBe(EMPTY_VALUE);
-    expect(formatDurationRu(-5)).toBe(EMPTY_VALUE);
   });
 });
 

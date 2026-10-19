@@ -11,8 +11,7 @@ import type { TraceScope } from "./types.js";
 /**
  * Wave 1 wiring of the agent trace in main-node (docs/plans/agent-trace.md,
  * TW1): the observer of the session driver, the sandbox phases of the runner
- * and the store behind both. MySQL has no trace tables (3.4), so it gets no
- * recorder; its trace route builds the trace from events instead.
+ * and the store behind both.
  */
 export interface NodeTraceWiring {
   observer: TraceObserver;
@@ -23,10 +22,9 @@ export interface NodeTraceWiring {
 
 export function createNodeTraceWiring(input: {
   sql: SqlClient;
-  dialect: "sqlite" | "postgres" | "mysql";
+  dialect: "sqlite" | "postgres";
   logger?: TraceRecorderLogger;
 }): NodeTraceWiring | null {
-  if (input.dialect === "mysql") return null;
   const store = createTraceStore({ sql: input.sql, dialect: input.dialect });
   const repair = createTraceRepair({
     store,

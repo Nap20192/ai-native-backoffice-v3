@@ -5,7 +5,8 @@ Harness (цикл одного хода), инструменты агента, �
 ## Связь с сервером
 
 - Сервер импортирует пакет как `@open-managed-agents/agent/...`. На Node ход ведёт `DefaultNodeManagedSessionRunner` в `apps/main-node/src/lib/node-managed-session-runner.ts`.
-- `src/runtime/session-do.ts` и `wrangler.jsonc` работают только на Cloudflare. Поведение нашего сервера меняется правкой в `apps/main-node`.
+- Сервер берёт из пакета только `src/harness/*`, `src/runtime/history.ts` и `src/runtime/appendable-prompts.ts`. Поведение нашего сервера меняется правкой в `apps/main-node`.
+- Воркер Cloudflare (`session-do.ts`, `wrangler.jsonc`, песочница Cloudflare) удалён 2026-10-19 вместе с пакетами, которые нужны были только ему. Список в `platform/ORIGIN.md`, план в `docs/plans/cleanup.md`, раздел 4.2.
 
 ## Harness
 

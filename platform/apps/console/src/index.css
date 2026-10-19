@@ -240,11 +240,6 @@ body,
     color: var(--fg-muted);
 }
 
-.session-composer .session-composer-footer {
-    min-height: var(--composer-control-height);
-    padding: 0;
-}
-
 .session-composer .session-composer-control {
     width: var(--composer-control-height);
     height: var(--composer-control-height);
@@ -360,19 +355,6 @@ body,
 .dark .hljs-addition {
   color: #aff5b4;
   background-color: #033a16;
-}
-
-/* BrandLoader dot pulse — wave from left to right via staggered
-   animation-delay on each child. Smoother than animate-pulse
-   (Tailwind's default opacity 0.5↔1) because the dots dim further
-   (0.25) and back, giving a clearer "moving" feel. */
-@keyframes brand-loader-dot {
-  0%, 100% { opacity: 0.25; transform: translateY(0); }
-  50%      { opacity: 1;    transform: translateY(-1px); }
-}
-.brand-loader-dot {
-  display: inline-block;
-  animation: brand-loader-dot 1200ms var(--ease-soft) infinite;
 }
 
 /* Radix Collapsible (Disclosure) panel slide. The library exposes

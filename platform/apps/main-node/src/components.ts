@@ -56,7 +56,7 @@ export { loadBuiltinSkills } from "./lib/builtin-skills.js";
 export interface NodeComponents {
   config: NodeConfig;
   database: NodeDatabase;
-  /** null: nothing that needs sealing (vault credentials, integrations, …) is available. */
+  /** null: nothing that needs sealing (vault credentials, model card keys, …) is available. */
   secrets: NodeSecrets | null;
   /** null: every request is the "default" tenant (AUTH_DISABLED). */
   auth: NodeAuth | null;
@@ -131,18 +131,11 @@ async function withBuiltinSkills(
 }
 
 /**
- * Standalone processes run sessions themselves, so the provider is resolved
- * and its module loaded at startup (a bad SANDBOX_PROVIDER fails fast).
- * Serverless processes hand sessions to an Environment Worker and may never
- * need a sandbox; resolution is deferred to first use, as before.
+ * The process runs sessions itself, so the provider is resolved and its
+ * module loaded at startup: a bad SANDBOX_PROVIDER fails fast.
  */
 async function loadSandboxFactory(config: NodeConfig): Promise<SandboxFactory> {
-  const load = async (): Promise<SandboxFactory> => {
-    const selection = resolveSandboxProviderForEnvironment(config.sandbox.environment);
-    const mod = (await import(selection.modulePath)) as { sandboxFactory: SandboxFactory };
-    return mod.sandboxFactory;
-  };
-  if (config.processMode === "standalone") return load();
-  let loaded: Promise<SandboxFactory> | undefined;
-  return (ctx, env) => (loaded ??= load()).then((factory) => factory(ctx, env));
+  const selection = resolveSandboxProviderForEnvironment(config.sandbox.environment);
+  const mod = (await import(selection.modulePath)) as { sandboxFactory: SandboxFactory };
+  return mod.sandboxFactory;
 }

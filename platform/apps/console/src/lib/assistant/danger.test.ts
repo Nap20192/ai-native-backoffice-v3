@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isReadTool, isWriteTool, maxOpClass, normalizeOpClass, normalizePreview } from "./api";
+import { isWriteTool, maxOpClass, normalizeOpClass, normalizePreview } from "./api";
 import { appliedLines, buildThread, parseApplied } from "./events";
 import { listPathsFor } from "./invalidate";
 import type { Event } from "../events";
@@ -15,7 +15,7 @@ describe("класс «опасное»", () => {
     expect(maxOpClass(["danger", "out_of_v1"])).toBe("out_of_v1");
   });
 
-  it("новые инструменты записи ждут кнопки, get_dependencies это чтение", () => {
+  it("новые инструменты записи ждут кнопки, get_dependencies нет", () => {
     for (const tool of [
       "archive_object",
       "unarchive_object",
@@ -29,7 +29,6 @@ describe("класс «опасное»", () => {
     ]) {
       expect(isWriteTool(`mcp__platform__${tool}`), tool).toBe(true);
     }
-    expect(isReadTool("get_dependencies")).toBe(true);
     expect(isWriteTool("get_dependencies")).toBe(false);
   });
 

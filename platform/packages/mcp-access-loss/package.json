@@ -10,9 +10,6 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@open-managed-agents/github": "workspace:*",
-    "@open-managed-agents/linear": "workspace:*",
-    "@open-managed-agents/slack": "workspace:*",
     "@open-managed-agents/sql-client": "workspace:*"
   },
   "devDependencies": {

@@ -324,10 +324,6 @@ export function setCollapsed(state: CollapseState, spanId: string, collapsed: bo
   return { base: state.base, overrides };
 }
 
-export function toggleCollapse(state: CollapseState, spanId: string, currentlyCollapsed: boolean): CollapseState {
-  return setCollapsed(state, spanId, !currentlyCollapsed);
-}
-
 /** Раскрывает всех предков узла, чтобы строка попала в список. */
 export function revealSpan(state: CollapseState, tree: TraceTree, spanId: string): CollapseState {
   const overrides = new Map(state.overrides);

@@ -90,15 +90,12 @@ export class NodeSharedSessionOutputs {
     return false;
   }
 
-  async ensureSchema(dialect?: "mysql" | "sqlite" | "postgres"): Promise<void> {
-    // Node's consolidated MySQL execution schema uses utf8mb4_unicode_ci;
-    // the database default can be 0900_ai_ci, which breaks cross-table joins.
-    const mysqlSuffix = dialect === "mysql" ? " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci" : "";
+  async ensureSchema(): Promise<void> {
     await this.deps.sql.exec(`CREATE TABLE IF NOT EXISTS managed_session_output_snapshots (
       workspace_id VARCHAR(191) NOT NULL, session_id VARCHAR(191) NOT NULL,
       candidate_id VARCHAR(191) NOT NULL, published_at_ms BIGINT NOT NULL,
       PRIMARY KEY (workspace_id, session_id)
-    )${mysqlSuffix}`);
+    )`);
     // Record paths *before* PUT. An interrupted upload still leaves a durable
     // inventory for the eventual sweep, rather than untraceable S3 objects.
     await this.deps.sql.exec(`CREATE TABLE IF NOT EXISTS managed_session_output_candidates (
@@ -106,9 +103,9 @@ export class NodeSharedSessionOutputs {
       candidate_id VARCHAR(191) NOT NULL, execution_id VARCHAR(191) NOT NULL,
       attempt_id VARCHAR(191) NOT NULL, owner_id VARCHAR(191) NOT NULL,
       generation BIGINT NOT NULL, status VARCHAR(16) NOT NULL,
-      file_paths_json ${dialect === "mysql" ? "MEDIUMTEXT" : "TEXT"} NOT NULL, updated_at_ms BIGINT NOT NULL,
+      file_paths_json TEXT NOT NULL, updated_at_ms BIGINT NOT NULL,
       PRIMARY KEY (workspace_id, session_id, candidate_id)
-    )${mysqlSuffix}`);
+    )`);
   }
 
   private async pointer(workspaceId: string, sessionId: string): Promise<string | null> {

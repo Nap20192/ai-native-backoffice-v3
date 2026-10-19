@@ -122,10 +122,6 @@ export async function loadBranding(fetchImpl: typeof fetch = fetch): Promise<Bra
   }
 }
 
-export function getBranding(): Branding {
-  return current;
-}
-
 export function useBranding(): Branding {
   return useSyncExternalStore(
     (l) => {

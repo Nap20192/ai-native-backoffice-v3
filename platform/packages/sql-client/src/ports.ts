@@ -17,8 +17,8 @@
 // on Node + sqlite without further edits.
 //
 // Adapters: see ./adapters/cf-d1.ts (CF passthrough),
-// ./adapters/better-sqlite3.ts, ./adapters/postgres.ts, and
-// ./adapters/mysql2.ts (Node adapters lazy-import their drivers).
+// ./adapters/better-sqlite3.ts and ./adapters/postgres.ts (Node adapters
+// lazy-import their drivers).
 
 /**
  * Per-statement metadata returned by mutation execution. Mirrors D1Result.meta.

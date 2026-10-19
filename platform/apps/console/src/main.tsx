@@ -35,28 +35,6 @@ import { WorkspaceMembers, JoinWorkspace } from "./pages/WorkspaceMembers";
 import { ApiKeysList } from "./pages/ApiKeysList";
 import { EvalRunsList } from "./pages/EvalRunsList";
 import { EvalRunDetail } from "./pages/EvalRunDetail";
-import {
-  IntegrationsLinearList,
-  IntegrationsLinearWorkspace,
-  IntegrationsLinearPublishPage,
-  IntegrationsLinearPatInstallPage,
-} from "./pages/IntegrationsLinear";
-import {
-  IntegrationsGitHubList,
-  IntegrationsGitHubWorkspace,
-  IntegrationsGitHubBindPage,
-} from "./pages/IntegrationsGitHub";
-import {
-  IntegrationsSlackList,
-  IntegrationsSlackWorkspace,
-  IntegrationsSlackPublishPage,
-} from "./pages/IntegrationsSlack";
-import {
-  IntegrationsFeishuList,
-  IntegrationsFeishuWorkspace,
-  IntegrationsFeishuPublishPage,
-} from "./pages/IntegrationsFeishu";
-import { consolePlugins } from "./plugins/registry";
 
 /**
  * Router config. Migrated from declarative `<BrowserRouter><Routes>` to
@@ -75,8 +53,6 @@ import { consolePlugins } from "./plugins/registry";
  * fixed labels pass a string; for dynamic labels (resource name from
  * the loader) pass a function that reads the match.
  */
-
-const INTEGRATIONS_ENABLED = import.meta.env.VITE_ENABLE_INTEGRATIONS === "1";
 
 const protectedRoutes: RouteObject[] = [
   { index: true, element: <Dashboard />, handle: { crumb: "Сводка" } },
@@ -241,97 +217,6 @@ const protectedRoutes: RouteObject[] = [
   { path: "model-cards", element: <ModelCardsList />, handle: { crumb: "Карточки моделей" } },
   { path: "members", element: <WorkspaceMembers />, handle: { crumb: "Участники" } },
   { path: "api-keys", element: <ApiKeysList />, handle: { crumb: "API-ключи" } },
-  // Интеграции (Linear, GitHub, Slack, Feishu) убраны из меню и со страниц.
-  // Код страниц остаётся, маршруты открываются только флагом сборки
-  // VITE_ENABLE_INTEGRATIONS=1, иначе адрес /integrations/* уходит на /agents.
-  ...(INTEGRATIONS_ENABLED
-    ? [
-      {
-        path: "integrations",
-        handle: { crumb: "Интеграции" },
-        children: [
-          {
-            path: "linear",
-            handle: { crumb: "Linear" },
-            children: [
-              { index: true, element: <IntegrationsLinearList /> },
-              {
-                path: "publish",
-                element: <IntegrationsLinearPublishPage />,
-                handle: { crumb: "Публикация" },
-              },
-              {
-                path: "install-pat",
-                element: <IntegrationsLinearPatInstallPage />,
-                handle: { crumb: "Установка по PAT" },
-              },
-              {
-                path: "installations/:id",
-                element: <IntegrationsLinearWorkspace />,
-                handle: { crumb: "Рабочее пространство" },
-              },
-            ],
-          },
-          {
-            path: "github",
-            handle: { crumb: "GitHub" },
-            children: [
-              { index: true, element: <IntegrationsGitHubList /> },
-              {
-                path: "bind",
-                element: <IntegrationsGitHubBindPage />,
-                handle: { crumb: "Привязка" },
-              },
-              {
-                path: "installations/:id",
-                element: <IntegrationsGitHubWorkspace />,
-                handle: { crumb: "Рабочее пространство" },
-              },
-            ],
-          },
-          {
-            path: "slack",
-            handle: { crumb: "Slack" },
-            children: [
-              { index: true, element: <IntegrationsSlackList /> },
-              {
-                path: "publish",
-                element: <IntegrationsSlackPublishPage />,
-                handle: { crumb: "Публикация" },
-              },
-              {
-                path: "installations/:id",
-                element: <IntegrationsSlackWorkspace />,
-                handle: { crumb: "Рабочее пространство" },
-              },
-            ],
-          },
-          {
-            path: "feishu",
-            handle: { crumb: "Feishu" },
-            children: [
-              { index: true, element: <IntegrationsFeishuList /> },
-              {
-                path: "publish",
-                element: <IntegrationsFeishuPublishPage />,
-                handle: { crumb: "Публикация" },
-              },
-              {
-                path: "installations/:id",
-                element: <IntegrationsFeishuWorkspace />,
-                handle: { crumb: "Рабочее пространство" },
-              },
-            ],
-          },
-        ],
-      },
-      ]
-    : []),
-  // Plugin-contributed routes (hosted-only extensions). Default empty in
-  // OSS - hosted deploy overlays plugins/registry.ts to inject billing
-  // / etc. PluginRoute keeps the same `{ path, element }` shape that
-  // RouteObject expects.
-  ...consolePlugins.flatMap((p) => p.routes ?? []),
   { path: "*", element: <Navigate to="/agents" replace /> },
 ];
 

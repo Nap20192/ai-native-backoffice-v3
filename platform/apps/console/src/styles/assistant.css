@@ -54,10 +54,6 @@
   white-space: nowrap;
 }
 
-.assistant-spark {
-  color: var(--assistant-accent);
-}
-
 .assistant-diff-line {
   font-variant-ligatures: none;
 }

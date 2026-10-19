@@ -30,17 +30,16 @@ export class InMemoryEventLog implements EventLogRepo {
   constructor(private stamp: (e: SessionEvent) => void) {}
 
   /**
-   * Append a SessionEvent to the in-memory log. Mirrors the cf-do
-   * adapter: this is a primitive "write a row" operation. Queue-input
-   * events (user.message / user.tool_confirmation /
-   * user.custom_tool_result) are NOT auto-routed to a queue here —
-   * sub-agent and test code that uses InMemoryHistory needs the user
-   * message to be visible immediately to `getEvents()`/`getMessages()`,
-   * since sub-agents run synchronously without a drain step.
+   * Append a SessionEvent to the in-memory log. This is a primitive
+   * "write a row" operation, stamped as processed at write time.
+   * Queue-input events (user.message / user.tool_confirmation /
+   * user.custom_tool_result) are NOT auto-routed to a queue here: test
+   * code that reads them back needs the user message to be visible
+   * immediately to `getEvents()`, without a drain step.
    *
-   * SessionDO routes its primary-thread queue-input events through
-   * `InMemoryPendingQueue.enqueue` (or `CfDoPendingQueue.enqueue`)
-   * separately. The two paths are now independent.
+   * A caller that wants the pending lifecycle enqueues queue-input events
+   * through `InMemoryPendingQueue.enqueue` separately. The two paths are
+   * independent.
    */
   append(event: SessionEvent): void {
     this.stamp(event);
@@ -92,7 +91,7 @@ export class InMemoryEventLog implements EventLogRepo {
 
 /**
  * In-memory pending queue, parallel to (not embedded in) InMemoryEventLog.
- * Mirrors CfDoPendingQueue's contract.
+ * Implements the PendingQueueRepo contract from ports.ts.
  *
  * Self-contained: holds its own rows array + counter. The queue is
  * structurally separate from the canonical event log — same as the

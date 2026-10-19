@@ -1,7 +1,7 @@
 {
   "_provenance": {
     "source": "synthetic",
-    "note": "No subagent run is recorded in the preview database. Frames follow ManagedNodeSubagents (node-managed-subagents.ts): thread_created with parent_tool_use_id from create_subagent (openai-subagents.ts), thread_message_sent on the parent thread, child status frames renamed to session.thread_status_*, and session.error exhausted plus thread_status_idle retries_exhausted for a failed child. Turn 1 runs two children in parallel and child B fails. Turn 2 sends to child A again and closes it. Turn 3 resumes child A with a message."
+    "note": "No subagent run is recorded in the preview database. Frames follow ManagedNodeSubagents (node-managed-subagents.ts): thread_created with parent_tool_use_id from create_subagent (a tool of the removed /openai surface, docs/plans/cleanup.md 5.2), thread_message_sent on the parent thread, child status frames renamed to session.thread_status_*, and session.error exhausted plus thread_status_idle retries_exhausted for a failed child. Turn 1 runs two children in parallel and child B fails. Turn 2 sends to child A again and closes it. Turn 3 resumes child A with a message."
   },
   "scope": {
     "workspaceId": "ws_fixture",

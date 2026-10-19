@@ -17,27 +17,14 @@
 
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { OpenAIAgentsProtocolError } from "@open-managed-agents/openai-agents-api";
-import { createArtifactsHandler, createManagedSessionMapping, createResourcesHandler, createSessionsHandler } from "@open-managed-agents/openai-agents-compat";
-
-import { buildNodeOpenAIAgentsRoutes } from "../openai-agents.js";
-import { createNodeOpenAIAgentsRuntime } from "../openai-managed-runtime.js";
 
 import { requestMetrics, tracerMiddleware } from "@open-managed-agents/observability";
 
-import {
-  toFileRecord,
-  decodeOutputId,
-  isSafeOutputFilename,
-  unifiedPageErrorMessage,
-  unifiedPageHttpBody,
-} from "@open-managed-agents/files-store";
-
 import { listAuthProviders } from "@open-managed-agents/shared";
 
-import { buildAgentRoutes as buildLegacyAgentRoutes, buildModelCardRoutes, buildEnvironmentRoutes as buildLegacyEnvironmentRoutes, buildSessionRoutes, buildMemoryRoutes as buildLegacyMemoryRoutes, buildDreamRoutes, buildTenantRoutes, buildMeRoutes, buildApiKeyRoutes, buildEvalRoutes, buildIntegrationsRoutes, buildIntegrationsGatewayRoutes, type InstallProxyForwarder, sha256Hex } from "@open-managed-agents/http-routes";
+import { buildModelCardRoutes, buildSessionRoutes, buildTenantRoutes, buildMeRoutes, buildApiKeyRoutes, buildEvalRoutes, sha256Hex } from "@open-managed-agents/http-routes";
 import { buildAgentRoutes as buildManagedAgentRoutes, buildManagedSessionsApi } from "@open-managed-agents/managed-agents-api";
-import { SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService } from "@open-managed-agents/managed-agents-application";
+import { SessionRuntimeProjectionApplicationService } from "@open-managed-agents/managed-agents-application";
 
 import { managedAgentsPortTokens } from "@open-managed-agents/app/managed-agents";
 
@@ -45,12 +32,8 @@ import { ingestEnvironmentWorkRuntimeEvents, authenticateEnvironmentWorkSessionB
 import { isCurrentEnvironmentWorkClaim } from "@open-managed-agents/environment-work-store";
 
 import { buildOmaModelsHttpRoutes } from "@open-managed-agents/managed-agents-adapters-http";
-import { buildNodeRepos, SqlFeishuInstallationRepo, SqlFeishuPublicationRepo, SqlSlackInstallationRepo, SqlSlackPublicationRepo, SqlSlackAppRepo, CryptoIdGenerator, WorkerHttpClient, type NodeReposEnv } from "@open-managed-agents/integrations-adapters-node";
-import { NodeInstallBridge, buildNodeProvidersForRequest } from "../lib/node-install-bridge.js";
 import { NodeSessionRouter } from "../lib/node-session-router.js";
-import { configureFeishuAgentTools, sqlSessionMetadataReader } from "../lib/feishu-agent-tools.js";
 import { nodeOutputsAdapter } from "../lib/node-outputs-adapter.js";
-import { createFsSessionOutputSource } from "../lib/fs-session-output-source.js";
 
 import { createAuthMiddleware as buildAuthMw, type ApiKeyResolution } from "@open-managed-agents/auth";
 import { ensureTenantSqlite } from "@open-managed-agents/auth-config";
@@ -91,7 +74,6 @@ import type { NodeControlPlaneApp } from "./node-assembly.js";
 export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposables): Promise<NodeControlPlaneApp> {
   const {
     config,
-    ownsLongLivedProcesses,
     logger,
     metrics,
     tracer,
@@ -99,21 +81,13 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     dialect,
     drizzleDb,
     backendDescription,
-    platformRootSecret,
-    secrets,
-    openAIAgentsSecrets,
     authDisabled,
     auth,
     agentsService,
-    vaultService,
-    credentialService,
-    sessionsService,
-    filesService,
     evalsService,
     environmentsService,
     modelCardsService,
     memoryBlobDescription,
-    memoryService,
     outputsRoot,
     sessionOutputs,
     filesBlob,
@@ -123,8 +97,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     realtimeDescription,
     sessionRegistry,
     resolveNodeMcpProxyTarget,
-    managedRuntimeRunner,
-    managedRuntimeReaders,
     managedSessionRuntimeStream,
     nodeSessionLifecycleHooks,
     managedSessionsComposition,
@@ -152,7 +124,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     apiKeyStorage,
     platformMcp,
   } = runtime;
-  let feishuRunner: { stop: () => Promise<void> } | null = null;
   // ─── HTTP ───────────────────────────────────────────────────────────────
 
   const app = new Hono<{
@@ -219,7 +190,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       // Deployment-configured OpenID Connect providers: [{ id, name }].
       oidc: authDisabled ? [] : signInMethods?.oidc ?? [],
       email_password: !authDisabled && (signInMethods?.emailPassword ?? true),
-      turnstile_site_key: null,
     }),
   );
 
@@ -382,9 +352,9 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     },
   }));
 
-  // Mount route bundles. Same paths CF uses; behavior preserved. Once a tenant
-  // has configured model cards, agent model handles must resolve to an active
-  // card; an empty card set keeps the legacy ANTHROPIC_API_KEY fallback usable.
+  // Mount route bundles. The legacy duplicates /v1/oma/agents, environments,
+  // memory_stores, files and dreams were removed (docs/plans/cleanup.md, 4.6);
+  // the legacy session stack under /v1/oma/sessions stays.
   v1.route("/agents", buildManagedAgentRoutes((context) =>
     managedPlatform
       .app({
@@ -392,22 +362,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
       })
       .port(managedAgentsPortTokens.agents),
   ));
-  v1.route("/oma/agents", buildLegacyAgentRoutes({
-    services,
-    validateModel: async (tenantId, model) => {
-      const cards = await modelCardsService.list({ tenantId });
-      const active = cards.filter((card) => card.archived_at === null);
-      if (active.length === 0) return { valid: true };
-      const modelId = typeof model === "string" ? model : model.id;
-      if (!active.some((card) => card.model_id === modelId)) {
-        return {
-          valid: false,
-          error: `No model card with model_id "${modelId}". Create a card with that handle, or set agent.model to an existing card's model_id.`,
-        };
-      }
-      return { valid: true };
-    },
-  }));
   const sessionRouter = new NodeSessionRouter({
     sql,
     hub,
@@ -472,21 +426,12 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   v1.route("/memory_stores", managedMemoriesRoutes);
   v1.route("/memory_stores", managedMemoryVersionsRoutes);
   v1.route("/models", managedModelsRoutes);
-  v1.route("/oma/memory_stores", buildLegacyMemoryRoutes({ services }));
   v1.route("/skills", managedSkillsRoutes);
   v1.route("/skills", managedSkillVersionsRoutes);
   v1.route("/deployments", managedDeploymentsRoutes);
   v1.route("/deployment_runs", managedDeploymentRunsRoutes);
   v1.route("/environments", managedEnvironmentWorkRoutes);
   v1.route("/dreams", managedDreamsRoutes);
-  v1.route("/oma/dreams", buildDreamRoutes({
-    services,
-    curatorEnv: {
-      DREAM_CURATOR_MODE: config.dreamCurator === "dedup" ? "dedup" : undefined,
-      ANTHROPIC_API_KEY: config.model.apiKey,
-      ANTHROPIC_BASE_URL: config.model.baseUrl,
-    },
-  }));
   v1.route("/tunnels", managedTunnelsRoutes);
   v1.route("/tunnels", managedTunnelCertificateRoutes);
   v1.route("/oma/me", buildMeRoutes({
@@ -637,10 +582,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
     });
   });
   v1.route("/environments", managedEnvironmentsRoutes);
-  v1.route("/oma/environments", buildLegacyEnvironmentRoutes({
-    environments: environmentsService,
-    sessions: sessionsService,
-  }));
   v1.route("/files", managedFilesRoutes);
   v1.route("/oma/model_cards", buildModelCardRoutes({
     modelCards: modelCardsService,
@@ -649,343 +590,8 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   v1.route("/oma/models", buildOmaModelsHttpRoutes({
     fetch: (input, init) => fetch(input, init),
   }));
-  v1.get("/oma/integrations/github/credentials", (c) => c.json({ data: [] }));
-  v1.get("/oma/integrations/linear/credentials", (c) => c.json({ data: [] }));
-  v1.get("/oma/integrations/slack/credentials", (c) => c.json({ data: [] }));
-
-  // Real integration CRUD + lookup (linear/github/slack publications,
-  // installations, dispatch rules). Active only when PLATFORM_ROOT_SECRET is
-  // set — otherwise the routes 503 with a remediation message. Install-proxy
-  // endpoints (start-a1 / credentials / handoff-link / personal-token) return
-  // 503 because the OAuth/install gateway is not yet ported to Node (P4
-  // follow-up); the read endpoints work standalone.
-  // Real integration CRUD + lookup (linear/github/slack publications,
-  // installations, dispatch rules). Active only when PLATFORM_ROOT_SECRET is
-  // set — otherwise the routes 503 with a remediation message. The
-  // install-proxy endpoints (start-a1 / credentials / handoff-link /
-  // personal-token) call into the in-process InstallBridge, mirroring the
-  // CF /linear/publications/* etc. wire shapes verbatim.
-  const integrationsInternalToken = config.integrationsInternalToken ?? null;
-  const gatewayOrigin = config.http.gatewayOrigin;
-  let installBridge: NodeInstallBridge | null = null;
-  if (platformRootSecret) {
-    installBridge = new NodeInstallBridge({
-      sql,
-      db: drizzleDb,
-      platformRootSecret,
-      gatewayOrigin: gatewayOrigin.replace(/\/+$/, ""),
-      vaults: vaultService,
-      credentials: credentialService,
-      sessions: sessionsService,
-      agents: agentsService,
-      resolveTenantId: async (userId) => {
-        const row = await sql
-          .prepare(
-            `SELECT tenant_id FROM membership WHERE user_id = ? ORDER BY created_at ASC, tenant_id ASC LIMIT 1`,
-          )
-          .bind(userId)
-          .first<{ tenant_id: string }>();
-        return row?.tenant_id ?? null;
-      },
-      appendUserEvent: async (sessionId, _tenantId, _agentId, event) => {
-        // Webhook → session-resume drives the same NodeSessionRouter the
-        // public POST /v1/sessions/:id/events route uses, so the harness
-        // wakes up via the existing event-driven runtime.
-        await sessionRouter.appendEvent(sessionId, event);
-      },
-    });
-  }
-
-  // Feishu WebSocket long-connection runner — the production ingest path for
-  // Feishu and the driver of the `credentials_filled / awaiting_install → live`
-  // status flip. The bot dials OUT, so (unlike the legacy HTTP webhook) no
-  // public URL is needed. Opt-in (`FEISHU_WS_RUNNER=1`) until it has been
-  // exercised against real Feishu app credentials — otherwise a stale
-  // publication with fake creds would dial out and backoff-loop on every boot.
-  if (
-    ownsLongLivedProcesses
-    && platformRootSecret
-    && installBridge
-    && config.feishuWsRunner
-  ) {
-    try {
-      const { startFeishuWsRunner } = await import("../lib/ws-feishu-runner.js");
-      const feishuContainer = installBridge.buildContainers().feishu;
-      const feishuProvider = buildNodeProvidersForRequest(installBridge, gatewayOrigin).feishu;
-      // HTTP adapter for the automatic-egress send path (FeishuApiClient). One
-      // instance serves all Feishu Apps; the client mints/caches its own token.
-      const feishuHttp = new WorkerHttpClient();
-      // Wire the live Feishu agent tools (send/read) into the harness tool map
-      // for Feishu-backed sessions. Same publication repo + HTTP adapter as the
-      // runner — the WS runner is the only ingest path that produces Feishu
-      // sessions, so this is the only place that needs configuring.
-      configureFeishuAgentTools({
-        reader: sqlSessionMetadataReader(sql),
-        pubs: feishuContainer.feishuPublications,
-        http: feishuHttp,
-      });
-      feishuRunner = await startFeishuWsRunner({
-        sql,
-        pubs: feishuContainer.feishuPublications,
-        installations: feishuContainer.feishuInstallations,
-        webhookEvents: feishuContainer.webhookEvents,
-        provider: feishuProvider,
-        hub,
-        http: feishuHttp,
-      });
-      disposables.add("feishu_runner", () => feishuRunner?.stop());
-    } catch (err) {
-      logger.warn(
-        { err, op: "main-node.feishu_ws_runner_start_failed" },
-        "feishu ws runner failed to start",
-      );
-    }
-  }
-
-  if (platformRootSecret) {
-    const integrationsRepoEnv: NodeReposEnv = {
-      sql,
-      db: drizzleDb,
-      PLATFORM_ROOT_SECRET: platformRootSecret,
-    };
-    v1.route(
-      "/oma/integrations",
-      buildIntegrationsRoutes({
-        bags: () => {
-          const repos = buildNodeRepos(integrationsRepoEnv);
-          const slackCrypto = secrets!.cipherFor("integrations.tokens");
-          const slackIds = new CryptoIdGenerator();
-          return {
-            linear: {
-              installations: repos.linearInstallations,
-              publications: repos.linearPublications,
-              apps: repos.apps,
-              dispatchRules: repos.dispatchRules,
-            },
-            github: {
-              installations: repos.githubInstallations,
-              publications: repos.githubPublications,
-              githubApps: repos.githubApps,
-            },
-            slack: {
-              installations: new SqlSlackInstallationRepo(drizzleDb, slackCrypto, slackIds),
-              publications: new SqlSlackPublicationRepo(drizzleDb, slackIds, slackCrypto),
-              apps: new SqlSlackAppRepo(drizzleDb, slackCrypto, slackIds),
-            },
-            feishu: {
-              installations: new SqlFeishuInstallationRepo(drizzleDb, slackCrypto, slackIds),
-              publications: new SqlFeishuPublicationRepo(drizzleDb, slackIds, slackCrypto),
-            },
-          };
-        },
-        installProxy: installBridge ? bridgeAsInstallProxy(installBridge) : null,
-      }),
-    );
-  }
-
-  // ── Files API (subset of apps/main/src/routes/files.ts) ──
-  //
-  // CF mounts a richer files surface with synthesized session-output ids
-  // and multipart upload; Node ships the read-side equivalent so the SDK
-  // + console can list, download, and delete files. Uploads still go via
-  // POST /v1/sessions/:id/files (lifecycle.promoteSandboxFile) and the
-  // CF-only POST /v1/files (multipart upload from the browser) — that
-  // route can be ported when console upload UX needs it.
-  v1.get("/oma/files", async (c) => {
-    const t = c.var.tenant_id;
-    const scopeId = c.req.query("scope_id") ?? undefined;
-    const limitParam = c.req.query("limit");
-    let requested = limitParam ? parseInt(limitParam, 10) : 100;
-    if (isNaN(requested) || requested < 1) requested = 100;
-    if (requested > 1000) requested = 1000;
-    if (scopeId) {
-      const page = await filesService.listUnifiedPage({
-        tenantId: t,
-        scopeId,
-        limit: requested,
-        order: c.req.query("order") === "asc" ? "asc" : "desc",
-        cursor: c.req.query("cursor"),
-        beforeId: c.req.query("before_id"),
-        afterId: c.req.query("after_id"),
-        outputs: createFsSessionOutputSource(outputsRoot),
-      });
-      if (!page.ok) return c.json({ error: unifiedPageErrorMessage(page.error) }, 400);
-      return c.json(unifiedPageHttpBody(page));
-    }
-    // Unscoped lists stay on the pre-existing Node contract: one page,
-    // `has_more: false`, and `before_id` / `after_id` / `order` / `cursor`
-    // are ignored. Cloudflare's unscoped route still honors those params;
-    // do not "align" this branch without a client that pages it.
-    const rows = await filesService.list({
-      tenantId: t,
-      sessionId: scopeId,
-      limit: requested,
-    });
-    return c.json({ data: rows.map(toFileRecord), has_more: false });
-  });
-  v1.get("/oma/files/:id/content", async (c) => {
-    const id = c.req.param("id");
-    const t = c.var.tenant_id;
-    const decoded = decodeOutputId(id);
-    if (decoded) {
-      if (!isSafeOutputFilename(decoded.filename)) {
-        return c.json({ error: "File not found" }, 404);
-      }
-      const obj = await sessionOutputs.read(t, decoded.sessionId, decoded.filename);
-      if (!obj) return c.json({ error: "File content not found" }, 404);
-      return new Response(obj.body, {
-        headers: { "Content-Type": obj.contentType },
-      });
-    }
-    const row = await filesService.get({ tenantId: t, fileId: id });
-    if (!row) return c.json({ error: "File not found" }, 404);
-    if (!row.downloadable) return c.json({ error: "This file is not downloadable" }, 403);
-    const obj = await filesBlob.get(row.r2_key);
-    if (!obj) return c.json({ error: "File content not found" }, 404);
-    return new Response(obj.body, {
-      headers: { "Content-Type": row.media_type },
-    });
-  });
-  v1.get("/oma/files/:id", async (c) => {
-    const id = c.req.param("id");
-    const t = c.var.tenant_id;
-    const decoded = decodeOutputId(id);
-    if (decoded) {
-      if (!isSafeOutputFilename(decoded.filename)) {
-        return c.json({ error: "File not found" }, 404);
-      }
-      const listed = await sessionOutputs.list(t, decoded.sessionId);
-      const hit = listed?.find((entry) => entry.filename === decoded.filename);
-      if (!hit) return c.json({ error: "File not found" }, 404);
-      return c.json({
-        id,
-        type: "file",
-        filename: hit.filename,
-        media_type: hit.media_type,
-        size_bytes: hit.size_bytes,
-        created_at: hit.uploaded_at,
-        scope_id: decoded.sessionId,
-        scope: { type: "session", id: decoded.sessionId },
-        downloadable: true,
-      });
-    }
-    const row = await filesService.get({ tenantId: t, fileId: id });
-    if (!row) return c.json({ error: "File not found" }, 404);
-    return c.json(toFileRecord(row));
-  });
-  v1.delete("/oma/files/:id", async (c) => {
-    try {
-      const deleted = await filesService.delete({
-        tenantId: c.var.tenant_id,
-        fileId: c.req.param("id"),
-      });
-      await filesBlob.delete(deleted.r2_key).catch(() => undefined);
-      return c.json({ type: "file_deleted", id: deleted.id });
-    } catch (err) {
-      if ((err as { code?: string }).code === "file_not_found") {
-        return c.json({ error: "File not found" }, 404);
-      }
-      throw err;
-    }
-  });
-
-  // ── Session ↔ memory_store binding (Node-specific; not in package yet) ──
-  v1.post("/oma/sessions/:id/memory_stores", async (c) => {
-    const sid = c.req.param("id");
-    const session = await sql
-      .prepare(`SELECT id FROM sessions WHERE tenant_id = ? AND id = ?`)
-      .bind(c.var.tenant_id, sid)
-      .first();
-    if (!session) return c.json({ error: "Session not found" }, 404);
-    const body = await c.req.json<{ store_id: string; access?: string }>();
-    if (!body.store_id) return c.json({ error: "store_id is required" }, 400);
-    const store = await memoryService.getStore({
-      tenantId: c.var.tenant_id,
-      storeId: body.store_id,
-    });
-    if (!store) return c.json({ error: "Memory store not found" }, 404);
-    const access = body.access === "read_only" ? "read_only" : "read_write";
-    await sql
-      .prepare(
-        `INSERT INTO session_memory_stores (session_id, store_id, access, created_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(session_id, store_id) DO UPDATE SET access = excluded.access`,
-      )
-      .bind(sid, body.store_id, access, Date.now())
-      .run();
-    return c.json({ session_id: sid, store_id: body.store_id, access }, 201);
-  });
-  v1.get("/oma/sessions/:id/memory_stores", async (c) => {
-    const r = await sql
-      .prepare(
-        `SELECT store_id, access, created_at FROM session_memory_stores WHERE session_id = ?`,
-      )
-      .bind(c.req.param("id"))
-      .all<{ store_id: string; access: string; created_at: number }>();
-    return c.json({ data: r.results ?? [] });
-  });
 
   app.route("/v1", v1);
-  app.route("/openai", buildNodeOpenAIAgentsRoutes({
-    authMiddleware: authMw,
-    portFor: (workspaceId) => {
-      const application = managedPlatform.app({ workspaceId });
-      const credentialApplication = managedPlatform.app({ workspaceId });
-      const native = managedSessionsComposition.portsFor(workspaceId);
-      const agents = application.port(managedAgentsPortTokens.agents);
-      const environments = application.port(managedAgentsPortTokens.environments);
-      const files = application.port(managedAgentsPortTokens.files);
-      const runtime = createNodeOpenAIAgentsRuntime({
-        environments, sessions: native.sessions, secrets: openAIAgentsSecrets,
-        connectedSandbox: sessionId => managedRuntimeRunner.connectedSandbox({ workspaceId, sessionId }),
-      });
-      const resources = createResourcesHandler({
-        agents, environments, files, secrets: openAIAgentsSecrets, runtime: runtime.files,
-        vaults: credentialApplication.port(managedAgentsPortTokens.vaults),
-        credentials: credentialApplication.port(managedAgentsPortTokens.credentials),
-      });
-      const artifacts = createArtifactsHandler({
-        files,
-        requireSession: async sessionId => {
-          const found = await native.sessions.retrieveSession({ sessionId });
-          if (found.type !== "found") throw new OpenAIAgentsProtocolError(404, "Session not found");
-        },
-      });
-      const sessions = createSessionsHandler({
-        workspaceId, sessions: native.sessions, sessionEvents: native.sessionEvents,
-        history: new SessionRuntimeHistoryApplicationService({ workspaceId, source: managedRuntimeReaders.history }),
-        mapping: createManagedSessionMapping({ agents, environments, resources, secrets: openAIAgentsSecrets, runtime: runtime.mapping }),
-        resources: { execute: artifacts },
-      });
-      return { execute: request => request.operation.startsWith("sessions.") ? sessions.execute(request) : resources(request) };
-    },
-  }));
-
-  // ─── Integrations gateway (OAuth callbacks, setup pages, Linear MCP,
-  // GitHub internal refresh, webhooks) — mounted on `app` (NOT under /v1)
-  // because the upstream OAuth/webhook URLs are at /linear/oauth/...,
-  // /linear-setup/..., /linear/webhook/..., etc. Active only when
-  // PLATFORM_ROOT_SECRET is set (encryption requires it). The bridge
-  // constructs providers per-request off the same Container builder used
-  // by the read-side routes, so a write hits the same underlying tables.
-  if (installBridge) {
-    const containers = installBridge.buildContainers();
-    app.route(
-      "/",
-      buildIntegrationsGatewayRoutes({
-        installBridge,
-        jwt: containers.linear.jwt,
-        webhooks: {
-          linear: (req) => buildNodeProvidersForRequest(installBridge!, gatewayOrigin).linear.handleWebhook(req),
-          github: (req) => buildNodeProvidersForRequest(installBridge!, gatewayOrigin).github.handleWebhook(req),
-          slack: (req) => buildNodeProvidersForRequest(installBridge!, gatewayOrigin).slack.handleWebhook(req),
-        },
-        internalSecret: integrationsInternalToken,
-        // Node has no per-tenant rate-limit binding by default; soft-pass.
-        rateLimit: undefined,
-      }),
-    );
-  }
 
   // ── Console branding (optional) ──
   // Served whether or not this process serves the console, so a console on
@@ -1036,8 +642,6 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
         p === "/health" ||
         p.startsWith("/v1/") ||
         p.startsWith("/auth") ||
-        p.startsWith("/linear") ||
-        p.startsWith("/github") ||
         p.startsWith(BRANDING_PATH)
       ) {
         return next();
@@ -1058,96 +662,4 @@ export async function mountNodeHttp(runtime: NodeRuntime, disposables: Disposabl
   });
 
   return app;
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────
-
-/**
- * In-process forwarder for the package's `installProxy` deps. Each subpath
- * (e.g. "linear/publications/start-a1") routes to bridge.startInstallation.
- * Mirrors apps/main/src/routes/integrations.ts but skips the
- * INTEGRATIONS.fetch hop.
- *
- * Linear's publication-first endpoints use distinct subpath shapes:
- *   - POST  linear/publications                       → mode='create-publication'
- *   - PATCH linear/publications/<id>/credentials      → mode='submit-credentials-pub'
- * Slack/GitHub continue using the legacy /start-a1, /credentials,
- * /handoff-link variants until they ship their own publication-first
- * refactors.
- */
-function bridgeAsInstallProxy(bridge: NodeInstallBridge): InstallProxyForwarder {
-  return {
-    async forward({ subpath, body, method }) {
-      // Linear publication-first endpoints first — they share a subpath
-      // prefix with the legacy ones so order matters.
-      const newPub = /^linear\/publications$/.exec(subpath);
-      if (newPub && method === "POST") {
-        const result = await bridge.startInstallation!({
-          provider: "linear",
-          mode: "create-publication",
-          body: (body ?? {}) as Record<string, unknown>,
-        });
-        return new Response(JSON.stringify(result.body), {
-          status: result.status,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      const newCreds = /^linear\/publications\/([^/]+)\/credentials$/.exec(subpath);
-      if (newCreds && (method === "PATCH" || method === "POST")) {
-        const result = await bridge.startInstallation!({
-          provider: "linear",
-          mode: "submit-credentials-pub",
-          body: { ...(body ?? {}), publicationId: newCreds[1] } as Record<string, unknown>,
-        });
-        return new Response(JSON.stringify(result.body), {
-          status: result.status,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      // Form-token reissue (wizard resume path): `<provider>/publications/<id>/form-token`.
-      // Has a dynamic :id segment so it can't fold into the static-mode regex below —
-      // handle it first and inject the id as body.publicationId (the bridge's
-      // `form-token` mode reads it). Mounted for slack/github/feishu; linear returns
-      // 410 inside the bridge.
-      const formTokenRe = /^([^/]+)\/publications\/([^/]+)\/form-token$/.exec(subpath);
-      // The http-routes forwarder omits `method` on this path; the CF
-      // counterpart defaults to POST (apps/main/src/routes/integrations.ts)
-      // — mirror that here so wizard refresh-resume works on Node.
-      if (formTokenRe && (method ?? "POST") === "POST") {
-        const result = await bridge.startInstallation!({
-          provider: formTokenRe[1] as "linear" | "github" | "slack" | "feishu",
-          mode: "form-token",
-          body: {
-            ...(body ?? {}),
-            publicationId: formTokenRe[2],
-          } as Record<string, unknown>,
-        });
-        return new Response(JSON.stringify(result.body), {
-          status: result.status,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      const m = /^([^/]+)\/publications\/(start-a1|credentials|handoff-link|personal-token)$/.exec(
-        subpath,
-      );
-      if (!m) {
-        return new Response(
-          JSON.stringify({ error: `unsupported install proxy subpath: ${subpath}` }),
-          { status: 400, headers: { "content-type": "application/json" } },
-        );
-      }
-      const [, provider, mode] = m;
-      const result = await bridge.startInstallation!({
-        provider: provider as "linear" | "github" | "slack" | "feishu",
-        mode: mode as "start-a1" | "credentials" | "handoff-link" | "personal-token",
-        body: (body ?? {}) as Record<string, unknown>,
-      });
-      return new Response(JSON.stringify(result.body), {
-        status: result.status,
-        headers: { "content-type": "application/json" },
-      });
-    },
-  };
 }

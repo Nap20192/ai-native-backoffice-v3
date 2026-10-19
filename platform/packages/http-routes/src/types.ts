@@ -63,7 +63,8 @@ export interface RouteServices {
   memory: MemoryStoreService;
   sessions: SessionService;
   /** Dreams is optional because older route fixtures only exercise
-   * non-dream resources. buildDreamRoutes requires it at runtime. */
+   * non-dream resources. The legacy /v1/oma/dreams route that required it
+   * was removed (docs/plans/cleanup.md, 4.6). */
   dreams?: DreamService;
   kv: KvStore;
   /** Per-session event log writer. Bound to a sessionId at the call site. */

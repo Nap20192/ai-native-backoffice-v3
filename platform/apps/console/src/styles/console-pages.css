@@ -208,45 +208,6 @@
   border-top: 1px solid var(--border-chrome);
 }
 
-.console-integration-route {
-  width: 100%;
-  min-height: 100%;
-}
-
-.console-integration-page {
-  width: min(100%, 1100px);
-  margin-inline: auto;
-  padding: var(--settings-frame-inset);
-}
-
-.console-integration-page--medium {
-  width: min(100%, 900px);
-}
-
-.console-integration-page--narrow {
-  width: min(100%, 768px);
-}
-
-.console-integration-page > header {
-  margin-bottom: 24px;
-}
-
-.console-integration-page > header h1 {
-  color: var(--ddc-heading);
-  font-family: var(--font-display);
-  font-size: var(--console-type-title);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 32px;
-}
-
-.console-integration-page > header p {
-  margin-top: 4px;
-  color: var(--fg-subtle);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
-}
-
 .console-dashboard-layout {
   display: flex;
   width: 100%;
@@ -256,215 +217,6 @@
   gap: 24px;
   padding: var(--dashboard-frame-inset);
   margin-inline: auto;
-}
-
-.console-kpi-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-}
-
-/* Плитка KPI: карточка p-5, значение 24px bold tabular-nums, подпись text-sm.
-   Живёт на Button, поэтому высота auto и выравнивание заданы явно. */
-.console-kpi-card {
-  display: flex;
-  min-width: 0;
-  height: auto;
-  min-height: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 4px;
-  border: 1px solid var(--ddc-border);
-  border-radius: var(--console-radius-card);
-  padding: 20px;
-  background: var(--ddc-surface);
-  box-shadow: var(--shadow-card-soft);
-  color: var(--fg);
-  text-align: left;
-  transition: border-color var(--dur-base) var(--ease-soft);
-}
-
-/* Наведение как у card-link: меняется только рамка (brand-300 70%,
-   в тёмной теме brand-700 70%). */
-.console-kpi-card:hover {
-  border-color: color-mix(in srgb, var(--color-brand-300) 70%, transparent);
-  background: var(--ddc-surface);
-}
-
-.dark .console-kpi-card:hover {
-  border-color: color-mix(in srgb, var(--color-brand-700) 70%, transparent);
-}
-
-.console-kpi-value {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ddc-heading);
-  font-family: var(--font-display);
-  font-size: var(--console-type-kpi);
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 32px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.console-kpi-card:hover .console-kpi-value {
-  color: var(--ddc-heading);
-}
-
-.console-kpi-label {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--fg-subtle);
-  font-size: var(--console-type-body);
-  font-weight: 400;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.console-dashboard-secondary {
-  min-width: 0;
-}
-
-.console-secondary-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.console-secondary-stat {
-  display: flex;
-  min-width: 0;
-  height: var(--control-h);
-  align-items: center;
-  justify-content: space-between;
-  border: 1px solid var(--ddc-border);
-  border-radius: var(--console-radius-control);
-  padding-inline: 16px;
-  background: var(--ddc-surface);
-  color: var(--fg-subtle);
-  font-size: var(--console-type-body);
-}
-
-.console-secondary-stat strong {
-  color: var(--ddc-heading);
-  font-variant-numeric: tabular-nums;
-}
-
-.console-activity-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
-  align-items: start;
-  gap: 16px;
-}
-
-.console-panel {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--ddc-border);
-  border-radius: var(--console-radius-card);
-  background: var(--ddc-surface);
-  box-shadow: var(--shadow-card-soft);
-}
-
-.console-panel-header {
-  display: flex;
-  min-height: 56px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 20px;
-}
-
-.console-panel-title {
-  color: var(--ddc-heading);
-  font-family: var(--font-display);
-  font-size: var(--console-type-ui);
-  font-weight: 600;
-  line-height: 24px;
-}
-
-.console-panel-description {
-  margin-top: 2px;
-  color: var(--fg-subtle);
-  font-size: var(--console-type-label);
-  line-height: 16px;
-}
-
-.console-panel-action {
-  flex: 0 0 auto;
-}
-
-.console-panel-content {
-  min-width: 0;
-  border-top: 1px solid var(--border-chrome);
-}
-
-.console-quickstart-step {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 16px;
-  padding: 16px 20px;
-}
-
-.console-quickstart-step + .console-quickstart-step {
-  border-top: 1px solid var(--border-chrome);
-}
-
-.console-step-index {
-  color: var(--ddc-link);
-  font-family: var(--font-mono);
-  font-size: var(--console-type-label);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  line-height: 20px;
-}
-
-.console-step-title {
-  margin-top: 0;
-  color: var(--ddc-heading);
-  font-size: var(--console-type-body);
-  font-weight: 600;
-  line-height: var(--type-line);
-}
-
-.console-step-body {
-  min-width: 0;
-  color: var(--fg-subtle);
-  font-size: var(--console-type-body);
-  line-height: var(--type-line);
-}
-
-.console-copy-control {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  min-height: var(--control-h);
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  border: 1px solid var(--ddc-border-strong);
-  border-radius: var(--console-radius-control);
-  padding: 4px 12px;
-  background: var(--bg-surface);
-  color: var(--fg);
-  font-family: var(--font-mono);
-  font-size: var(--console-type-label);
-  text-align: left;
-}
-
-.console-copy-control:hover {
-  border-color: var(--ddc-ring);
-}
-
-.console-copy-control > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .console-dashboard-table-wrap {
@@ -524,14 +276,6 @@
 }
 
 @media (max-width: 1100px) {
-  .console-kpi-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .console-activity-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .console-detail-layout--rail {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -554,34 +298,10 @@
   .console-detail-rail {
     display: flex;
   }
-
-  .console-integration-page > header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .console-secondary-stats {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .console-quickstart-step {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 640px) {
-  .console-kpi-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .console-quickstart-step {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-  }
-
-  .console-detail-rail,
-  .console-secondary-stats {
+  .console-detail-rail {
     grid-template-columns: minmax(0, 1fr);
   }
 }

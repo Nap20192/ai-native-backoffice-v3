@@ -1,7 +1,3 @@
-import { githubAccessLossCatalog } from "@open-managed-agents/github";
-import { linearAccessLossCatalog } from "@open-managed-agents/linear";
-import { slackAccessLossCatalog } from "@open-managed-agents/slack";
-
 export interface AccessLossCode {
   code: string;
   resourceType: string;
@@ -15,7 +11,7 @@ export interface AccessLossPhrase {
 
 /**
  * Provider-owned description of which upstream failures are terminal.
- * The proxy does not hard-code Slack/Linear/GitHub error strings.
+ * The proxy hard-codes no provider error strings.
  */
 export interface AccessLossCatalog {
   provider: string;
@@ -28,12 +24,18 @@ export interface AccessLossCatalog {
   clearPendingScan: boolean;
 }
 
-export const integrationAccessLossCatalogs: readonly AccessLossCatalog[] = [
-  slackAccessLossCatalog,
-  linearAccessLossCatalog,
-  githubAccessLossCatalog,
-];
+/**
+ * The Slack, Linear and GitHub catalogs left with their integrations
+ * (docs/plans/cleanup.md, 5.1). With no provider catalog the proxy only
+ * records a reauthorization request for a refresh that failed with
+ * `invalid_grant` or `invalid_refresh_token`; no scope is ever closed.
+ */
+export const integrationAccessLossCatalogs: readonly AccessLossCatalog[] = [];
 
+// Scope tables a catalog may close. No catalog ships, so today nothing
+// reaches this guard or `closeIntegrationScope`. The names are the
+// allowlist a future catalog must hit. The tables stay in the databases
+// and migrations without code or TS schema (cleanup.md, 5.1).
 const ALLOWED_TABLES = new Set([
   "slack_thread_sessions",
   "linear_issue_sessions",

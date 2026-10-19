@@ -12,7 +12,7 @@ vi.mock("./auth", () => ({
 }));
 vi.mock("./useApiQuery", () => ({
   useApiQuery: () => ({
-    data: { providers: ["email"], turnstile_site_key: null },
+    data: { providers: ["email"] },
     error: null,
     isLoading: false,
   }),

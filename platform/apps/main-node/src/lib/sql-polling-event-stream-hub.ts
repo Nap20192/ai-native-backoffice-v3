@@ -1,7 +1,7 @@
 // EventStreamHub backed by polling the canonical `session_events` table.
 //
-// Used when DATABASE_URL is MySQL (no LISTEN/NOTIFY equivalent) so that
-// more than one main-node replica can serve SSE. A Session's harness runs
+// Used with OMA_REALTIME_FANOUT=sql-poll (any shared SQL database, without
+// LISTEN/NOTIFY) so that more than one main-node replica can serve SSE. A Session's harness runs
 // on whichever replica received the turn, while its SSE subscribers may be
 // attached to any replica behind the load balancer; without cross-replica
 // fanout those subscribers only see events after reconnecting.

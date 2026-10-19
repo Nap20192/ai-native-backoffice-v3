@@ -3,16 +3,14 @@ dist/
 .env
 .env.*
 !.env.example
-/data/
+platform/data/
 platform/apps/main-node/data/
 *.db
 *.db-wal
 *.db-shm
-.wrangler/
 coverage/
 playwright-report/
 test-results/
-reports/screenshots/*.tmp
 .audit/
 platform/apps/main-node/data-preview/
 .verify-evidence/

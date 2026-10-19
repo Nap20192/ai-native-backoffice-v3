@@ -20,7 +20,7 @@ import { loadNodeConfig } from "../src/config";
 import { createNodeControlPlane, type NodeControlPlane } from "../src/control-plane";
 import { nodeDefaults } from "../src/components";
 import { toLegacyHarnessAgentConfig } from "../src/lib/node-managed-agent-codec";
-import { nodeOpenAISubagentPolicy } from "../src/openai-subagents";
+import { nodeManagedSubagentPolicy } from "../src/lib/node-managed-subagents";
 
 const API_KEY = "test-static-api-key";
 const MODEL = "claude-sonnet-4-6";
@@ -123,9 +123,6 @@ function storedSession(sessionId: string): Session {
   }
 }
 
-/** No mapping metadata, so the policy never opens a sealed value. */
-const noSecrets = {} as Parameters<typeof nodeOpenAISubagentPolicy>[1];
-
 describe("Session snapshot of a multiagent block", () => {
   it("keeps the multiagent_20261001 type with every listed agent in full", async () => {
     const coordinator = await createSession({
@@ -190,8 +187,8 @@ describe("Session snapshot of a multiagent block", () => {
     expect(newTypeConfig.callable_agents).toEqual(coordinatorConfig.callable_agents);
     expect(newTypeConfig.multiagent).toEqual(coordinatorConfig.multiagent);
 
-    expect(await nodeOpenAISubagentPolicy(coordinator, noSecrets)).toEqual({ enabled: true, maxConcurrentSubagents: 6 });
-    expect(await nodeOpenAISubagentPolicy(newType, noSecrets)).toEqual({ enabled: true, maxConcurrentSubagents: 6 });
+    expect(nodeManagedSubagentPolicy(coordinator)).toEqual({ enabled: true, maxConcurrentSubagents: 6 });
+    expect(nodeManagedSubagentPolicy(newType)).toEqual({ enabled: true, maxConcurrentSubagents: 6 });
     expect(listedSubagents(coordinator.agent.multiagent).map((agent) => agent.id)).toEqual([child.id]);
     expect(listedSubagents(newType.agent.multiagent)).toEqual(listedSubagents(coordinator.agent.multiagent));
 
@@ -224,6 +221,6 @@ describe("Session snapshot of a multiagent block", () => {
     const config = toLegacyHarnessAgentConfig(session);
     expect(config.callable_agents).toBeUndefined();
     expect(listedSubagents(session.agent.multiagent)).toEqual([]);
-    expect(await nodeOpenAISubagentPolicy(session, noSecrets)).toEqual({ enabled: false, maxConcurrentSubagents: 6 });
+    expect(nodeManagedSubagentPolicy(session)).toEqual({ enabled: false, maxConcurrentSubagents: 6 });
   });
 });

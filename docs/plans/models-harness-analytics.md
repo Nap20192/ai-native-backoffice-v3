@@ -542,7 +542,7 @@ flowchart LR
 
 Файлы:
 
-- правка `P/apps/console/src/main.tsx`, `P/apps/console/src/components/AppSidebar.tsx`, `AppSidebar.linear.test.tsx`, `CommandPalette.tsx`, `nav-icons.ts`, `P/apps/console/src/i18n/ru.ts`, `en.ts`, `zh-CN.ts`, `types.ts`;
+- правка `P/apps/console/src/main.tsx`, `P/apps/console/src/components/AppSidebar.tsx`, `AppSidebar.linear.test.tsx`, `CommandPalette.tsx`, `nav-icons.ts`, `P/apps/console/src/i18n/ru.ts`, `types.ts`;
 - новые `P/apps/console/src/pages/analytics/UsagePage.tsx`, `CostPage.tsx`, `RequestLogPage.tsx`, `AnalyticsFilters.tsx`, `AnalyticsTiles.tsx`, `StackedBarChart.tsx`, `analytics-text.ts`, `analytics-format.ts` и тесты к ним;
 - новый `P/apps/console/src/lib/analytics-api.ts`.
 

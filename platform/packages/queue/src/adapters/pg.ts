@@ -1,7 +1,7 @@
 // SQL-table-backed Queue + DeadLetterQueue.
 //
-// Multi-replica safe: PostgreSQL claims use SKIP LOCKED; MySQL and SQLite
-// use an atomic conditional UPDATE. Every claim receives an opaque token.
+// Multi-replica safe: PostgreSQL claims use SKIP LOCKED; SQLite uses an
+// atomic conditional UPDATE. Every claim receives an opaque token.
 // ACK, retry, DLQ, and heartbeat mutations require that exact token, so an
 // expired owner cannot settle a row after a replacement has reclaimed it.
 //
@@ -35,8 +35,8 @@ export interface SqlQueueOptions {
    *  one table by tagging each row with the queue's name. */
   name: string;
   sql: SqlClient;
-  /** SQL claim dialect. `postgres` keeps the SKIP LOCKED fast path; MySQL
-   *  and SQLite use the same conditional UPDATE/RETURNING lease contract. */
+  /** SQL claim dialect. `postgres` keeps the SKIP LOCKED fast path; SQLite
+   *  uses the conditional UPDATE/RETURNING lease contract. */
   dialect: SqlQueueDialect;
   /** Worker identifier — written to `locked_by` so a stuck row can be
    *  traced back to the replica holding the lease. Default = random. */
@@ -53,7 +53,7 @@ export interface SqlQueueOptions {
   logger?: { warn: (m: string, err?: unknown) => void };
 }
 
-export type SqlQueueDialect = "postgres" | "mysql" | "sqlite";
+export type SqlQueueDialect = "postgres" | "sqlite";
 
 interface SqlQueueRow {
   id: string;
@@ -113,30 +113,6 @@ export async function ensureSqlQueueSchema(
     if (!(columns.results ?? []).some((column) => column.name === "claim_token")) {
       await sql.exec(`ALTER TABLE "queue_messages" ADD COLUMN "claim_token" TEXT`);
     }
-    return;
-  }
-  if (dialect === "mysql") {
-    await sql.exec(`
-      CREATE TABLE IF NOT EXISTS queue_messages (
-        id               VARCHAR(191) PRIMARY KEY NOT NULL,
-        queue_name       VARCHAR(191) NOT NULL,
-        payload          LONGTEXT NOT NULL,
-        attempts         INTEGER NOT NULL DEFAULT 0,
-        next_visible_at  BIGINT NOT NULL,
-        status           VARCHAR(32) NOT NULL DEFAULT 'pending',
-        locked_by        VARCHAR(191),
-        locked_until     BIGINT,
-        claim_token      VARCHAR(191),
-        dlq_reason       TEXT,
-        enqueued_at      BIGINT NOT NULL,
-        INDEX idx_queue_messages_pending
-          (queue_name, status, next_visible_at),
-        INDEX idx_queue_messages_processing
-          (queue_name, status, locked_until),
-        INDEX idx_queue_messages_dlq
-          (queue_name, status)
-      )
-    `);
     return;
   }
   // PostgreSQL keeps payloads as JSONB. The double cast prevents the

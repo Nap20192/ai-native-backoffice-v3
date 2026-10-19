@@ -25,7 +25,7 @@ vi.mock("../lib/auth-client", () => ({
 
 vi.mock("../lib/useApiQuery", () => ({
   useApiQuery: () => ({
-    data: { ...authInfo.current, turnstile_site_key: null },
+    data: { ...authInfo.current },
     error: null,
     isLoading: false,
   }),

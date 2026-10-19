@@ -25,8 +25,6 @@ export async function createNodeRuntime(
   const foundation = await createNodeFoundation(components, disposables, log);
   const {
     config,
-    processMode,
-    ownsLongLivedProcesses,
     logger,
     metrics,
     tracer,
@@ -36,7 +34,6 @@ export async function createNodeRuntime(
     backendDescription,
     platformRootSecret,
     secrets,
-    openAIAgentsSecrets,
     authDisabled,
     auth,
     agentsService,
@@ -241,8 +238,6 @@ export async function createNodeRuntime(
 
   return {
     config,
-    processMode,
-    ownsLongLivedProcesses,
     logger,
     metrics,
     tracer,
@@ -252,7 +247,6 @@ export async function createNodeRuntime(
     backendDescription,
     platformRootSecret,
     secrets,
-    openAIAgentsSecrets,
     authDisabled,
     auth,
     agentsService,

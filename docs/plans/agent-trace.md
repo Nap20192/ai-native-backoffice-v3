@@ -265,7 +265,7 @@ Pi исполняет инструменты одного ответа пара�
 - `H/acp-translate.ts`: на каждый `tool_call` и `tool_call_update` слать кадр `span.acp_tool_update {tool_call_id, status, at_ms, kind, parent_tool_use_id}`. `parent_tool_use_id` берётся из `_meta.claudeCode.parentToolUseId` (claude-agent-acp, `stampParentToolUseId`). Публичные `agent.tool_use` и `agent.tool_result` не меняются. Проектор открывает `tool_call` по первому кадру и `tool_exec` по `in_progress`, поэтому длительность инструмента перестаёт быть около 1 мс.
 - `H/acp-sandbox-loop.ts`: вокруг запуска процесса, `initialize`, открытия сессии и восстановления и снятия нативного состояния слать `span.harness_phase {phase, start_ms, end_ms, error}`. Время сейчас пишется только в stderr (`[acp-init]`, `[acp-runtime] total_ms` в `@openma/common` 0.9.1).
 - `P/packages/sandbox-adapter-litebox/src/litebox.ts`: необязательный колбэк `onPhase(name, startMs, endMs, attrs)` для старта VM, закрепления хостов, загрузки CA и установки пакетов. VM стартует лениво внутри первого `exec`, снаружи это время не отделить.
-- `M/src/lib/node-managed-session-runner.ts`: `delegateToAgent` передаёт id вызова в `subagents.create`, как `openai-subagents.ts`. Тогда поток сабагента висит под своим `tool_call`. Там же раннер шлёт `span.tool_execution_start` и `_end` вокруг `confirmedTools.execute` (строки 441-470), и исполнение подтверждённого инструмента получает замер вместо `by_events`.
+- `M/src/lib/node-managed-session-runner.ts`: `delegateToAgent` передаёт id вызова в `subagents.create`, как делал удалённый `openai-subagents.ts`. Тогда поток сабагента висит под своим `tool_call`. Там же раннер шлёт `span.tool_execution_start` и `_end` вокруг `confirmedTools.execute` (строки 441-470), и исполнение подтверждённого инструмента получает замер вместо `by_events`.
 
 ### 2.4 ACP-агенты: OpenTelemetry агента
 
@@ -499,6 +499,8 @@ CREATE INDEX IF NOT EXISTS trace_turns_updated_idx ON trace_turns (workspace_id,
 Смена владельца в живом исполнении закрывает узлы прошлой попытки сразу, без чтения истории (1.4).
 
 ### 3.4 MySQL
+
+Раздел устарел: поддержку MySQL сняли вместе с трейсом по событиям в памяти ([cleanup.md](cleanup.md), 5.3). Текст ниже остался как история.
 
 На MySQL таблиц трейса нет, как и у аналитики. Маршрут строит трейс на лету тем же восстановлением (3.3) из истории и `managed_session_executions`. Результат лежит в памяти процесса: LRU на 20 сессий, ключ это сессия и id последнего события. Трейс получается уровня 1 из 2.5 с `precision: by_events`, без фаз песочницы и замеров Pi. Консоль пишет «сервер на MySQL: трейс по событиям, без замеров». Ограничение нужно согласовать с владельцем до TW1 (раздел 8).
 

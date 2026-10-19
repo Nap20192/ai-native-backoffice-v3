@@ -12,7 +12,6 @@ describe("loadNodeConfig", () => {
   it("applies the self-host defaults when nothing is set", () => {
     const config = loadNodeConfig(minimal);
 
-    expect(config.processMode).toBe("standalone");
     expect(config.database).toEqual({ kind: "sqlite", path: "./data/oma.db" });
     expect(config.auth).toMatchObject({ disabled: false, databasePath: "./data/auth.db", requireEmailVerify: false });
     expect(config.auth.secret).toBeUndefined();
@@ -30,19 +29,16 @@ describe("loadNodeConfig", () => {
       sessionOutputs: "./data/session-outputs",
       builtinSkills: expect.stringMatching(/platform\/skills\/builtin$/),
     });
-    expect(config.http).toEqual({ host: "0.0.0.0", port: 8787, gatewayOrigin: "http://localhost:8787", publicBaseUrl: undefined, consoleDir: undefined, metricsToken: undefined, apiKey: undefined });
+    expect(config.http).toEqual({ host: "0.0.0.0", port: 8787, publicBaseUrl: undefined, consoleDir: undefined, metricsToken: undefined, apiKey: undefined });
     expect(loadNodeConfig({ ...minimal, HOST: "127.0.0.1", PORT: "18787" }).http).toMatchObject({ host: "127.0.0.1", port: 18787 });
     expect(loadNodeConfig({ ...minimal, PORT: "0" }).http.port).toBe(0);
     expect(() => loadNodeConfig({ ...minimal, PORT: "70000" })).toThrow(/PORT must be an integer between 0 and 65535/);
     expect(config.tunnels.domainSuffix).toBe("tunnels.localhost");
     expect(config.email).toBeNull();
-    expect(config.feishuWsRunner).toBe(false);
     expect(config.dreamCurator).toBe("model");
     expect(config.cron).toEqual({
       evalTick: "* * * * *",
       memoryRetention: "* * * * *",
-      webhookEventsRetention: "* * * * *",
-      linearDispatch: "* * * * *",
     });
     expect(config.sandbox.environment).toBe(minimal);
   });
@@ -52,9 +48,15 @@ describe("loadNodeConfig", () => {
     expect(pg.database).toEqual({ kind: "postgres", url: "postgres://u:p@h:5432/db" });
     expect(pg.realtime.mode).toBe("pg-notify");
 
-    const mysql = loadNodeConfig({ ...minimal, DATABASE_URL: "mysql://u:p@h:3306/db", OMA_REALTIME_POLL_INTERVAL_MS: "500" });
-    expect(mysql.database).toEqual({ kind: "mysql", url: "mysql://u:p@h:3306/db" });
-    expect(mysql.realtime).toEqual({ mode: "sql-poll", pollIntervalMs: 500 });
+    const polled = loadNodeConfig({ ...minimal, DATABASE_URL: "postgres://u:p@h:5432/db", OMA_REALTIME_FANOUT: "sql-poll", OMA_REALTIME_POLL_INTERVAL_MS: "500" });
+    expect(polled.realtime).toEqual({ mode: "sql-poll", pollIntervalMs: 500 });
+  });
+
+  it("refuses a MySQL DATABASE_URL instead of falling back to SQLite (cleanup.md 5.3)", () => {
+    expect(() => loadNodeConfig({ ...minimal, DATABASE_URL: "mysql://u:p@h:3306/db" }))
+      .toThrow(/DATABASE_URL: MySQL is not supported/);
+    expect(() => loadNodeConfig({ ...minimal, DATABASE_URL: "mysql2://u:p@h:3306/db" }))
+      .toThrow(/DATABASE_URL: MySQL is not supported/);
   });
 
   it("reads S3 blob backends only when all four required values are present", () => {
@@ -115,26 +117,22 @@ describe("loadNodeConfig", () => {
   it("parses the string-encoded flags and numbers exactly as the assembly did", () => {
     const config = loadNodeConfig({
       ...minimal,
-      AUTH_DISABLED: "1", AUTH_REQUIRE_EMAIL_VERIFY: "1", FEISHU_WS_RUNNER: "1", MEMORY_QUEUE: "disabled",
+      AUTH_DISABLED: "1", AUTH_REQUIRE_EMAIL_VERIFY: "1", MEMORY_QUEUE: "disabled",
       DREAM_CURATOR_MODE: "dedup", OMA_SESSION_EXECUTION_CONCURRENCY: "3", OMA_SESSION_EXECUTION_OWNER_ID: "replica-a",
       OMA_SESSION_MAX_TOKENS: "250000", OMA_SESSION_MAX_CHILD_TURNS: "5",
       ANTHROPIC_CUSTOM_HEADERS: "X-A: 1, X-B: two:parts",
       SMTP_HOST: "smtp", SMTP_PORT: "465", SMTP_USER: "u", SMTP_PASS: "p", SMTP_FROM: "noreply@x",
-      GATEWAY_ORIGIN: "https://gw", PUBLIC_BASE_URL: "https://pub",
+      PUBLIC_BASE_URL: "https://pub",
     });
     expect(config.auth.disabled).toBe(true);
     expect(config.auth.requireEmailVerify).toBe(true);
-    expect(config.feishuWsRunner).toBe(true);
     expect(config.memoryQueue).toBe("disabled");
     expect(config.dreamCurator).toBe("dedup");
     expect(config.execution).toEqual({ concurrency: 3, ownerId: "replica-a" });
     expect(config.sessionLimits).toEqual({ maxTokens: 250_000, maxChildTurns: 5 });
     expect(config.model.customHeaders).toEqual({ "X-A": "1", "X-B": "two:parts" });
     expect(config.email).toEqual({ host: "smtp", port: 465, secure: true, user: "u", pass: "p", fromAddress: "noreply@x" });
-    expect(config.http.gatewayOrigin).toBe("https://gw");
     expect(config.http.publicBaseUrl).toBe("https://pub");
-    // GATEWAY_ORIGIN falls back to PUBLIC_BASE_URL.
-    expect(loadNodeConfig({ ...minimal, PUBLIC_BASE_URL: "https://pub" }).http.gatewayOrigin).toBe("https://pub");
   });
 
   it("reads extra trusted sign-in origins for a console served from another origin", () => {
@@ -150,7 +148,6 @@ describe("loadNodeConfig", () => {
     try {
       loadNodeConfig({
         ...minimal,
-        OPENMA_PROCESS_MODE: "cluster",
         OMA_REALTIME_FANOUT: "redis",
         OMA_SESSION_EXECUTION_CONCURRENCY: "many",
         MEMORY_S3_ENDPOINT: "http://s3", MEMORY_S3_BUCKET: "b", MEMORY_S3_ACCESS_KEY: "a", MEMORY_S3_SECRET_KEY: "s",
@@ -161,8 +158,8 @@ describe("loadNodeConfig", () => {
       error = caught as Error;
     }
     expect(error?.name).toBe("NodeConfigError");
-    expect(error?.message).toContain("5 problems");
-    for (const key of ["OPENMA_PROCESS_MODE", "OMA_REALTIME_FANOUT", "OMA_SESSION_EXECUTION_CONCURRENCY", "MEMORY_S3_POLL_INTERVAL_SEC", "SMTP_PORT"]) {
+    expect(error?.message).toContain("4 problems");
+    for (const key of ["OMA_REALTIME_FANOUT", "OMA_SESSION_EXECUTION_CONCURRENCY", "MEMORY_S3_POLL_INTERVAL_SEC", "SMTP_PORT"]) {
       expect(error?.message.split(key).length - 1).toBe(1);
     }
   });
@@ -172,9 +169,15 @@ describe("loadNodeConfig", () => {
     expect(config.http).not.toHaveProperty("sandboxGatewayBaseUrl");
   });
 
-  it("keeps the serverless-mode requirements", () => {
-    expect(() => loadNodeConfig({ ...minimal, OPENMA_PROCESS_MODE: "serverless", DATABASE_URL: "mysql://u:p@h/db" }))
-      .toThrow(/DATABASE_URL must be PostgreSQL in serverless mode/);
+  it("ignores OPENMA_PROCESS_MODE: the serverless mode is gone, every process runs its own background work (cleanup.md 4.6)", () => {
+    const config = loadNodeConfig({ ...minimal, OPENMA_PROCESS_MODE: "serverless" });
+    expect(config).not.toHaveProperty("processMode");
+    expect(config.database).toEqual({ kind: "sqlite", path: "./data/oma.db" });
+  });
+
+  it("ignores GATEWAY_ORIGIN: only the removed integration webhooks read it (cleanup.md 5.1)", () => {
+    const config = loadNodeConfig({ ...minimal, GATEWAY_ORIGIN: "https://gw" });
+    expect(config.http).not.toHaveProperty("gatewayOrigin");
   });
 });
 
@@ -182,26 +185,26 @@ describe("redactNodeConfig", () => {
   it("hides secrets and credentials but keeps everything needed to recognise a deployment", () => {
     const config: NodeConfig = loadNodeConfig({
       ...minimal,
-      DATABASE_URL: "mysql://qa:supersecret@db.internal:3306/openma",
+      DATABASE_URL: "postgres://qa:supersecret@db.internal:5432/openma",
       BETTER_AUTH_SECRET: "auth-secret", PLATFORM_ROOT_SECRET: "root-secret", API_KEY: "static-key",
       GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsecret",
       ANTHROPIC_API_KEY: "sk-ant", ANTHROPIC_BASE_URL: "https://llm",
       MEMORY_S3_ENDPOINT: "http://s3", MEMORY_S3_BUCKET: "mem", MEMORY_S3_ACCESS_KEY: "ak", MEMORY_S3_SECRET_KEY: "sk",
       SMTP_HOST: "smtp", SMTP_PASS: "smtp-pass",
-      METRICS_BIND_TOKEN: "mt", INTEGRATIONS_INTERNAL_TOKEN: "it", OMA_MANAGED_AGENTS_WEBHOOK_SIGNING_KEY: "wk",
+      METRICS_BIND_TOKEN: "mt", OMA_MANAGED_AGENTS_WEBHOOK_SIGNING_KEY: "wk",
       E2B_API_KEY: "e2b-secret",
     });
 
     const redacted = JSON.stringify(redactNodeConfig(config));
 
-    for (const secret of ["supersecret", "auth-secret", "root-secret", "static-key", "gsecret", "sk-ant", "\"sk\"", "smtp-pass", "\"mt\"", "\"it\"", "\"wk\"", "e2b-secret"]) {
+    for (const secret of ["supersecret", "auth-secret", "root-secret", "static-key", "gsecret", "sk-ant", "\"sk\"", "smtp-pass", "\"mt\"", "\"wk\"", "e2b-secret"]) {
       expect(redacted).not.toContain(secret);
     }
-    expect(redacted).toContain("mysql://qa:***@db.internal:3306/openma");
+    expect(redacted).toContain("postgres://qa:***@db.internal:5432/openma");
     expect(redacted).toContain("https://llm");
     expect(redacted).toContain("\"bucket\":\"mem\"");
     expect(redacted).toContain("\"gid\"");
-    expect(redacted).toContain("\"kind\":\"mysql\"");
+    expect(redacted).toContain("\"kind\":\"postgres\"");
     // The provider's own namespace is opaque to the control plane and is not echoed.
     expect(redacted).not.toContain("environment");
   });

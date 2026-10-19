@@ -61,14 +61,6 @@ function credentialTypeView(credential: Credential): {
   target: string;
 } {
   const authType: string = credential.auth.type;
-  // Мёртвая ветка, уходит в шаге 2 плана cleanup. Мост GitHub пишет cap_cli
-  // через старый credentialService в таблицу `credentials`, а эта страница
-  // читает /v1/vaults/:id/credentials из `managed_credentials`. В контракте
-  // /v1 такого вида нет, поэтому сюда строка cap_cli не доходит.
-  if (authType === "cap_cli") {
-    const cliId = (credential.auth as unknown as { cli_id?: string }).cli_id;
-    return { label: "CLI", target: cliId ?? "" };
-  }
   switch (credential.auth.type) {
     case "mcp_oauth":
       return { label: "OAuth", target: credential.auth.mcp_server_url };

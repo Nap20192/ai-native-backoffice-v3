@@ -13,9 +13,6 @@ export type {
 } from "./types";
 export { resolveServices } from "./types";
 
-export { buildAgentRoutes } from "./agents";
-export type { AgentRoutesDeps } from "./agents";
-
 export { buildModelCardRoutes } from "./model-cards";
 export { modelCardProbeUrl } from "./model-cards";
 export type {
@@ -25,21 +22,12 @@ export type {
 } from "./model-cards";
 export { modelCardDependencies } from "./model-cards";
 
-export { buildEnvironmentRoutes } from "./environments";
-export type { EnvironmentRoutesDeps } from "./environments";
-
 export { buildSessionRoutes } from "./sessions";
 export type {
   SessionRoutesDeps,
   SessionLifecycleHooks,
   OutputsAdapter,
 } from "./sessions";
-
-export { buildMemoryRoutes } from "./memory";
-export type { MemoryRoutesDeps } from "./memory";
-
-export { buildDreamRoutes } from "./dreams";
-export type { DreamRoutesDeps } from "./dreams";
 
 export { buildTenantRoutes, buildMeRoutes } from "./tenants";
 export type { TenantRoutesDeps, MeRoutesDeps } from "./tenants";
@@ -57,19 +45,3 @@ export type {
 
 export { buildEvalRoutes } from "./evals";
 export type { EvalRoutesDeps, EvalTaskSpec } from "./evals";
-
-export { buildIntegrationsRoutes } from "./integrations";
-export type {
-  IntegrationsRoutesDeps,
-  IntegrationsBags,
-  IntegrationsRepoBag,
-  InstallProxyForwarder,
-} from "./integrations";
-
-export { buildIntegrationsGatewayRoutes } from "./integrations/gateway";
-export type {
-  IntegrationsGatewayDeps,
-  WebhookHandler,
-  WebhookHandlers,
-  RateLimitHooks,
-} from "./integrations/gateway";

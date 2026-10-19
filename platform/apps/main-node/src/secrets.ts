@@ -2,10 +2,9 @@
 // every purpose key from PLATFORM_ROOT_SECRET with AES-GCM; a deployment
 // can pass a KMS-backed implementation instead.
 
-import type { Crypto } from "@open-managed-agents/integrations-core";
-import { WebCryptoAesGcm } from "@open-managed-agents/integrations-adapters-node";
+import { WebCryptoAesGcm, type PurposeCipher } from "./lib/web-crypto-aes-gcm.js";
 
-export type { Crypto as PurposeCipher };
+export type { PurposeCipher };
 
 export interface NodeSecrets {
   /**
@@ -14,11 +13,11 @@ export interface NodeSecrets {
    * same purpose must return an equivalent cipher for the lifetime of the
    * data it sealed.
    */
-  cipherFor(purpose: string): Crypto;
+  cipherFor(purpose: string): PurposeCipher;
 }
 
 export function createNodeSecrets(rootSecret: string): NodeSecrets {
-  const ciphers = new Map<string, Crypto>();
+  const ciphers = new Map<string, PurposeCipher>();
   return {
     cipherFor(purpose) {
       let cipher = ciphers.get(purpose);

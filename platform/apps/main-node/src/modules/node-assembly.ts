@@ -3,7 +3,6 @@ import { Hono } from "hono";
 import type { ApiKeyResolution } from "@open-managed-agents/auth";
 import type { Logger } from "@open-managed-agents/observability";
 import type { NodeComponents } from "../components.js";
-import type { NodeProcessMode } from "../process-mode.js";
 import { setDbBoundaryLogger } from "@open-managed-agents/sql-client";
 import { Disposables } from "../lifecycle.js";
 import { installDbUnhandledRejectionNet } from "../lib/db-unhandled-rejection.js";
@@ -25,14 +24,13 @@ export type NodeControlPlaneApp = Hono<{
 export interface NodeControlPlane {
   /** Hono application: mount it, or serve it with @hono/node-server. */
   readonly app: NodeControlPlaneApp;
-  readonly processMode: NodeProcessMode;
-  /** Human-readable database backend, e.g. "mysql host:3306/oma". */
+  /** Human-readable database backend, e.g. "postgres host:5432/oma". */
   readonly backendDescription: string;
   /** What this control plane was assembled from. */
   readonly components: NodeComponents;
   readonly logger: Logger;
   fetch(request: Request): Response | Promise<Response>;
-  /** Start background work owned by a standalone process (execution poller, scheduler). */
+  /** Start background work owned by the process (execution poller, scheduler). */
   start(): Promise<void>;
   /** Stop everything this control plane created. Idempotent. */
   stop(signal?: string): Promise<void>;
@@ -66,7 +64,7 @@ async function buildNodeControlPlane(
 ): Promise<NodeControlPlane> {
   const runtime = await createNodeRuntime(components, disposables, log);
   const {
-    config, processMode, logger, metrics, backendDescription, platformRootSecret, sql,
+    config, logger, metrics, backendDescription,
     agentsService, environmentsService, sessionsService, evalsService, kv,
     memoryService, managedSessionExecutionWorker, sharedSessionOutputs,
   } = runtime;
@@ -77,10 +75,8 @@ async function buildNodeControlPlane(
 
   const app = await mountNodeHttp(runtime, disposables);
 
-  // Cron — eval-tick + memory retention sweep + (when integrations schema is
-  // applied) webhook-events retention. Linear dispatch is left un-wired here
-  // because main-node doesn't construct a LinearProvider; pass `linearSweeper`
-  // when an in-process gateway lands.
+  // Cron — eval-tick, memory retention and, with shared blob storage, the
+  // Session-output candidate sweep.
   const scheduler = buildNodeScheduler({
     evalServices: {
       agents: agentsService,
@@ -90,7 +86,6 @@ async function buildNodeControlPlane(
       kv,
     },
     memory: memoryService,
-    integrationsSql: platformRootSecret ? sql : null,
     sessionOutputGarbageCollection: sharedSessionOutputs
       ? () => sharedSessionOutputs.collectGarbage() : null,
     cron: config.cron,
@@ -108,7 +103,6 @@ async function buildNodeControlPlane(
   let removeRejectionNet: (() => void) | null = null;
   return {
     app,
-    processMode,
     backendDescription,
     logger,
     fetch: (request) => app.fetch(request),
@@ -116,8 +110,8 @@ async function buildNodeControlPlane(
       if (started) return;
       started = true;
       // Vitest sets NODE_ENV=test. Installing the handler there would mark
-      // every later rejection handled. Production standalone still installs it.
-      if (processMode === "standalone" && process.env.NODE_ENV !== "test") {
+      // every later rejection handled. Production still installs it.
+      if (process.env.NODE_ENV !== "test") {
         removeRejectionNet = installDbUnhandledRejectionNet({ logger, metrics });
       }
       // Start the execution poller only after every runtime dependency above

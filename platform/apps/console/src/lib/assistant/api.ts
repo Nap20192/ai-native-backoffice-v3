@@ -23,20 +23,6 @@ export const PLATFORM_SERVER_NAME = "platform";
 
 /* ---------- Инструменты ---------- */
 
-/** Инструменты чтения: одна свёрнутая строка в ленте, без карточки. */
-export const READ_TOOLS = [
-  "help",
-  "search_docs",
-  "search_config",
-  "list",
-  "get",
-  "read_content",
-  "get_session_events",
-  "get_trajectory",
-  "request_secret",
-  "get_dependencies",
-] as const;
-
 /** Инструменты записи: каждый ждёт кнопки пользователя (раздел 2.3). */
 export const WRITE_TOOLS = [
   "create_agent",
@@ -74,10 +60,6 @@ export const DRAFT_SET_TOOLS = ["help", "list", "get", "preview_change"] as cons
 export function assistantToolName(name: string): string {
   const prefix = `mcp__${PLATFORM_SERVER_NAME}__`;
   return name.startsWith(prefix) ? name.slice(prefix.length) : name;
-}
-
-export function isReadTool(name: string): boolean {
-  return (READ_TOOLS as readonly string[]).includes(assistantToolName(name));
 }
 
 export function isWriteTool(name: string): boolean {

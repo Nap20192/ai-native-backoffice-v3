@@ -1,7 +1,6 @@
 // Abstract ports the MemoryStoreService depends on.
 //
-// Following the same dependency-inversion pattern as packages/integrations-core
-// (see ports.ts there): the service knows nothing about D1 or R2. Concrete
+// Dependency inversion: the service knows nothing about D1 or R2. Concrete
 // adapters in src/adapters/ implement these against Cloudflare bindings;
 // src/test-fakes.ts provides in-memory implementations.
 //

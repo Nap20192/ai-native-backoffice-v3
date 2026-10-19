@@ -59,6 +59,12 @@ export interface ManagedNodeSubagentPolicy {
   maxConcurrentSubagents?: number;
 }
 
+/** Delegation of a `/v1` Session: on while the callable agent roster is not
+ * empty, at most 6 children at once (docs/plans/multiagent.md). */
+export function nodeManagedSubagentPolicy(session: Session): ManagedNodeSubagentPolicy {
+  return { enabled: listedSubagents(session.agent.multiagent).length > 0, maxConcurrentSubagents: 6 };
+}
+
 interface Child {
   thread: SessionThread;
   session: Session;

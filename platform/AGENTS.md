@@ -4,7 +4,7 @@
 
 ## Неполная копия
 
-Из Open Managed Agents взяты только `apps/main-node`, `apps/agent`, `apps/console` и их зависимости. Корневые `pnpm test`, `pnpm typecheck`, `pnpm dev`, `db:generate:*`, корневой `vitest.config.ts` и часть `vitest.*.config.ts` ссылаются на файлы, которых в копии нет, и падают. Их падение это свойство копии, а не ваша ошибка. Проверяйте по пакетам:
+Из Open Managed Agents взяты только `apps/main-node`, `apps/agent`, `apps/console` и их зависимости. 2026-10-19 из корневого `package.json` ушли скрипты, которые ссылались на файлы и пакеты вне копии, а вместе с ними корневой `vitest.config.ts` для workerd. Корневые `pnpm test` и `pnpm typecheck` теперь идут только по пакетам копии, но они тяжёлые, и зелёными их ещё не запускали. Без корневого конфига `pnpm vitest run` из `platform/` без `--config` соберёт тесты всех пакетов разом, так не запускайте. `test:integration:storage` падает: в копии нет `test/storage-global-setup.ts`. Проверяйте по пакетам:
 
 | Что | Команда |
 |---|---|
@@ -30,7 +30,7 @@
 
 - Маршруты подключаются в `apps/main-node/src/modules/node-http.ts`.
 - Wire-контракт `/v1` это типы `@anthropic-ai/sdk@0.120.0`. Поля OMA живут в `/v1/oma/*`, DTO `/v1` остаются чистыми. Правила в `packages/managed-agents-api/API_LAYER.md`.
-- Консоль и помощник работают через `/v1`. Старые `/v1/oma/agents`, `/environments`, `/sessions` пишут в другие таблицы. Новые функции этих сущностей идут в `/v1`.
+- Консоль и помощник работают через `/v1`. Старый `/v1/oma/sessions` пишет в другие таблицы. Старые `/v1/oma/agents`, `/v1/oma/environments`, `/v1/oma/memory_stores`, `/v1/oma/dreams` и `/v1/oma/files` сняты 2026-10-19. Новые функции этих сущностей идут в `/v1`.
 
 ## Слои `/v1`
 
@@ -45,7 +45,7 @@
 
 - Для разработки SQLite (`DATABASE_PATH`). Postgres включает `DATABASE_URL`, но захват исполнений там падает с `42P18` (`docs/runbook-local.md`).
 - Относительные пути считаются от `apps/main-node`.
-- Миграция пишется руками в две папки одинаково: `apps/main-node/migrations/` (Postgres) и `migrations-sqlite/` (SQLite, MySQL), вместе с записью в `meta/_journal.json`. Генератор Drizzle не работает. Номера существующих миграций постоянны, регрессию ловит `test/migration-merge.test.ts`.
+- Миграция пишется руками в две папки одинаково: `apps/main-node/migrations/` (Postgres) и `migrations-sqlite/` (SQLite), вместе с записью в `meta/_journal.json`. Генератор Drizzle не работает. Номера существующих миграций постоянны, регрессию ловит `test/migration-merge.test.ts`.
 - Таблицы наших модулей (`lib/platform-mcp/schema.ts`, `lib/trace/store.ts`) создаются кодом через `CREATE TABLE IF NOT EXISTS` одним SQL для обеих баз.
 - Таблица `harness_cards` осталась в старых базах. Код её больше не использует, миграции удаления нет (D41 в `docs/decisions-2026-10-17.md`).
 

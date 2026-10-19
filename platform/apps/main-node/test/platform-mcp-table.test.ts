@@ -51,6 +51,7 @@ const FORBIDDEN: [string, string][] = [
   ["POST", "/v1/sessions/sesn_1/threads/thr_1/archive"],
   ["DELETE", "/v1/deployments/depl_1"],
   ["POST", "/v1/vaults/vlt_1/credentials/cred_1/unarchive"],
+  // The route went away with the legacy duplicates (cleanup.md 4.6); the entry stays as a guard.
   ["DELETE", "/v1/oma/agents/agent_1"],
   ["POST", "/v1/oma/evals/runs"],
   ["POST", "/v1/oma/skill-sources/install"],

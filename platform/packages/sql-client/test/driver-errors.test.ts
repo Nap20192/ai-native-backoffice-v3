@@ -2,28 +2,11 @@ import { describe, expect, it } from "vitest";
 import { ConnectionLost, Deadlock, LockWaitTimeout, driverRetry, isTransientDbError } from "../src/db-errors";
 import { translateBetterSqlite3Error } from "../src/adapters/better-sqlite3-errors";
 import { translateCfD1Error } from "../src/adapters/cf-d1-errors";
-import { translateMysql2Error } from "../src/adapters/mysql2-errors";
 import { translatePostgresError } from "../src/adapters/postgres-errors";
 
 function coded(code: string, extra: Record<string, unknown> = {}): Error {
   return Object.assign(new Error(code), { code, ...extra });
 }
-
-describe("mysql2 translation", () => {
-  it("maps 1213, 1205, and connection loss", () => {
-    expect(translateMysql2Error(Object.assign(new Error("deadlock"), { errno: 1213, code: "ER_LOCK_DEADLOCK" }))).toBeInstanceOf(Deadlock);
-    expect(translateMysql2Error(Object.assign(new Error("lock wait"), { errno: 1205, code: "ER_LOCK_WAIT_TIMEOUT" }))).toBeInstanceOf(LockWaitTimeout);
-    expect(translateMysql2Error(coded("PROTOCOL_CONNECTION_LOST", { errno: 2013 }))).toBeInstanceOf(ConnectionLost);
-  });
-
-  it("reads a code nested on cause and ignores PostgreSQL SQLSTATEs", () => {
-    const wrapped = new Error("pool");
-    (wrapped as Error & { cause?: unknown }).cause = Object.assign(new Error("deadlock"), { errno: 1213 });
-    expect(translateMysql2Error(wrapped)).toBeInstanceOf(Deadlock);
-    const pg = coded("40P01");
-    expect(translateMysql2Error(pg)).toBe(pg);
-  });
-});
 
 describe("postgres translation", () => {
   it("maps 40P01 and serialization_failure 40001 to Deadlock", () => {

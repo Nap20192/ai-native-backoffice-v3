@@ -72,9 +72,9 @@ describe("managed worker bearer authentication", () => {
     const deps = dependencies();
     const app = new Hono();
     app.use("*", createAuthMiddleware(deps));
-    app.get("/v1/oma/agents", (context) => context.json({ ok: true }));
+    app.get("/v1/oma/sessions", (context) => context.json({ ok: true }));
 
-    const response = await app.request("/v1/oma/agents");
+    const response = await app.request("/v1/oma/sessions");
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });

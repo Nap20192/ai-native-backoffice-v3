@@ -265,7 +265,6 @@ section 3.Б). The fields are declared like `_oma` of an agent, in
   tool result or as a message from its thread, and decides on its next
   request. A
   self-hosted environment gets the 400 and the raise, but no continuation.
-  MySQL has no counter, so nothing stops there.
 
 ## Completed Environment surface
 

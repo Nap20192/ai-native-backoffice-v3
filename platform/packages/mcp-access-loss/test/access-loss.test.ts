@@ -3,10 +3,63 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyAccessLossEffect,
   classifyUpstreamAccess,
+  integrationAccessLossCatalogs,
+  type AccessLossCatalog,
   type AccessLossEffect,
   type AccessLossEffectStore,
   type AccessLossEffectPorts,
 } from "../src/index";
+
+// The provider catalogs left with the integrations (docs/plans/cleanup.md,
+// 5.1). These fixtures keep the matching rules covered.
+const chatCatalog: AccessLossCatalog = {
+  provider: "slack",
+  serverNames: ["slack"],
+  scopeLost: [
+    { code: "not_in_channel", resourceType: "channel" },
+    { code: "channel_not_found", resourceType: "channel" },
+  ],
+  credentialLost: ["token_revoked", "account_inactive"],
+  phrases: [],
+  table: "slack_thread_sessions",
+  terminalStatus: "completed",
+  clearPendingScan: true,
+};
+
+const trackerCatalog: AccessLossCatalog = {
+  provider: "linear",
+  serverNames: ["linear"],
+  scopeLost: [
+    { code: "issue_not_found", resourceType: "issue" },
+    { code: "issue_unassigned", resourceType: "issue" },
+  ],
+  credentialLost: [],
+  phrases: [
+    { phrase: "could not find referenced issue", code: "issue_not_found", resourceType: "issue" },
+    { phrase: "you are not assigned", code: "issue_unassigned", resourceType: "issue" },
+  ],
+  table: "linear_issue_sessions",
+  terminalStatus: "inactive",
+  clearPendingScan: false,
+};
+
+const repoCatalog: AccessLossCatalog = {
+  provider: "github",
+  serverNames: ["github"],
+  scopeLost: [
+    { code: "installation_not_found", resourceType: "installation" },
+    { code: "repository_not_found", resourceType: "repository" },
+  ],
+  credentialLost: [],
+  phrases: [
+    { phrase: "repository not found", code: "repository_not_found", resourceType: "repository" },
+  ],
+  table: "github_issue_sessions",
+  terminalStatus: "inactive",
+  clearPendingScan: false,
+};
+
+const fixtureCatalogs = [chatCatalog, trackerCatalog, repoCatalog];
 
 function observation(overrides: Partial<Parameters<typeof classifyUpstreamAccess>[0]> = {}) {
   return {
@@ -22,14 +75,24 @@ function observation(overrides: Partial<Parameters<typeof classifyUpstreamAccess
 }
 
 describe("classifyUpstreamAccess", () => {
-  it("maps Slack channel loss and keeps token revocation on the credential", () => {
+  it("ships no provider catalog, so provider error codes stay retryable", () => {
+    expect(integrationAccessLossCatalogs).toEqual([]);
+    expect(classifyUpstreamAccess(observation({
+      bodyText: '{"error":"not_in_channel"}',
+    })).class).toBe("retryable");
+    expect(classifyUpstreamAccess(observation({
+      bodyText: '{"error":"token_revoked"}',
+    })).class).toBe("retryable");
+  });
+
+  it("maps channel loss and keeps token revocation on the credential", () => {
     expect(classifyUpstreamAccess(observation({
       bodyText: JSON.stringify({ result: { isError: true, content: [{ text: "not_in_channel" }] } }),
       requestBody: JSON.stringify({
         method: "tools/call",
         params: { arguments: { channel_id: "C123" } },
       }),
-    }))).toEqual({
+    }), fixtureCatalogs)).toEqual({
       class: "scope_lost",
       provider: "slack",
       code: "not_in_channel",
@@ -37,32 +100,32 @@ describe("classifyUpstreamAccess", () => {
     });
     expect(classifyUpstreamAccess(observation({
       bodyText: '{"error":"channel_not_found"}',
-    })).class).toBe("scope_lost");
+    }), fixtureCatalogs).class).toBe("scope_lost");
     expect(classifyUpstreamAccess(observation({
       bodyText: '{"error":"token_revoked"}',
-    })).class).toBe("credential_lost");
+    }), fixtureCatalogs).class).toBe("credential_lost");
     expect(classifyUpstreamAccess(observation({
       bodyText: '{"error":"account_inactive"}',
-    })).class).toBe("credential_lost");
+    }), fixtureCatalogs).class).toBe("credential_lost");
   });
 
-  it("maps Linear and GitHub scope loss", () => {
+  it("maps issue and repository scope loss by code and by phrase", () => {
     expect(classifyUpstreamAccess(observation({
       serverName: "linear",
       bodyText: "Could not find referenced Issue",
-    }))).toMatchObject({ class: "scope_lost", provider: "linear", code: "issue_not_found" });
+    }), fixtureCatalogs)).toMatchObject({ class: "scope_lost", provider: "linear", code: "issue_not_found" });
     expect(classifyUpstreamAccess(observation({
       serverName: "linear",
       bodyText: "You are not assigned to this issue",
-    }))).toMatchObject({ code: "issue_unassigned" });
+    }), fixtureCatalogs)).toMatchObject({ code: "issue_unassigned" });
     expect(classifyUpstreamAccess(observation({
       serverName: "github",
       bodyText: '{"error":"installation_not_found"}',
-    }))).toMatchObject({ class: "scope_lost", provider: "github", code: "installation_not_found" });
+    }), fixtureCatalogs)).toMatchObject({ class: "scope_lost", provider: "github", code: "installation_not_found" });
     expect(classifyUpstreamAccess(observation({
       serverName: "github",
       bodyText: "Repository not found",
-    }))).toMatchObject({ code: "repository_not_found" });
+    }), fixtureCatalogs)).toMatchObject({ code: "repository_not_found" });
   });
 
   it("leaves network failures, rate limits, 5xx, and generic 401s retryable", () => {

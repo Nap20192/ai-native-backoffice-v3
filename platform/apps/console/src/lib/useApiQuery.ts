@@ -1,10 +1,8 @@
 import {
   keepPreviousData,
   useInfiniteQuery,
-  useMutation,
   useQuery,
   useQueryClient,
-  type UseMutationOptions,
   type UseQueryOptions,
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
@@ -21,9 +19,6 @@ import { useApi } from "./api";
  *     error, refetch }`; loading state derives from `isLoading` automatically.
  *   - Cache + dedup: two components asking for the same path within
  *     `staleTime` (30s) get one fetch. Tab-switch refetch is built in.
- *   - Mutations: `useApiMutation` + `queryClient.invalidateQueries(...)`
- *     replaces ad-hoc "POST then call refresh()" patterns; the list
- *     refetches automatically.
  *
  * Defaults inherited from `queryClient` (`src/lib/query-client.ts`):
  *   staleTime 30s, gcTime 5min, refetchOnWindowFocus, retry 1.
@@ -267,39 +262,6 @@ export function useOmaInfiniteApiQuery<T>(
     kind: "oma",
     cursorParam: "cursor",
     getNextCursor: (page) => page.next_cursor ?? undefined,
-  });
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// Mutation wrapper. Same surface as `useMutation` but with the toasting
-// `api` already wired in. Most callers will pair it with
-// `queryClient.invalidateQueries({ queryKey: [path] })` in `onSuccess` —
-// re-fetches every list/detail keyed under that path automatically.
-// ────────────────────────────────────────────────────────────────────────
-
-export interface ApiMutationVariables<TBody> {
-  path: string;
-  method?: "POST" | "PUT" | "PATCH" | "DELETE";
-  body?: TBody;
-  /** Override the JSON-encoding default — pass FormData here directly. */
-  formData?: FormData;
-}
-
-export function useApiMutation<TResult = unknown, TBody = unknown>(
-  options?: Omit<
-    UseMutationOptions<TResult, Error, ApiMutationVariables<TBody>>,
-    "mutationFn"
-  >,
-) {
-  const { api } = useApi();
-
-  return useMutation<TResult, Error, ApiMutationVariables<TBody>>({
-    mutationFn: ({ path, method = "POST", body, formData }) =>
-      api<TResult>(path, {
-        method,
-        body: formData ?? (body !== undefined ? JSON.stringify(body) : undefined),
-      }),
-    ...options,
   });
 }
 

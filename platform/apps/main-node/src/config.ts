@@ -13,7 +13,6 @@
 import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
 
-import { resolveNodeProcessMode, validateNodeProcessEnvironment, type NodeProcessMode } from "./process-mode.js";
 import { resolveRealtimeFanout, type RealtimeFanoutConfig } from "./realtime-fanout.js";
 import { parseAllowHosts } from "./lib/skill-sources.js";
 import { PLATFORM_MCP_ENDPOINT_PATH } from "@open-managed-agents/auth";
@@ -22,8 +21,7 @@ export type NodeEnvironment = Readonly<Record<string, string | undefined>>;
 
 export type DatabaseConfig =
   | { kind: "sqlite"; path: string }
-  | { kind: "postgres"; url: string }
-  | { kind: "mysql"; url: string };
+  | { kind: "postgres"; url: string };
 
 export type BlobBackendConfig =
   | { kind: "localfs"; dir: string }
@@ -41,11 +39,10 @@ export type BlobBackendConfig =
     };
 
 export interface NodeConfig {
-  processMode: NodeProcessMode;
   database: DatabaseConfig;
   auth: {
     disabled: boolean;
-    /** Better Auth's SQLite file; unused for Postgres/MySQL, which share the main database. */
+    /** Better Auth's SQLite file; unused for Postgres, which shares the main database. */
     databasePath: string;
     /** Missing means "generate a per-process secret and warn", as before. */
     secret: string | undefined;
@@ -56,7 +53,7 @@ export interface NodeConfig {
     google: { clientId: string | undefined; clientSecret: string | undefined };
     github: { clientId: string | undefined; clientSecret: string | undefined };
   };
-  /** Root key for platform-owned ciphers (model cards, integrations). */
+  /** Root key for platform-owned ciphers (model cards, vault credentials). */
   platformRootSecret: string | undefined;
   blobs: {
     memory: BlobBackendConfig & { pollIntervalMs?: number };
@@ -102,7 +99,6 @@ export interface NodeConfig {
     host: string;
     port: number;
     publicBaseUrl: string | undefined;
-    gatewayOrigin: string;
     consoleDir: string | undefined;
     /** CONSOLE_BRANDING_DIR: branding.json plus the logo, favicon, and stylesheet it names. */
     brandingDir: string | undefined;
@@ -125,7 +121,6 @@ export interface NodeConfig {
      */
     allowHosts: string[];
   };
-  integrationsInternalToken: string | undefined;
   email: {
     host: string;
     port: number;
@@ -134,17 +129,14 @@ export interface NodeConfig {
     pass: string | undefined;
     fromAddress: string | undefined;
   } | null;
-  feishuWsRunner: boolean;
   cron: {
     evalTick: string;
     memoryRetention: string;
-    webhookEventsRetention: string;
-    linearDispatch: string;
   };
   sandbox: {
     /**
-     * The provider's own configuration namespace (SANDBOX_PROVIDER, E2B_*,
-     * DAYTONA_*, …). Opaque to the control plane: it is handed to the
+     * The provider's own configuration namespace (SANDBOX_PROVIDER,
+     * LITEBOX_*, SANDBOX_IMAGE, …). Opaque to the control plane: it is handed to the
      * selected SandboxFactory, whose contract is env-shaped.
      */
     environment: NodeEnvironment;
@@ -203,19 +195,16 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     return value === undefined || value.trim() === "" ? undefined : value;
   };
 
-  let processMode: NodeProcessMode = "standalone";
-  attempt(undefined, () => {
-    processMode = resolveNodeProcessMode(env);
-    validateNodeProcessEnvironment(env);
-  });
-
   const dbUrl = env.DATABASE_URL ?? "";
+  // MySQL support was removed (docs/plans/cleanup.md, 5.3). A MySQL URL is
+  // refused rather than silently falling back to SQLite.
+  if (dbUrl.startsWith("mysql://") || dbUrl.startsWith("mysql2://")) {
+    problems.push("DATABASE_URL: MySQL is not supported; use a postgres:// URL or DATABASE_PATH for SQLite");
+  }
   const database: DatabaseConfig =
     dbUrl.startsWith("postgres://") || dbUrl.startsWith("postgresql://")
       ? { kind: "postgres", url: dbUrl }
-      : dbUrl.startsWith("mysql://") || dbUrl.startsWith("mysql2://")
-        ? { kind: "mysql", url: dbUrl }
-        : { kind: "sqlite", path: env.DATABASE_PATH ?? "./data/oma.db" };
+      : { kind: "sqlite", path: env.DATABASE_PATH ?? "./data/oma.db" };
 
   const realtime = attempt<RealtimeFanoutConfig>(
     { mode: "memory", pollIntervalMs: 300 },
@@ -302,7 +291,6 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     return url.toString();
   });
   const config: NodeConfig = {
-    processMode,
     database,
     auth: {
       disabled: flag("AUTH_DISABLED"),
@@ -351,7 +339,6 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
       // 0 asks the OS for an ephemeral port (tests and local tooling rely on it).
       port: integer("PORT", 8787, { min: 0, max: 65535 }),
       publicBaseUrl: env.PUBLIC_BASE_URL,
-      gatewayOrigin: env.GATEWAY_ORIGIN ?? env.PUBLIC_BASE_URL ?? "http://localhost:8787",
       consoleDir: env.CONSOLE_DIR,
       brandingDir: env.CONSOLE_BRANDING_DIR,
       metricsToken: env.METRICS_BIND_TOKEN,
@@ -360,14 +347,10 @@ export function loadNodeConfig(env: NodeEnvironment): NodeConfig {
     tunnels: { domainSuffix: env.TUNNEL_DOMAIN_SUFFIX ?? "tunnels.localhost" },
     platformMcp: { url: platformMcpUrl },
     skillSources: { allowHosts: skillSourceAllowHosts },
-    integrationsInternalToken: env.INTEGRATIONS_INTERNAL_TOKEN,
     email,
-    feishuWsRunner: flag("FEISHU_WS_RUNNER"),
     cron: {
       evalTick: cron("EVAL_TICK_CRON", "* * * * *"),
       memoryRetention: cron("MEMORY_RETENTION_CRON", "* * * * *"),
-      webhookEventsRetention: cron("WEBHOOK_EVENTS_RETENTION_CRON", "* * * * *"),
-      linearDispatch: cron("LINEAR_DISPATCH_CRON", "* * * * *"),
     },
     sandbox: { environment: env },
   };
@@ -412,7 +395,6 @@ export function redactNodeConfig(config: NodeConfig): Record<string, unknown> {
     model: { ...config.model, apiKey: mask(config.model.apiKey) },
     managedWebhooks: { ...config.managedWebhooks, signingKey: mask(config.managedWebhooks.signingKey) },
     http: { ...config.http, metricsToken: mask(config.http.metricsToken), apiKey: mask(config.http.apiKey) },
-    integrationsInternalToken: mask(config.integrationsInternalToken),
     email: config.email === null ? null : { ...config.email, pass: mask(config.email.pass) },
   };
 }

@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { createBetterSqlite3SqlClient, type SqlClient } from "@open-managed-agents/sql-client";
+import type { SqlClient } from "@open-managed-agents/sql-client";
 import {
   encodeCursor,
   readChangesCursor,
@@ -26,12 +26,10 @@ import type { TraceScope, TraceSpan, TraceStatus, TraceTurnSummary } from "./typ
 /**
  * GET /v1/oma/sessions/:id/trace and its pages (plan section 3.2), the search
  * and the OTLP JSON download. Mount before the generic /oma/sessions routes.
- * On MySQL there are no trace tables: the trace is rebuilt from events into
- * an in-memory SQLite store, cached per session by its newest event id (3.4).
  */
 export interface TraceRoutesOptions {
   sql: SqlClient;
-  dialect: "sqlite" | "postgres" | "mysql";
+  dialect: "sqlite" | "postgres";
   store?: TraceStore;
   executions?: TraceExecutionsReader;
   history?: TraceHistoryWindow;
@@ -39,8 +37,6 @@ export interface TraceRoutesOptions {
   now?: () => number;
   /** Time search may spend building turns per request. */
   searchBudgetMs?: number;
-  /** MySQL: sessions kept in the in-memory trace cache. */
-  memorySessions?: number;
 }
 
 type TraceEnv = { Variables: { tenant_id: string } };
@@ -63,8 +59,6 @@ interface TurnEntry {
 interface Backend {
   store: TraceStore;
   repair: TraceRepair;
-  /** MySQL: rebuild the session in memory when its history changed. */
-  prepare(scope: TraceScope): Promise<void>;
 }
 
 function sqlBackend(options: TraceRoutesOptions, readers: Readers): Backend {
@@ -72,53 +66,7 @@ function sqlBackend(options: TraceRoutesOptions, readers: Readers): Backend {
   return {
     store,
     repair: createTraceRepair({ store, ...readers, ...(options.now !== undefined && { now: options.now }) }),
-    prepare: async () => undefined,
   };
-}
-
-function memoryBackend(options: TraceRoutesOptions, readers: Readers): Backend {
-  let memory: Promise<{ store: TraceStore; repair: TraceRepair }> | null = null;
-  const cache = new Map<string, string | null>();
-  const limit = options.memorySessions ?? 20;
-  const open = () => {
-    memory ??= createBetterSqlite3SqlClient(":memory:").then((sql) => {
-      const store = createTraceStore({ sql, dialect: "sqlite" });
-      return { store, repair: createTraceRepair({ store, ...readers, ...(options.now !== undefined && { now: options.now }) }) };
-    });
-    return memory;
-  };
-  const backend: Backend = {
-    // Replaced on first prepare(); every handler calls prepare() first.
-    store: undefined as unknown as TraceStore,
-    repair: undefined as unknown as TraceRepair,
-    async prepare(scope) {
-      const { store, repair } = await open();
-      backend.store = store;
-      backend.repair = repair;
-      const key = `${scope.workspaceId}\u0000${scope.sessionId}`;
-      const last = await readers.history.lastEventId(scope);
-      if (cache.has(key) && cache.get(key) === last) {
-        cache.delete(key);
-        cache.set(key, last);
-        return;
-      }
-      // Rows are rebuilt in place, so their version keeps growing for the change feed.
-      const built = new Map((await store.readTurns(scope)).map((row) => [row.turn_id, row.state]));
-      for (const execution of await readers.executions.list(scope)) {
-        if (built.get(execution.id) === "repaired") continue;
-        await repair.repairTurn(scope, execution, { force: true });
-      }
-      cache.delete(key);
-      cache.set(key, last);
-      while (cache.size > limit) {
-        const oldest = cache.keys().next().value as string;
-        cache.delete(oldest);
-        const [workspaceId, sessionId] = oldest.split("\u0000") as [string, string];
-        await store.deleteSession({ workspaceId, sessionId });
-      }
-    },
-  };
-  return backend;
 }
 
 interface Readers {
@@ -210,7 +158,7 @@ export function buildTraceRoutes(options: TraceRoutesOptions): Hono<TraceEnv> {
     history: options.history ?? createHistoryWindow(options.sql),
     sessions: options.sessions ?? createSessionInfoReader(options.sql),
   };
-  const backend = options.dialect === "mysql" ? memoryBackend(options, readers) : sqlBackend(options, readers);
+  const backend = sqlBackend(options, readers);
   const routes = new Hono<TraceEnv>();
 
   const scopeOf = async (c: Context<TraceEnv>): Promise<TraceScope | Response> => {
@@ -218,7 +166,6 @@ export function buildTraceRoutes(options: TraceRoutesOptions): Hono<TraceEnv> {
     if (typeof workspaceId !== "string" || workspaceId.length === 0) return c.json({ error: "Unauthorized" }, 401);
     const scope = { workspaceId, sessionId: c.req.param("id") ?? "" };
     if (await readers.sessions.read(scope) === null) return c.json({ error: "Session not found" }, 404);
-    await backend.prepare(scope);
     return scope;
   };
 

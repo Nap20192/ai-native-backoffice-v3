@@ -730,18 +730,6 @@
   text-transform: uppercase;
 }
 
-.console-menu-flag {
-  display: inline-flex;
-  width: 16px;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  color: var(--ddc-text-muted);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  line-height: 1rem;
-}
-
 .console-user-menu .console-menu-check {
   margin-left: auto;
   color: var(--ddc-accent-text);

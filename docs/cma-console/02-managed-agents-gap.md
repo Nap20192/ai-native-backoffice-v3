@@ -146,7 +146,7 @@
 | **Состояние в адресе** | 2.1, 4.1, 2.7, 6.2, 7.3, 8.3, 4.3 | react-router подключён, но `useSearchParams` в списках и карточках не используется (только в мастерах интеграций) | `useUrlState` для фильтров, вкладки, быстрого просмотра, `?agent=`; тот же нужен C3 (план, 3.2) | S |
 | **Выбор расписания** | 5.3-5.4 | Ничего (на сервере croner, готовый `CronDeploymentSchedulePlanner`) | `SchedulePicker`: частота, часовой пояс, время, cron, 5 ближайших запусков | M |
 | **Редактор ресурсов сессии** | 5.6 | Блок ресурсов в окне «Новая сессия» (`SessionsList.tsx`) | Вынести в `ResourceListEditor` для сессии и деплоймента; вынести и само окно «Новая сессия» для пункта «Начать сессию» | S |
-| **Диалоги, меню, пустые состояния** | все | `Modal`, `ConfirmDialog`, `RowContextMenu`, `EmptyState` (11 видов значков), `LoadError`, `Skeleton`, тосты, `CommandPalette` | `EmptyStateKind = "deployment"` и значок раздела в `nav-icons.ts`; пункты «Быстрый старт» и «Деплойменты» в `AppSidebar.tsx`, `CommandPalette.tsx` и `i18n` (ru, en, zh-CN). Сейчас в группе «Управляемые агенты» только Агенты, Сессии, Файлы, Запуски оценки | S |
+| **Диалоги, меню, пустые состояния** | все | `Modal`, `ConfirmDialog`, `RowContextMenu`, `EmptyState` (11 видов значков), `LoadError`, `Skeleton`, тосты, `CommandPalette` | `EmptyStateKind = "deployment"` и значок раздела в `nav-icons.ts`; пункты «Быстрый старт» и «Деплойменты» в `AppSidebar.tsx`, `CommandPalette.tsx` и `i18n` (`ru.ts`, `types.ts`). Сейчас в группе «Управляемые агенты» только Агенты, Сессии, Файлы, Запуски оценки | S |
 
 ## 4. Панели, для которых данных нет и не будет, и что показать у нас
 

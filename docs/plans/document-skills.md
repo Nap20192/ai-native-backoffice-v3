@@ -159,7 +159,7 @@ MCP-серверы для документов в этот шаг не вошл�
 | Docker | `platform/apps/main-node/Dockerfile:58` |
 | Консоль «Навыки» | `C/pages/SkillsList.tsx:59, 68, 228-252, 355-437, 516, 529, 685, 758-790`, `C/lib/skill-archive.ts` |
 | Шаблон «Документы» | `C/lib/environment-templates.ts`, `C/pages/EnvironmentsList.tsx:97, 304-334` |
-| Комментарий, который вёл к anthropics/skills | `platform/apps/agent/src/harness/skills.ts:367-371` |
+| Комментарий, который вёл к anthropics/skills | `platform/apps/agent/src/harness/skills.ts:15-19` |
 
 ### 8.2 Проверка
 

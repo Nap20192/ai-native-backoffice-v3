@@ -1,6 +1,5 @@
 import { dynamicTool, generateText, jsonSchema, tool } from "ai";
 import { z } from "zod";
-import { anthropic } from "@ai-sdk/anthropic";
 import type { LanguageModel } from "ai";
 import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
 import {
@@ -1229,13 +1228,12 @@ export async function buildTools(
 
   // --- Web search ---
   // Default: DuckDuckGo (free, no config). Override with explicit tool types:
-  //   "web_search_20250305" → Anthropic built-in server-side (Claude only)
   //   "web_search_tavily"   → Tavily API (needs TAVILY_API_KEY)
+  // The legacy type "web_search_20250305" (Anthropic server-side search) now
+  // gets DuckDuckGo: getEnabledBuiltinTools maps it to web_search.
   const toolTypes = new Set((agentConfig.tools || []).map(t => t.type));
 
-  if (toolTypes.has("web_search_20250305")) {
-    tools.web_search = anthropic.tools.webSearch_20250305();
-  } else if (toolTypes.has("web_search_ddg") || enabled.has("web_search")) {
+  if (toolTypes.has("web_search_ddg") || enabled.has("web_search")) {
     // DuckDuckGo — default web search, free, no API key
     tools.web_search = tool({
       description:
@@ -1500,8 +1498,8 @@ export async function buildTools(
 
   // Built-in general sub-agent tool — opt-in via
   // agentConfig.enable_general_subagent. Reserved id "general" routes
-  // to a synthesized config in runSubAgent (apps/agent/src/runtime/
-  // session-do.ts), so the user doesn't need to pre-create + add a
+  // to a synthesized config on the server (apps/main-node/src/lib/
+  // node-managed-subagents.ts), so the user doesn't need to pre-create + add a
   // sub-agent to the callable_agents roster. Inherits this agent's
   // model + sandbox; runs with a generic system prompt and a safe
   // built-in toolset (no schedule, no further delegate, no MCP).
@@ -1557,6 +1555,6 @@ export async function buildTools(
 // get bespoke memory_* tools. Each attached store is mounted as a directory
 // under /mnt/memory/<store_name>/ in the sandbox, and the agent reads/writes
 // it with the standard file tools above (bash/read/write/edit/glob/grep).
-// The mount itself is set up in apps/agent/src/runtime/resource-mounter.ts.
+// On Node the mount is set up in apps/main-node/src/lib/node-managed-session-inputs.ts.
 // Audit / version rows are produced asynchronously via R2 Event Notifications
 // → Queue → consumer at apps/main/src/queue/memory-events.ts.

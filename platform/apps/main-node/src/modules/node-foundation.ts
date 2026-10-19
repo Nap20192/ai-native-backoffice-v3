@@ -14,8 +14,6 @@
  * index.ts is the executable entrypoint (process.env, listen, signals).
  */
 
-import { OpenAIAgentsProtocolError } from "@open-managed-agents/openai-agents-api";
-
 import { createNodeLogger } from "@open-managed-agents/observability/logger/node";
 import { createNodeMetricsRecorder, type NodeMetricsHandle } from "@open-managed-agents/observability/metrics/node";
 import { createNodeTracer, type NodeTracerHandle } from "@open-managed-agents/observability/tracer/node";
@@ -47,7 +45,6 @@ import { nodeToMarkdown } from "@open-managed-agents/markdown/adapters/node";
 
 import { SqlAgentPersistence } from "@open-managed-agents/managed-agents-adapters-sql";
 
-import { resolveFeishuAgentTools } from "../lib/feishu-agent-tools.js";
 import { createLegacySessionMcpProxy } from "../lib/legacy-session-mcp-proxy.js";
 
 import { NodeWorkspaceBackupService } from "../lib/node-workspace-backup.js";
@@ -78,9 +75,7 @@ export async function createNodeFoundation(
   log: { current: Logger | null },
 ) {
   const { config } = components;
-  const { processMode } = config;
   const sandboxEnvironment = config.sandbox.environment;
-  const ownsLongLivedProcesses = processMode === "standalone";
 
   const toMarkdownProvider = nodeToMarkdown();
 
@@ -112,25 +107,10 @@ export async function createNodeFoundation(
   if (database.stop) disposables.add("database", () => database.stop!());
   const managedAgentsPersistence = new SqlAgentPersistence(sql);
 
-  // Integrations subsystem boot is gated on PLATFORM_ROOT_SECRET (used to
-  // encrypt OAuth tokens etc.). Tables are part of the consolidated baseline
-  // above so they're always created — the gate now only controls subsystem
-  // wiring, not schema bootstrap.
+  // PLATFORM_ROOT_SECRET keys the platform ciphers (vault credentials,
+  // model card keys, Session resources); without it they stay unavailable.
   const platformRootSecret = config.platformRootSecret;
   const { secrets } = components;
-  const openAIAgentsConfigurationCipher = secrets === null
-    ? null
-    : secrets.cipherFor("openai.agents.configuration");
-  const openAIAgentsSecrets = {
-    seal: async (plaintext: string) => {
-      if (!openAIAgentsConfigurationCipher) throw new OpenAIAgentsProtocolError(503, "PLATFORM_ROOT_SECRET is required for confidential Agents API configuration", undefined, "configuration_unavailable");
-      return openAIAgentsConfigurationCipher.encrypt(plaintext);
-    },
-    open: async (ciphertext: string) => {
-      if (!openAIAgentsConfigurationCipher) throw new OpenAIAgentsProtocolError(503, "PLATFORM_ROOT_SECRET is required for confidential Agents API configuration", undefined, "configuration_unavailable");
-      return openAIAgentsConfigurationCipher.decrypt(ciphertext);
-    },
-  };
 
   // ─── Auth ───────────────────────────────────────────────────────────────
 
@@ -187,9 +167,7 @@ export async function createNodeFoundation(
   // Set MEMORY_QUEUE=disabled to skip wiring and fall back to the legacy
   // direct-call watcher.
   const useQueue = config.memoryQueue !== "disabled";
-  const memoryWatcher = !ownsLongLivedProcesses
-    ? { stop: async () => {} }
-    : memoryBlobLocalDir && useQueue
+  const memoryWatcher = memoryBlobLocalDir && useQueue
     ? await startNodeMemoryQueue({
         mode: "sql",
         sql,
@@ -205,7 +183,7 @@ export async function createNodeFoundation(
   disposables.add("memory_watcher", () => memoryWatcher.stop());
 
   let s3Poller: { stop: () => Promise<void> } | null = null;
-  if (ownsLongLivedProcesses && s3MemoryConfig) {
+  if (s3MemoryConfig) {
     // memory_blob_poller_lease lives in the consolidated baseline already; no
     // separate schema bootstrap needed here.
     const replicaId = `replica_${process.pid}_${Math.floor(Math.random() * 1e9).toString(36)}`;
@@ -236,7 +214,7 @@ export async function createNodeFoundation(
   const sharedSessionOutputs = config.blobs.files.kind === "s3"
     ? new NodeSharedSessionOutputs({ sql, blobs: filesBlob })
     : undefined;
-  await sharedSessionOutputs?.ensureSchema(dialect);
+  await sharedSessionOutputs?.ensureSchema();
   const sessionOutputs = sharedSessionOutputs ?? nodeOutputsAdapter(outputsRoot);
 
   const workspaceBackups = new NodeWorkspaceBackupService({
@@ -447,19 +425,11 @@ export async function createNodeFoundation(
       });
       await runtime.refreshHistory();
       const rawSystemPrompt = input.agent.system ?? "";
-      // Feishu-backed sessions get two live tools (mcp__feishu__im_message_send,
-      // mcp__feishu__im_chat_read) wired straight to FeishuApiClient. Non-Feishu
-      // sessions resolve to {} (a safe no-op spread). Token handling lives inside
-      // FeishuApiClient — see lib/feishu-agent-tools.ts.
-      const feishuTools = await resolveFeishuAgentTools(input.sessionId);
       return {
         agent: input.agent,
         userMessage: input.userMessage,
         session_id: input.sessionId,
-        tools: {
-          ...(input.tools as Record<string, unknown>),
-          ...feishuTools,
-        } as HarnessContext["tools"],
+        tools: { ...(input.tools as Record<string, unknown>) } as HarnessContext["tools"],
         model: input.model,
         pi,
         systemPrompt: composeSystemPrompt(rawSystemPrompt),
@@ -478,8 +448,6 @@ export async function createNodeFoundation(
 
   return {
     config,
-    processMode,
-    ownsLongLivedProcesses,
     toMarkdownProvider,
     logger,
     metrics,
@@ -491,7 +459,6 @@ export async function createNodeFoundation(
     managedAgentsPersistence,
     platformRootSecret,
     secrets,
-    openAIAgentsSecrets,
     authDisabled,
     auth,
     agentsService,

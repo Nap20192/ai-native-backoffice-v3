@@ -1,27 +1,32 @@
 // @open-managed-agents/db-schema
 //
-// All table definitions live here, organized by which physical database
-// they target on Cloudflare. Node-PG re-exports the union of CF schemas
-// with PG-typed columns (since on Node everything lives in one PG
-// database).
+// All table definitions live here. `./cf-auth` holds the SQLite tables
+// (the name is left over from the Cloudflare D1 binding); `./node-pg`
+// holds the same tables with PG-typed columns.
 //
-// Subpackages — each maps to one drizzle-kit config + one migrations dir:
-//   ./cf-auth          → MAIN_DB / openma-auth (control plane + business)
-//   ./cf-integrations  → INTEGRATIONS_DB / openma-integrations
-//   ./cf-router        → ROUTER_DB / openma-router
-//   ./node-pg          → single PG database (union of the three above)
+// Subpackages:
+//   ./cf-auth      → SQLite (control plane + business)
+//   ./node-sqlite  → SQLite barrel over ./cf-auth
+//   ./node-pg      → single PG database
+//
+// Removed schemas, whose tables stay in existing databases and in the
+// migrations (docs/plans/cleanup.md):
+//   - the D1 sharding schema (./cf-router: tenant_shard, shard_pool,
+//     memory_store_tenant), 4.3;
+//   - the Linear, GitHub, Slack and Feishu integration tables
+//     (./cf-integrations and node-pg/cf-integrations-*), 5.1.
 //
 // Adding a table:
-//   1. Pick the correct subpackage(s) based on which D1 it lives on
-//   2. Define using pgTable / sqliteTable with conventions from
-//      packages/db-schema/README.md
-//   3. Run `pnpm db:generate:<dialect>` — drizzle-kit emits the
-//      migration SQL into the right apps/main/migrations*/ dir
-//   4. Commit both the schema source and the generated SQL
+//   1. Add it to ./cf-auth and to the matching node-pg/cf-auth-* file
+//   2. Define using sqliteTable / pgTable with the conventions of the
+//      neighbouring table files
+//   3. Write the migration SQL by hand in apps/main-node/migrations/
+//      (Postgres) and apps/main-node/migrations-sqlite/ (SQLite), with a
+//      meta/_journal.json entry in each. This copy has no drizzle-kit
+//      configs (platform/AGENTS.md, "База данных").
+//   4. Commit the schema source and the SQL together
 
 export * as cfAuth from "./cf-auth";
-export * as cfIntegrations from "./cf-integrations";
-export * as cfRouter from "./cf-router";
 export * as nodePg from "./node-pg";
 
 // Dependency-inversion port for adapters: Drizzle DB type union + helpers

@@ -238,7 +238,7 @@ sequenceDiagram
 | `NODE_EXTRA_CA_CERTS` | `/certs/bank-ca.pem` | Доверие к сертификату портала |
 | `PUBLIC_BASE_URL` | `https://<портал>/agents` | Ссылки, которые сервер строит сам |
 
-`GATEWAY_ORIGIN` остаётся внутренним адресом (`http://dco-agents:8787`): песочницы ходят к серверу не через портал.
+`GATEWAY_ORIGIN` сервер больше не читает. Его брали только вебхуки интеграций, они удалены ([cleanup.md](cleanup.md), 5.1).
 
 Почему `/api/auth/me` вызывается через Caddy, а не через сокеты `/run/dco/web-*.sock`. Портал доверяет `X-Forwarded-For` только с unix-сокета (`TRUST_PROXY=unix`, `server/src/app.ts:130-155`). Сервер агентов с доступом к сокетам мог бы подделать адрес и обойти предел попыток входа портала. Сервер агентов запускает песочницы, и давать ему такие права незачем.
 
@@ -281,7 +281,7 @@ sequenceDiagram
 | `src/components/UserProfile.tsx:53` | «Выйти» → «Вернуться в портал». Выход один, в портале | +8 |
 | `src/components/AppSidebar.tsx` | Ссылка «Портал» вверху: конструктор выглядит частью портала | +8 |
 | `src/pages/WorkspaceMembers.tsx`, страница ключей API, выбор и создание workspace | В режиме портала только чтение, подпись «Состав и роли задаёт портал» | ~30 |
-| Абсолютные пути, около 20 мест | `withBase()`: `UserProfile.tsx:54`, `WorkspaceMembers.tsx:230,532`, `Login.tsx:308`, `lib/branding.ts:114`, `components/SkillSources.tsx:72`, `integrations/api/request.ts:15`, `integrations/pages/*Wizard.tsx` (адреса возврата), `pages/session-detail/Panels.tsx:237` (ссылка скачивания, работает по cookie) | ~30 |
+| Абсолютные пути, около 20 мест | `withBase()`: `UserProfile.tsx:54`, `WorkspaceMembers.tsx:230,532`, `Login.tsx:308`, `lib/branding.ts:114`, `components/SkillSources.tsx:72`, `pages/session-detail/Panels.tsx:237` (ссылка скачивания, работает по cookie) | ~30 |
 | `index.html:50-57` | Скрипт темы в `public/theme.js` (под CSP без inline), убрать `preconnect` к `challenges.cloudflare.com` | ~10 |
 | Тесты | П. 5.3 | ~200 |
 

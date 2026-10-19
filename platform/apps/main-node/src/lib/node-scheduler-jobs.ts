@@ -6,7 +6,6 @@
 // multiple replicas later the worst case is "two replicas DELETE the
 // same rows in the same minute" — both succeed harmlessly.
 
-import type { SqlClient } from "@open-managed-agents/sql-client";
 import type { AgentService } from "@open-managed-agents/agents-store";
 import type { EnvironmentService } from "@open-managed-agents/environments-store";
 import type { SessionService } from "@open-managed-agents/sessions-store";
@@ -18,11 +17,6 @@ import { getLogger } from "@open-managed-agents/observability";
 const log = getLogger("node-scheduler");
 import { createNodeScheduler } from "@open-managed-agents/scheduler/node";
 import { memoryRetentionTick } from "@open-managed-agents/scheduler/jobs/memory-retention";
-import { webhookEventsRetentionTick } from "@open-managed-agents/scheduler/jobs/webhook-events-retention";
-import {
-  linearDispatchTick,
-  type LinearDispatchSweeper,
-} from "@open-managed-agents/scheduler/jobs/linear-dispatch";
 import {
   tickEvalRuns,
   type EvalRunnerContext,
@@ -33,15 +27,8 @@ import {
 export interface NodeSchedulerDeps {
   evalServices: EvalRunnerServices;
   memory: MemoryStoreService;
-  /** Optional integrations DB SqlClient. Pass null to skip the
-   *  webhook-events retention sweep on Node. */
-  integrationsSql?: SqlClient | null;
   /** Shared Session-output candidate sweeper, enabled only with shared blob storage. */
   sessionOutputGarbageCollection?: (() => Promise<number>) | null;
-  /** Optional Linear dispatch sweeper. Wired by the bootstrap when an
-   *  in-process LinearProvider is available. Skip when null — most
-   *  self-host deployments don't run the Linear gateway side yet. */
-  linearSweeper?: (() => Promise<LinearDispatchSweeper | null>) | null;
   /** Cron expressions; the control plane resolves them from configuration
    *  so an operator can quiet noisy crons without a code change. */
   cron?: Partial<NodeSchedulerCron>;
@@ -50,8 +37,6 @@ export interface NodeSchedulerDeps {
 export interface NodeSchedulerCron {
   evalTick: string;
   memoryRetention: string;
-  webhookEventsRetention: string;
-  linearDispatch: string;
 }
 
 export function buildNodeScheduler(deps: NodeSchedulerDeps) {
@@ -101,33 +86,6 @@ export function buildNodeScheduler(deps: NodeSchedulerDeps) {
         try { await sweep(); }
         catch (err) { log.warn({ err, op: "scheduler.session_output_gc.failed" }, "Session output GC failed"); }
       },
-    });
-  }
-
-  // Webhook-events retention — only registered if an integrations DB
-  // is wired (P4 territory). Otherwise the registration is skipped so
-  // it doesn't fire and log "skipping" every minute.
-  if (deps.integrationsSql) {
-    const integrationsSql = deps.integrationsSql;
-    scheduler.register({
-      name: "webhook-events-retention",
-      cron: cron("webhookEventsRetention", "* * * * *"),
-      handler: webhookEventsRetentionTick({
-        resolveIntegrationsDb: () => integrationsSql,
-      }),
-    });
-  }
-
-  // Linear dispatch sweep + drain. Only registered when a sweeper resolver
-  // is provided — most self-host deployments don't run the gateway side
-  // (no Linear OAuth callback URL configured), so the registration is
-  // gated rather than no-op'd.
-  if (deps.linearSweeper) {
-    const resolveSweeper = deps.linearSweeper;
-    scheduler.register({
-      name: "linear-dispatch",
-      cron: cron("linearDispatch", "* * * * *"),
-      handler: linearDispatchTick({ resolveSweeper }),
     });
   }
 

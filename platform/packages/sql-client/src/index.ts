@@ -18,11 +18,6 @@ export type {
 export { createBetterSqlite3SqlClient } from "./adapters/better-sqlite3";
 export { createPostgresSqlClient } from "./adapters/postgres";
 export {
-  createMysql2SqlClient,
-  Mysql2SqlClient,
-  type Mysql2SqlClientOptions,
-} from "./adapters/mysql2";
-export {
   CasConflict,
   ConnectionLost,
   Deadlock,
@@ -52,8 +47,8 @@ export {
 
 /**
  * `%value%` for `column LIKE ? ESCAPE '!'`: matches rows whose text contains
- * `value` literally. The `!` escape works the same on SQLite, PostgreSQL and
- * MySQL, a backslash does not.
+ * `value` literally. The `!` escape works the same on SQLite and PostgreSQL;
+ * a backslash does not.
  */
 export function containsLikePattern(value: string): string {
   return `%${value.replace(/[!%_]/gu, (character) => `!${character}`)}%`;

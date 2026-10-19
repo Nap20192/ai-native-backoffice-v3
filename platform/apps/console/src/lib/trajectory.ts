@@ -72,15 +72,3 @@ export function rewardHeadline(reward: RewardResult): string {
   if (v <= 0) return "не пройдено";
   return v.toFixed(2).replace(".", ",");
 }
-
-/** Map TrajectoryOutcome → StatusPill `status` token (Badge.tsx) so the
- *  pill picks up the right color tone. */
-export function outcomeToStatusTone(outcome: TrajectoryOutcome): string {
-  switch (outcome) {
-    case "success":     return "completed";
-    case "failure":     return "errored";
-    case "timeout":     return "errored";
-    case "interrupted": return "terminated";
-    case "running":     return "running";
-  }
-}

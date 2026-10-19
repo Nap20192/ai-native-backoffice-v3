@@ -8,19 +8,27 @@ import {
 
 describe("main-node sandbox provider selection", () => {
   it("resolves supported isolated providers", () => {
-    expect(resolveSandboxProviderModule(" E2B ")).toEqual({
-      provider: "e2b",
-      modulePath: "@open-managed-agents/sandbox-adapter-e2b",
+    expect(resolveSandboxProviderModule(" LiteBox ")).toEqual({
+      provider: "litebox",
+      modulePath: "@open-managed-agents/sandbox-adapter-litebox",
     });
     expect(resolveSandboxProviderModule("boxlite")).toEqual({
       provider: "boxlite",
       modulePath: "@open-managed-agents/sandbox-adapter-litebox",
     });
-    expect(resolveSandboxProviderModule("Sprites")).toEqual({
-      provider: "sprites",
-      modulePath: "@open-managed-agents/managed-runtime-sprites",
-    });
   });
+
+  // The upstream adapters were removed (docs/plans/cleanup.md, 4.4): a stale
+  // SANDBOX_PROVIDER must fail at startup instead of loading a missing module.
+  it.each(["e2b", "daytona", "boxrun", "sprites"])(
+    "rejects the removed provider %s",
+    (provider) => {
+      expect(SANDBOX_PROVIDER_PATHS).not.toHaveProperty(provider);
+      expect(() => resolveSandboxProviderModule(provider)).toThrow(
+        new RegExp(`SANDBOX_PROVIDER=${provider} not recognized`),
+      );
+    },
+  );
 
   it.each([undefined, "", "   "])(
     "requires an explicit provider (%s)",
@@ -61,7 +69,7 @@ describe("main-node sandbox provider selection", () => {
 
   it("lists the isolated providers when selection is invalid", () => {
     expect(() => resolveSandboxProviderModule("unknown")).toThrow(
-      /sprites, litebox, boxlite, boxrun, daytona, e2b/,
+      /valid: litebox, boxlite$/,
     );
   });
 });

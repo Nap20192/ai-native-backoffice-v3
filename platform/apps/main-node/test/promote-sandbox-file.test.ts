@@ -1,10 +1,15 @@
 // Smoke test for POST /v1/oma/sessions/:id/files (sandbox path → file_id
 // promotion) on Node.
 //
-// Spawns main-node, creates a tenant + agent + session, writes a file
+// Spawns main-node, seeds a legacy agent, creates a session, writes a file
 // inside the sandbox via /exec, then calls /sessions/:id/files. Verifies
-// the response is 201 with a valid file_id, and that GET /v1/oma/files/:id
-// returns the metadata.
+// the response is 201 with a valid file_id, and that the `files` row and
+// its blob hold the promoted file.
+//
+// The legacy routes /v1/oma/agents and /v1/oma/files are gone
+// (docs/plans/cleanup.md, 4.6). The legacy session stack still reads agents
+// and files from the old tables, so the test seeds and reads them through
+// the stores over the server's own SQLite file.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -13,6 +18,12 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import type { OmaDb } from "@open-managed-agents/db-schema";
+import { createSqliteAgentService } from "@open-managed-agents/agents-store";
+import { createSqliteFileService } from "@open-managed-agents/files-store";
+import { LocalFsBlobStore } from "@open-managed-agents/blob-store/adapters/local-fs";
 import {
   detachedProcessOptions,
   killProcessTree,
@@ -94,6 +105,7 @@ function pickPort(): Promise<number> {
 describe("Node POST /v1/oma/sessions/:id/files (promoteSandboxFile)", () => {
   let dataDir: string;
   let h: ProcessHandle | null = null;
+  let sqlite: Database.Database | null = null;
 
   beforeEach(() => {
     dataDir = join(tmpdir(), `oma-test-files-${randomBytes(6).toString("hex")}`);
@@ -101,6 +113,8 @@ describe("Node POST /v1/oma/sessions/:id/files (promoteSandboxFile)", () => {
   });
 
   afterEach(async () => {
+    sqlite?.close();
+    sqlite = null;
     if (h) {
       await killHard(h).catch(() => {});
       h = null;
@@ -108,19 +122,20 @@ describe("Node POST /v1/oma/sessions/:id/files (promoteSandboxFile)", () => {
     try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it("returns 201 with a valid file_id and GET round-trips", async () => {
+  it("returns 201 with a valid file_id and stores the row and the bytes", async () => {
     h = await startMainNode({ dataDir });
     const base = `http://localhost:${h.port}/v1`;
     const omaBase = `${base}/oma`;
+    // The server has migrated its database by the time /health answers.
+    sqlite = new Database(join(dataDir, "oma.db"));
+    const db = drizzle(sqlite) as unknown as OmaDb;
 
-    // 1. Create an agent (so the session has something to bind to).
-    const aRes = await fetch(`${omaBase}/agents`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "test-agent", model: "claude-haiku-4-5-20251001" }),
+    // 1. Seed a legacy agent (so the session has something to bind to).
+    //    AUTH_DISABLED puts every request into the "default" tenant.
+    const agent = await createSqliteAgentService({ db }).create({
+      tenantId: "default",
+      input: { name: "test-agent", model: "claude-haiku-4-5-20251001" },
     });
-    expect(aRes.status).toBe(201);
-    const agent = (await aRes.json()) as { id: string };
 
     // 2. Create a session. Body shape mirrors apps/main:
     //    { agent: <id>, environment?: <id> } — environment defaults to
@@ -170,16 +185,18 @@ describe("Node POST /v1/oma/sessions/:id/files (promoteSandboxFile)", () => {
     expect(fileRecord.type).toBe("file");
     expect(fileRecord.id).toMatch(/^file-/);
 
-    // 5. GET /v1/oma/files/:id returns the same metadata.
-    const getRes = await fetch(`${omaBase}/files/${fileRecord.id}`);
-    expect(getRes.status).toBe(200);
-    const fetched = (await getRes.json()) as { id: string; filename: string };
-    expect(fetched.id).toBe(fileRecord.id);
-    expect(fetched.filename).toBe("greeting.txt");
+    // 5. The `files` row carries the same metadata.
+    const row = await createSqliteFileService({ db }).get({ tenantId: "default", fileId: fileRecord.id });
+    expect(row).toMatchObject({
+      id: fileRecord.id,
+      session_id: session.id,
+      filename: "greeting.txt",
+      media_type: "text/plain",
+      downloadable: true,
+    });
 
-    // 6. GET /v1/oma/files/:id/content returns the bytes.
-    const contentRes = await fetch(`${omaBase}/files/${fileRecord.id}/content`);
-    expect(contentRes.status).toBe(200);
-    expect(await contentRes.text()).toBe("hello-from-sandbox");
+    // 6. The files blob store holds the bytes under the row's key.
+    const blob = await new LocalFsBlobStore({ baseDir: join(dataDir, "files-blobs") }).get(row!.r2_key);
+    expect(await blob?.text()).toBe("hello-from-sandbox");
   }, 60_000);
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Локальная фейковая модель для verify-agent-console.
 // Отвечает в протоколе Anthropic Messages потоком SSE, как в
-// platform/apps/main-node/test/_helpers/openai-node-process.ts.
+// platform/apps/main-node/test/platform-mcp-e2e.test.ts.
 //
 // Поведение задаёт сообщение пользователя (его пишет journey-env-to-agent.mjs):
 //   строка-маркер  "VERIFY_AGENT_RUN nonce=<n>" или "VERIFY_ENV_PROBE nonce=<n>";

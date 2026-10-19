@@ -1,10 +1,8 @@
+// LiteBox is the only production sandbox of this copy. The upstream adapters
+// for Daytona, E2B, BoxRun and Sprites were removed (docs/plans/cleanup.md, 4.4).
 export const SANDBOX_PROVIDER_PATHS = {
-  sprites: "@open-managed-agents/managed-runtime-sprites",
   litebox: "@open-managed-agents/sandbox-adapter-litebox",
   boxlite: "@open-managed-agents/sandbox-adapter-litebox",
-  boxrun: "@open-managed-agents/sandbox-adapter-boxrun",
-  daytona: "@open-managed-agents/sandbox-adapter-daytona",
-  e2b: "@open-managed-agents/sandbox-adapter-e2b",
 } as const;
 
 export type NodeSandboxProvider = keyof typeof SANDBOX_PROVIDER_PATHS;

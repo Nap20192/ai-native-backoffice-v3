@@ -75,7 +75,7 @@
       Стоимость             /analytics/cost
       Журнал запросов       /analytics/logs
 ---------------------------  липкий низ
-(аватар) имя, пространство   меню пользователя (тема, язык, выход)
+(аватар) имя, пространство   меню пользователя (тема, выход)
 ```
 
 Иконки lucide только у верхних пунктов и заголовков групп, вложенные пункты без иконок с отступом 40 px. Группы сворачиваются по заголовку независимо, состояние в `localStorage`. Свёрнутое меню: колонка 48 px, иконка группы открывает карточку со ссылками. Группы плагинов (`consolePlugins[].navGroups`) меню не выводит, сейчас плагинов с меню нет.
@@ -276,7 +276,7 @@ C2 из плана моделей идёт внутри K5 (шапка) и K5b (
 Для всех консольных единиц обязательны: зелёные `test-slot pnpm test` и `test-slot pnpm typecheck`, скриншоты 1280 и 390 px без горизонтальной прокрутки, `unslop-check --diff` без нарушений. Для серверных: зелёные тесты и typecheck `main-node` и затронутых пакетов. Ниже только особые критерии.
 
 **K0. Меню, поиск, реестр, галерея.**
-Файлы: новые `C/components/nav/nav-model.ts`, `nav-model.test.ts`, `SidebarNav.tsx`, `SidebarNav.test.tsx`; `C/components/nav-icons.ts`; `C/components/CommandPalette.tsx`, новый `CommandPalette.test.tsx`; `C/components/TenantSwitcher.tsx`; `C/components/UserProfile.tsx`; `C/lib/route-chords.ts`; `C/i18n/ru.ts`, `en.ts`, `zh-CN.ts`, `types.ts`; новые `C/routes/registry.ts`, `registry.test.ts`; новые `platform/apps/console/ui-gallery.html`, `C/ui-gallery/main.tsx`, `C/ui-gallery/sections/nav.tsx`.
+Файлы: новые `C/components/nav/nav-model.ts`, `nav-model.test.ts`, `SidebarNav.tsx`, `SidebarNav.test.tsx`; `C/components/nav-icons.ts`; `C/components/CommandPalette.tsx`, новый `CommandPalette.test.tsx`; `C/components/TenantSwitcher.tsx`; `C/components/UserProfile.tsx`; `C/lib/route-chords.ts`; `C/i18n/ru.ts`, `types.ts`; новые `C/routes/registry.ts`, `registry.test.ts`; новые `platform/apps/console/ui-gallery.html`, `C/ui-gallery/main.tsx`, `C/ui-gallery/sections/nav.tsx`.
 Приёмка:
 - тест: модель меню ровно 18 пунктов в порядке раздела 2, четырёх ушедших пунктов нет, пункт без маршрута скрыт;
 - галерея: группы сворачиваются по заголовку, `aria-expanded` меняется, другие группы не трогаются; у вложенных пунктов нет иконок;
@@ -346,7 +346,7 @@ C2 из плана моделей идёт внутри K5 (шапка) и K5b (
 - «Спросить» (Ctrl I) шлёт вопрос и события в S8 и показывает поток ответа.
 
 **K5b. Сессия: инспектор.**
-Файлы: `C/pages/session-detail/Panels.tsx`, `Panels.test.tsx`, `Trajectory.tsx`, `Trajectory.test.tsx`; новые `C/pages/session-detail/inspector/SessionTab.tsx`, `EventsTab.tsx`, `ToolsTab.tsx`, `ResourcesTab.tsx`, `ThreadsTab.tsx`, `inspector-tabs.test.tsx`; из C2 `C/components/session/ToolsPanel.tsx`, `C/lib/tool-stats.ts`, `tool-stats.test.ts`.
+Файлы: `C/pages/session-detail/Panels.tsx`, `Panels.test.tsx`; новые `C/pages/session-detail/inspector/SessionTab.tsx`, `EventsTab.tsx`, `ToolsTab.tsx`, `ResourcesTab.tsx`, `ThreadsTab.tsx`, `inspector-tabs.test.tsx`; из C2 `C/components/session/ToolsPanel.tsx`, `C/lib/tool-stats.ts`, `tool-stats.test.ts`.
 Приёмка: вкладки по `?inspector=`; выбор события листает ленту; фильтр событий; «Добавить ресурс»; ширина ручкой и сворачивание; критерии C2 по `tool-stats`.
 
 **K5c. Сессия: лента разговора.**
@@ -528,7 +528,7 @@ C2 из плана моделей идёт внутри K5 (шапка) и K5b (
 | Локальные среды `/runtimes` | Страницы нет: её удалили вместе с мостом `oma bridge` (D41). Ссылок на неё не делаем |
 | Группы «Обзор», «Инфраструктура», «Конфигурация» | Группы «Сборка», «Управляемые агенты», «Аналитика» раздела 2 |
 | Счётчики, последние сессии и шаги CLI на Сводке | Счётчики уходят (и медленный `/v1/oma/stats`); последние сессии есть в «Сессиях»; шаги CLI убираем: CLI удалён (D41) |
-| Интеграции (Linear, GitHub, Slack, Feishu) | Без изменений: вне меню, по адресу |
+| Интеграции (Linear, GitHub, Slack, Feishu) | Удалены вместе с кодом сервера и консоли ([cleanup.md](cleanup.md), 5.1) |
 
 ## 9. Что не повторяем и чем заменяем
 

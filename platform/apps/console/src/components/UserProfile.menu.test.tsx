@@ -2,11 +2,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { AVAILABLE_LOCALES, I18nProvider } from "../i18n";
+import { I18nProvider } from "../i18n";
 import { UserProfile } from "./UserProfile";
 
 // План cleanup, шаг 1, пункт 3.2: пункта «Документация» в меню нет. Он вёл
 // на сайт OpenMA, а своей документации у консоли нет.
+// План cleanup, шаг 3, пункт 5.4: выбора языка в меню нет, консоль только русская.
 
 vi.mock("../lib/auth", () => ({
   useAuth: () => ({ user: { id: "user_1", name: "Анна Петрова", email: "anna@example.com" } }),
@@ -50,11 +51,14 @@ describe("UserProfile: меню учётной записи", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("оставляет языки, три темы и выход", async () => {
+  it("оставляет три темы и выход, выбора языка нет", async () => {
     await openMenu();
 
-    expect(screen.getByRole("menuitem", { name: /Русский/ })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Светлая" })).toBeInTheDocument();
-    expect(screen.getAllByRole("menuitem")).toHaveLength(AVAILABLE_LOCALES.length + 3 + 1);
+    expect(screen.getByRole("menuitem", { name: "Тёмная" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Системная" })).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3 + 1);
+    expect(screen.queryByText("Язык")).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Русский|English|简体中文/ })).toBeNull();
   });
 });

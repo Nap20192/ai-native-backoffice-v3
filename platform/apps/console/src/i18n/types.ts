@@ -1,13 +1,6 @@
 /**
- * Языки интерфейса консоли: русский (по умолчанию), английский и
- * китайский (упрощённый). Новый язык добавляется здесь и отдельным
- * файлом словаря.
- */
-export type Locale = "ru" | "en" | "zh-CN";
-
-/**
- * All translatable message keys used across the console.
- * Organized by component/feature area for maintainability.
+ * Interface strings shared by several console pages, grouped by area.
+ * The console is Russian only: `ru.ts` is the single dictionary.
  */
 export interface Messages {
   // Common / shared
@@ -26,7 +19,6 @@ export interface Messages {
     archive: string;
     unarchive: string;
     actions: string;
-    search: string;
     status: string;
     name: string;
     description: string;
@@ -36,13 +28,8 @@ export interface Messages {
     active: string;
     archived: string;
     all: string;
-    idle: string;
-    running: string;
-    terminated: string;
-    rescheduling: string;
     copied: string;
     viewAll: string;
-    nothingHereYet: string;
     loadingMore: string;
     columns: string;
     visibleColumns: string;
@@ -67,7 +54,6 @@ export interface Messages {
     memoryStores: string;
     modelCards: string;
     apiKeys: string;
-    integrations: string;
     members: string;
   };
 
@@ -84,50 +70,15 @@ export interface Messages {
 
   // Login page
   login: {
-    welcomeBack: string;
-    createAccount: string;
-    signInWithEmailCode: string;
-    verifyEmail: string;
-    enterCode: string;
-    resetPassword: string;
-    resetYourPassword: string;
-    signInToWorkspace: string;
-    getStarted: string;
-    sendCodeToEmail: string;
-    codeSentTo: string;
-    sendResetCode: string;
-    enterCodeSent: string;
-    email: string;
-    password: string;
-    newPassword: string;
-    verificationCode: string;
-    yourName: string;
     minChars: string;
-    continueWithGoogle: string;
-    or: string;
-    signIn: string;
-    signUp: string;
-    sendCode: string;
-    sendResetCodeBtn: string;
-    verify: string;
-    forgotPassword: string;
-    noAccount: string;
-    haveAccount: string;
-    rememberPassword: string;
-    didntReceiveCode: string;
-    resend: string;
-    goBack: string;
     passwordResetSuccess: string;
     authFailed: string;
-    botChallengeTimeout: string;
   };
 
   // Dashboard
   dashboard: {
-    getStarted: string;
     intro: string;
     recentSessions: string;
-    noSessionsYet: string;
     visitSessionsPage: string;
     title: string;
     agent: string;
@@ -160,7 +111,6 @@ export interface Messages {
     workspaceName: string;
     workspacePlaceholder: string;
     creating: string;
-    language: string;
     account: string;
     roleOwner: string;
     roleAdmin: string;
@@ -181,9 +131,6 @@ export interface Messages {
     createFirstAgent: string;
     getStartedGuide: string;
     tryDifferentSearch: string;
-    archiveAgent: string;
-    deleteAgent: string;
-    confirmDelete: string;
   };
 
   // Sessions list
@@ -192,9 +139,7 @@ export interface Messages {
     searchSessions: string;
     noMatchingSessions: string;
     noSessionsYet: string;
-    editTitle: string;
     untitledSession: string;
-    sessionTitle: string;
   };
 
   // Vaults list
@@ -206,7 +151,6 @@ export interface Messages {
     renameVault: string;
     editCredential: string;
     displayName: string;
-    newToken: string;
     newTokenOptional: string;
     leaveBlankKeepToken: string;
     oauthEditHint: string;
@@ -222,9 +166,6 @@ export interface Messages {
 
   // Files list
   files: {
-    uploadFile: string;
-    searchFiles: string;
-    noMatchingFiles: string;
     noFilesYet: string;
   };
 
@@ -249,13 +190,11 @@ export interface Messages {
     newApiKey: string;
     noApiKeysYet: string;
     revokeKey: string;
-    confirmRevoke: string;
     untitledKey: string;
   };
 
   // Eval runs
   evals: {
-    newEvalRun: string;
     searchEvalRuns: string;
     noMatchingEvalRuns: string;
     noEvalRunsYet: string;

@@ -18,35 +18,11 @@ const histories = {
   },
 } as const;
 
-const previousMysqlSnapshot = "d5cf91d0-02c4-4655-9ecf-af7e8d916ecc";
-const mergedMysqlSnapshot = "f1e9f474-d719-4e31-b69e-dd7ae24f9bd4";
-
 /** Run immediately before the normal Node schema migrator. */
 export async function reconcilePiModelConfigMigration(
   sql: SqlClient,
-  dialect: "sqlite" | "postgres" | "mysql",
+  dialect: "sqlite" | "postgres",
 ): Promise<void> {
-  if (dialect === "mysql") {
-    const metadataExists = await sql.prepare(
-      "SELECT 1 AS present FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'openma_schema_metadata'",
-    ).first();
-    if (!metadataExists) return;
-    const installed = await sql.prepare(
-      "SELECT snapshot_id FROM openma_schema_metadata WHERE name = ?",
-    ).bind("main-node").first<{ snapshot_id: string }>();
-    if (installed?.snapshot_id !== previousMysqlSnapshot) return;
-    const column = await sql.prepare(
-      "SELECT 1 AS present FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'model_cards' AND column_name = 'pi_config'",
-    ).first();
-    if (!column) await sql.exec("ALTER TABLE model_cards ADD COLUMN pi_config LONGTEXT");
-    // MySQL DDL commits separately. If interrupted after ALTER, the next boot
-    // observes the column and finishes this exact snapshot transition.
-    await sql.prepare(
-      "UPDATE openma_schema_metadata SET snapshot_id = ?, applied_at_ms = ? WHERE name = ? AND snapshot_id = ?",
-    ).bind(mergedMysqlSnapshot, Date.now(), "main-node", previousMysqlSnapshot).run();
-    return;
-  }
-
   const journalExists = await sql.prepare(dialect === "sqlite"
     ? "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'"
     : "SELECT 1 AS present FROM information_schema.tables WHERE table_schema = 'drizzle' AND table_name = '__drizzle_migrations'",

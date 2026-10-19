@@ -266,15 +266,6 @@
 }
 
 .console-data-head th,
-.console-data-head-skeleton {
-  height: var(--table-head-h);
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--border-chrome);
-  text-align: left;
-  white-space: nowrap;
-}
-
 .console-data-row,
 .console-data-row-skeleton {
   height: var(--data-row-h);

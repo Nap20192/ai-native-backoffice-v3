@@ -50,9 +50,8 @@ export interface AccessLossRuntime {
 export interface AccessLossRuntimeOptions {
   tenantSql: SqlClient;
   integrationsSql: SqlClient;
-  /** Runtime-owned wakeup cancellation. Node uses the SQL table; Cloudflare
-   * cancels SessionDO schedules and ignores this SQL fallback when it
-   * supplies its own port. */
+  /** Runtime-owned wakeup cancellation. Defaults to the SQL
+   * `session_wakeups` table. */
   cancelWakeups?: AccessLossEffectPorts["cancelWakeups"];
   notify?: AccessLossEffectPorts["notify"];
   now?: () => Date;

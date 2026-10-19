@@ -15,12 +15,9 @@
  * index.ts is the executable entrypoint (process.env, listen, signals).
  */
 
-import { resolveSessionSandboxMode, readManagedSessionMappingMetadata } from "@open-managed-agents/openai-agents-compat";
 import { SqlSessionThreadStore } from "@open-managed-agents/session-thread-store-sql";
-import { buildOpenAISubagentTools, nodeOpenAISubagentPolicy, openAISubagentSession } from "../openai-subagents.js";
+import { nodeManagedSubagentPolicy } from "../lib/node-managed-subagents.js";
 import { NodeSessionLimits, sessionLimitContinuations } from "../lib/node-session-limits.js";
-
-import { createNodeOpenAIArtifactPublisher, withReportedArtifactPublication } from "../openai-artifact-publication.js";
 
 import { buildTools, disposeTools } from "@open-managed-agents/agent/harness/tools";
 
@@ -63,7 +60,6 @@ import { AnthropicMessagesDreamCurator, ApplicationDreamMemoryWorkspace, ModelCa
 
 import { BlobFileContentStore } from "@open-managed-agents/managed-agents-adapters-blob";
 
-import { resolveFeishuAgentTools } from "../lib/feishu-agent-tools.js";
 import { NodeManagedSessionOutputCollector } from "../lib/node-managed-session-outputs.js";
 import { NodeManagedWorkspaceCheckpoints } from "../lib/node-managed-workspace-checkpoints.js";
 import { nodeSessionLifecycle } from "../lib/node-session-lifecycle.js";
@@ -116,7 +112,6 @@ export async function createManagedNodeRuntime(
     managedAgentsPersistence,
     platformRootSecret,
     secrets,
-    openAIAgentsSecrets,
     credentialService,
     sessionsService,
     filesService,
@@ -372,31 +367,26 @@ export async function createManagedNodeRuntime(
   await workspaceCheckpoints?.ensureSchema();
 
   // Agent trace (docs/plans/agent-trace.md, TW1): the driver observer and the
-  // sandbox phases of the runner write trace_spans; null on MySQL (3.4).
+  // sandbox phases of the runner write trace_spans.
   const traceWiring = createNodeTraceWiring({ sql, dialect: foundation.dialect, logger });
   // Session limits (docs/plans/multiagent.md, 3.Б): one row of counted work
-  // and limits per Session, added in the batch of the runtime events. Not on
-  // MySQL, like the trace: the row is filled with ON CONFLICT. A raise queues
-  // the stopped turn through the execution worker built further down.
-  const sessionLimits = foundation.dialect === "mysql"
-    ? undefined
-    : new NodeSessionLimits({
-      sql,
-      dialect: foundation.dialect,
-      defaults: config.sessionLimits,
-      continueTurn: (input) => continueAfterLimitRaise(input),
-    });
-  await sessionLimits?.ensureSchema();
+  // and limits per Session, added in the batch of the runtime events. A raise
+  // queues the stopped turn through the execution worker built further down.
+  const sessionLimits = new NodeSessionLimits({
+    sql,
+    dialect: foundation.dialect,
+    defaults: config.sessionLimits,
+    continueTurn: (input) => continueAfterLimitRaise(input),
+  });
+  await sessionLimits.ensureSchema();
 
   const managedRuntimeRunner = new DefaultNodeManagedSessionRunner(withTracePhases(traceWiring, {
     ...(workspaceCheckpoints === undefined ? {} : { workspaceCheckpoints }),
     // Every model request and subagent turn asks the row first (3.Б, slice 2).
     ...(sessionLimits !== undefined && { sessionLimits }),
     subagentThreads: new SqlSessionThreadStore(sql),
-    subagentPolicy: ({ session }) => nodeOpenAISubagentPolicy(session, openAIAgentsSecrets),
+    subagentPolicy: ({ session }) => nodeManagedSubagentPolicy(session),
     resolveSubagentSession: async ({ workspaceId, session, request }) => {
-      const saved = await readManagedSessionMappingMetadata(session, openAIAgentsSecrets);
-      if (saved) return openAISubagentSession(session, request);
       const member = listedSubagents(session.agent.multiagent).find(item => item.id === request.agentId);
       if (!member) throw new Error("Subagent is not in the configured callable agent roster");
       const selected = await managedPlatform.app({ workspaceId }).port(managedAgentsPortTokens.agents).retrieveAgent({ agentId: member.id, version: member.version });
@@ -446,7 +436,6 @@ export async function createManagedNodeRuntime(
         };
       },
     }),
-    sandboxMode: ({ session }) => resolveSessionSandboxMode(session, openAIAgentsSecrets),
     buildSandbox: async ({ session, environment }) => buildSandbox(
         session.id,
         join(config.paths.sandboxWorkdir, session.id),
@@ -555,24 +544,9 @@ export async function createManagedNodeRuntime(
         runtimeGeneration,
       });
     },
-    afterExecution: withReportedArtifactPublication(createNodeOpenAIArtifactPublisher({
-      historyForWorkspace: workspaceId => new SessionRuntimeHistoryApplicationService({ workspaceId, source: managedRuntimeReaders.history }),
-      filesForWorkspace: workspaceId => managedPlatform.app({ workspaceId }).port(managedAgentsPortTokens.files),
-      secrets: openAIAgentsSecrets,
-      isFenceActive: isManagedSessionExecutionFenceActive,
-      environmentId: session => `oai_env_${session.id}`,
-    }), (error, input) => {
-      logger.error({
-        err: error,
-        op: "main-node.openai_agents.artifact_publication_failed",
-        workspaceId: input.workspaceId,
-        sessionId: input.session.id,
-        executionId: input.executionFence.executionId,
-      }, "Completed Session output could not be published as an Agents API artifact");
-    }),
     buildModel: ({ workspaceId, session }) =>
       buildNodeLanguageModel(workspaceId, session.agent.model),
-    buildTools: async ({ workspaceId, session, environment, sandbox, subagents, delegateToAgent, broadcastEvent }) => {
+    buildTools: async ({ workspaceId, session, environment, sandbox, delegateToAgent, broadcastEvent }) => {
       const agent = toLegacyHarnessAgentConfig(session);
       const creds = await resolveNodeModelCreds(workspaceId, agent.model);
       const auxiliary = await resolveNodeManagedAuxiliaryToolModel(
@@ -599,13 +573,6 @@ export async function createManagedNodeRuntime(
             }
           : undefined,
       });
-      if (subagents && (await readManagedSessionMappingMetadata(session, openAIAgentsSecrets))?.agent.multi_agent?.enabled) {
-        for (const [name, definition] of Object.entries(buildOpenAISubagentTools(subagents))) {
-          let available = name;
-          while (Object.hasOwn(tools, available)) available = `openma_${available}`;
-          tools[available] = definition;
-        }
-      }
       return tools;
     },
     disposeTools,
@@ -653,13 +620,12 @@ export async function createManagedNodeRuntime(
         ...(assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
         ...buildNodeManagedAppendablePromptReminders(input.session),
       ];
-      const feishuTools = await resolveFeishuAgentTools(input.session.id);
       return {
         agent,
         userMessage: harnessUserMessage(input.acceptedEvents),
         session_id: input.session.id,
         tenant_id: input.workspaceId,
-        tools: { ...input.tools, ...feishuTools },
+        tools: { ...input.tools },
         model: input.model,
         pi,
         systemPrompt: composeSystemPrompt(rawSystemPrompt, platformReminders),

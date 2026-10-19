@@ -74,14 +74,9 @@ export const sessionExecutionCoordinatorSqlSchema =
  * table is needed only when checkpoint_restore selects cross-lane serial mode. */
 export async function ensureSessionExecutionClaimLockSchema(
   sql: SqlClient,
-  dialect?: "sqlite" | "mysql" | "postgres",
+  dialect?: "sqlite" | "postgres",
 ): Promise<void> {
-  // Node's consolidated MySQL baseline uses utf8mb4_unicode_ci even when
-  // the database default differs. Cross-table lock comparisons must use the
-  // same collation as managed_session_executions.
-  await sql.exec(schemaStatements[3] + (dialect === "mysql"
-    ? " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-    : ""));
+  await sql.exec(schemaStatements[3]);
   await upgradeSessionClaimLockColumns(sql, dialect);
 }
 
@@ -91,7 +86,7 @@ export async function ensureSessionExecutionClaimLockSchema(
  */
 export async function upgradeSessionClaimLockColumns(
   sql: SqlClient,
-  dialect?: "sqlite" | "mysql" | "postgres",
+  dialect?: "sqlite" | "postgres",
 ): Promise<void> {
   const names = await claimLockColumnNames(sql, dialect);
   if (names === null || names.size === 0) return;
@@ -109,7 +104,7 @@ export async function upgradeSessionClaimLockColumns(
 
 async function claimLockColumnNames(
   sql: SqlClient,
-  dialect?: "sqlite" | "mysql" | "postgres",
+  dialect?: "sqlite" | "postgres",
 ): Promise<Set<string> | null> {
   const collect = (rows: Array<{ name?: string }> | undefined) =>
     new Set(
@@ -124,28 +119,13 @@ async function claimLockColumnNames(
     ).all<{ name?: string }>();
     return collect(rows.results);
   }
-  if (dialect === "mysql") {
-    const rows = await sql.prepare(
-      `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'managed_session_claim_locks'`,
-    ).all<{ name?: string }>();
-    return collect(rows.results);
-  }
   try {
     const rows = await sql.prepare(
       "PRAGMA table_info(managed_session_claim_locks)",
     ).all<{ name?: string }>();
     return collect(rows.results);
   } catch {
-    try {
-      const rows = await sql.prepare(
-        `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'managed_session_claim_locks'`,
-      ).all<{ name?: string }>();
-      return collect(rows.results);
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 

@@ -21,17 +21,14 @@ import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import { authClient } from "../lib/auth-client";
 import { Avatar } from "./Avatar";
-import { useI18n, AVAILABLE_LOCALES } from "../i18n";
+import { useI18n } from "../i18n";
 
 /**
- * Меню пользователя внизу бокового меню. Одна точка нажатия открывает список
- * из двух групп настроек учётной записи:
+ * Меню пользователя внизу бокового меню. Одна точка нажатия открывает список:
+ * тема (светлая, тёмная, системная) и выход.
  *
- *   - язык интерфейса (русский, английский, китайский);
- *   - тема (светлая, тёмная, системная) и выход.
- *
- * Пункта документации нет: своей документации у консоли нет, а ссылка вела
- * на сайт OpenMA.
+ * Выбора языка нет: консоль говорит только по-русски. Пункта документации
+ * тоже нет: своей документации у консоли нет, а ссылка вела на сайт OpenMA.
  *
  * Строка-триггер использует тот же класс `console-sidebar-row`, что и пункты
  * меню и блок рабочего пространства: знак стоит в колонке иконок, подпись
@@ -46,7 +43,7 @@ const THEME_OPTIONS = [
 export function UserProfile() {
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { t, locale, setLocale } = useI18n();
+  const { t } = useI18n();
 
   if (!user) return null;
 
@@ -99,28 +96,6 @@ export function UserProfile() {
             </div>
           )}
         </DropdownMenuLabel>
-
-        <DropdownMenuSeparator />
-
-        <DropdownMenuLabel className="console-menu-eyebrow">
-          {t.profile.language}
-        </DropdownMenuLabel>
-        <DropdownMenuGroup>
-          {AVAILABLE_LOCALES.map(({ value, label: localeLabel, flag }) => {
-            const active = locale === value;
-            return (
-              <DropdownMenuItem
-                key={value}
-                onClick={() => setLocale(value)}
-                onSelect={(e) => e.preventDefault()}
-              >
-                <span className="console-menu-flag">{flag}</span>
-                {localeLabel}
-                {active && <CheckIcon className="console-menu-check size-4" />}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuGroup>
 
         <DropdownMenuSeparator />
 

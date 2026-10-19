@@ -16,7 +16,6 @@ export type { TraceTurnRow } from "./turn-store.js";
 /**
  * trace_spans and trace_turns on SQLite and Postgres (plan section 3.1).
  * Tables are created on first access with their own migration list.
- * MySQL has no trace tables: the routes build the trace in memory (3.4).
  */
 export type TraceSqlDialect = "sqlite" | "postgres";
 

@@ -19,129 +19,49 @@ import { PageHeader } from "../components/PageHeader";
 import { Skeleton } from "../components/Skeleton";
 import { ApiError, useApi, setActiveTenantId } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useI18n } from "../i18n";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { formatDateTime } from "./ru-format";
 
 const copy = {
-  ru: {
-    title: "Участники",
-    subtitle: "Кто имеет доступ к этому рабочему пространству.",
-    shared:
-      "Участники работают с общими ресурсами пространства. Владельцы управляют ролями, администраторы приглашают и удаляют участников.",
-    owner: "Владелец",
-    admin: "Администратор",
-    member: "Участник",
-    name: "Участник",
-    role: "Роль",
-    remove: "Удалить",
-    cancel: "Отмена",
-    invite: "Создать ссылку-приглашение",
-    invites: "Ожидающие приглашения",
-    inviteHelp:
-      "По ссылке можно присоединиться один раз в течение 7 дней. Передайте её только тому, кого приглашаете.",
-    link: "Ссылка-приглашение",
-    copy: "Скопировать ссылку",
-    copied: "Скопировано",
-    revoke: "Отозвать",
-    expires: "Действует до",
-    noInvites: "Ожидающих приглашений нет.",
-    loading: "Загрузка участников…",
-    retry: "Повторить",
-    loadFailed: "Не удалось загрузить участников",
-    actionFailed: "Не удалось выполнить действие. Проверьте соединение и повторите попытку.",
-    copyFailed: "Не удалось скопировать ссылку",
-    expired:
-      "Срок действия приглашения истёк. Попросите администратора прислать новую ссылку.",
-    removeTitle: (name: string) => `Удалить участника ${name}?`,
-    removeHelp:
-      "Участник потеряет доступ к рабочему пространству и свои личные API-ключи для него. Если у него была копия общих ключей пространства, замените их.",
-    join: "Присоединиться к рабочему пространству",
-    joinHelp:
-      "Примите приглашение, чтобы работать с ресурсами пространства вместе с остальными участниками.",
-    login: "Войти и принять приглашение",
-    missing:
-      "Ссылка-приглашение неполная. Попросите администратора пространства прислать новую.",
-    back: "К рабочему пространству",
-    loadingAuth: "Проверяем вход…",
-  },
-  en: {
-    title: "Members",
-    subtitle: "Manage who can access this workspace.",
-    shared:
-      "Members share workspace resources. Owners manage roles; admins can invite and remove members.",
-    owner: "Owner",
-    admin: "Admin",
-    member: "Member",
-    name: "Member",
-    role: "Role",
-    remove: "Remove",
-    cancel: "Cancel",
-    invite: "Create invitation link",
-    invites: "Pending invitations",
-    inviteHelp:
-      "Anyone with the link can join once, within 7 days. Share it only with the intended person.",
-    link: "Invitation link",
-    copy: "Copy link",
-    copied: "Copied",
-    revoke: "Revoke",
-    expires: "Expires",
-    noInvites: "No pending invitations.",
-    loading: "Loading members…",
-    retry: "Retry",
-    loadFailed: "Could not load members",
-    actionFailed: "The action failed. Check your connection and try again.",
-    copyFailed: "Could not copy the link",
-    expired: "This invitation has expired. Ask the workspace admin for a new link.",
-    removeTitle: (name: string) => `Remove ${name}?`,
-    removeHelp:
-      "They will lose access to this workspace and their personal API keys for it. Rotate shared workspace keys if they had a copy.",
-    join: "Join workspace",
-    joinHelp:
-      "Accept this invitation to share the workspace’s resources with its members.",
-    login: "Sign in to accept invitation",
-    missing:
-      "This invitation link is incomplete. Ask the workspace admin for a new link.",
-    back: "Back to workspace",
-    loadingAuth: "Checking sign-in…",
-  },
-  "zh-CN": {
-    title: "成员",
-    subtitle: "管理可访问此工作区的用户。",
-    shared:
-      "成员共享工作区资源。所有者可管理角色，管理员可邀请和移除普通成员。",
-    owner: "所有者",
-    admin: "管理员",
-    member: "成员",
-    name: "成员",
-    role: "角色",
-    remove: "移除",
-    cancel: "取消",
-    invite: "创建邀请链接",
-    invites: "待接受的邀请",
-    inviteHelp: "持有链接的人可在 7 天内加入一次，请仅分享给要邀请的人。",
-    link: "邀请链接",
-    copy: "复制链接",
-    copied: "已复制",
-    revoke: "撤销",
-    expires: "到期时间",
-    noInvites: "暂无待接受的邀请。",
-    loading: "正在加载成员…",
-    retry: "重试",
-    loadFailed: "无法加载成员",
-    actionFailed: "操作失败，请检查网络后重试。",
-    copyFailed: "无法复制链接",
-    expired: "邀请已过期，请向工作区管理员索取新链接。",
-    removeTitle: (name: string) => `移除 ${name}？`,
-    removeHelp:
-      "该用户将失去工作区访问权，其个人 API Key 也将失效。如果曾分享过工作区公共密钥，请更换这些密钥。",
-    join: "加入工作区",
-    joinHelp: "接受邀请后，你将与其他成员共享此工作区的资源。",
-    login: "登录并接受邀请",
-    missing: "邀请链接不完整，请向工作区管理员索取新链接。",
-    back: "返回工作区",
-    loadingAuth: "正在检查登录状态…",
-  },
+  title: "Участники",
+  subtitle: "Кто имеет доступ к этому рабочему пространству.",
+  shared:
+    "Участники работают с общими ресурсами пространства. Владельцы управляют ролями, администраторы приглашают и удаляют участников.",
+  owner: "Владелец",
+  admin: "Администратор",
+  member: "Участник",
+  name: "Участник",
+  role: "Роль",
+  remove: "Удалить",
+  cancel: "Отмена",
+  invite: "Создать ссылку-приглашение",
+  invites: "Ожидающие приглашения",
+  inviteHelp:
+    "По ссылке можно присоединиться один раз в течение 7 дней. Передайте её только тому, кого приглашаете.",
+  link: "Ссылка-приглашение",
+  copy: "Скопировать ссылку",
+  copied: "Скопировано",
+  revoke: "Отозвать",
+  expires: "Действует до",
+  noInvites: "Ожидающих приглашений нет.",
+  loading: "Загрузка участников…",
+  retry: "Повторить",
+  loadFailed: "Не удалось загрузить участников",
+  actionFailed: "Не удалось выполнить действие. Проверьте соединение и повторите попытку.",
+  copyFailed: "Не удалось скопировать ссылку",
+  expired:
+    "Срок действия приглашения истёк. Попросите администратора прислать новую ссылку.",
+  removeTitle: (name: string) => `Удалить участника ${name}?`,
+  removeHelp:
+    "Участник потеряет доступ к рабочему пространству и свои личные API-ключи для него. Если у него была копия общих ключей пространства, замените их.",
+  join: "Присоединиться к рабочему пространству",
+  joinHelp:
+    "Примите приглашение, чтобы работать с ресурсами пространства вместе с остальными участниками.",
+  login: "Войти и принять приглашение",
+  missing:
+    "Ссылка-приглашение неполная. Попросите администратора пространства прислать новую.",
+  back: "К рабочему пространству",
+  loadingAuth: "Проверяем вход…",
 };
 type Role = "owner" | "admin" | "member";
 interface Member {
@@ -182,8 +102,7 @@ function MemberAvatar({ name }: { name: string }) {
 
 export function WorkspaceMembers() {
   const { api } = useApi();
-  const { locale } = useI18n();
-  const t = copy[locale];
+  const t = copy;
   const [workspace, setWorkspace] = useState<{
     id: string;
     name: string;
@@ -524,8 +443,7 @@ export function WorkspaceMembers() {
 
 export function JoinWorkspace() {
   const { api } = useApi();
-  const { locale } = useI18n();
-  const t = copy[locale];
+  const t = copy;
   const auth = useAuth();
   const location = useLocation();
   const token = location.hash.slice(1);

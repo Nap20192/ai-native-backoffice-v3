@@ -49,7 +49,7 @@
 | 15 | У skill-sources есть защита исходящих запросов: список закрытых сетей, `SKILL_SOURCES_ALLOW_HOSTS`, проверка адреса в момент соединения через `lookup`, без редиректов | `N/lib/skill-sources.ts:58-166`, `N/config.ts:281` |
 | 16 | Роли `owner`, `admin`, `member` лежат в `membership.role`, проверяет их только `members.ts`. В режиме портала админ портала получает `admin`, строитель `member`, `owner` никто | `P/http-routes/src/tenants/members.ts:13-42, 105, 136`, `docs/plans/portal-sso.md`, раздел 2.2 |
 | 17 | Образец таблицы, которую создаёт код: `harness_cards`, `ensureHarnessCardSchema`, ошибки `{error, field}` | `N/lib/harness-cards/schema.ts`, `routes.ts`, `docs/plans/models-harness.md`, раздел 3.7 |
-| 18 | Фейк `platform/test/fakes/scripted-mcp-server.ts` перенесён из upstream как есть шагом 1 очистки ([cleanup.md](cleanup.md), 3.5): 221 строка, Apache-2.0. Из трёх тестов upstream с его импортом в копии есть только `NT/session-resume-mcp-live.test.ts`, двух других в копии нет | `NT/session-resume-mcp-live.test.ts:14`, `platform/test/fakes/scripted-mcp-server.ts`, `OMA/test/fakes/scripted-mcp-server.ts` |
+| 18 | Фейк `platform/test/fakes/scripted-mcp-server.ts` перенесён из upstream как есть шагом 1 очистки ([cleanup.md](cleanup.md), 3.5): 221 строка, Apache-2.0. Из трёх тестов upstream с его импортом в копию попал только `NT/session-resume-mcp-live.test.ts`. Очистка 2026-10-19 удалила его вместе с мостом интеграций ([cleanup.md](cleanup.md), 5.1). Теперь фейк не импортирует ни один тест | `platform/test/fakes/scripted-mcp-server.ts`, `OMA/test/fakes/scripted-mcp-server.ts`, тест в коммите 5dc7d3e |
 | 19 | План ассистента занимает имя `platform` и адрес `PLATFORM_MCP_URL`, добавляет в `NodeMcpProxyTarget` поле `fetcher` и свою ветку в `resolveNodeMcpProxyTarget` | `docs/plans/builder-agent.md:120-132` |
 
 Образцы:
@@ -170,7 +170,6 @@ CREATE INDEX IF NOT EXISTS mcp_registry_events_server_idx
 
 - Частичный уникальный индекс понимают и SQLite, и Postgres.
 - Удаление стирает строку. В `mcp_registry_events` остаётся событие `delete` с адресом и автором. Другие действия журнала: `create`, `update`, `enable`, `disable`, `check`, `approve_tools`, `import`.
-- На MySQL маршруты отвечают 501, а прокси считает реестр пустым, как с карточками harness.
 - Пределы: 200 записей на пространство, снимок до 256 инструментов и до 1 МБ JSON.
 
 ### 2.5 Изоляция по пространству
@@ -536,7 +535,7 @@ CREATE INDEX IF NOT EXISTS mcp_registry_events_server_idx
 
 - политика закрывает `127.0.0.1`, `::1`, `169.254.169.254`, `10.1.2.3` (при `true`), имя, которое резолвится в закрытый адрес; открывает `127.0.0.1:8793` из списка и закрывает `127.0.0.1:8792`; понимает `*.example.local` и подсеть; редирект не выполняет;
 - проба против `scripted-mcp-server`: `ok` со снимком и хешами; 401 даёт `auth_failed` после одной попытки обновления; 403 `forbidden`; 3xx `redirect`; зависание `timeout`; 300 инструментов дают 256 и `tools_truncated`; токен в тексте ошибки заменён;
-- `NT/session-resume-mcp-live.test.ts`, единственный тест копии с импортом `scripted-mcp-server`, зелёный. Если он падает, причина идёт в отчёт;
+- фейк `scripted-mcp-server` берёт тест пробы выше: других тестов с его импортом в копии нет, очистка 2026-10-19 удалила `NT/session-resume-mcp-live.test.ts`;
 - тесты `P/vault-forward` и main-node, `tsc --noEmit` зелёные.
 
 ### R3. Каталог (Codex)
@@ -594,7 +593,7 @@ CREATE INDEX IF NOT EXISTS mcp_registry_events_server_idx
 - правка `N/config.ts` и `NT/config.test.ts`: переменные 3.5; `platform/.env.example`: закомментированные строки с пояснением;
 - новые `NT/mcp-registry-http.test.ts`, `NT/mcp-registry-session-proxy.test.ts`, `docs/runbook-mcp-registry.md` (настройки для банка, как добавить внутренний сервер, своя копия каталога).
 
-Первый падающий тест по образцу `NT/session-resume-mcp-live.test.ts`: агент с сервером записи `shared`, сессия без хранилищ, harness вызывает инструмент, и `scripted-mcp-server` получает `Authorization: Bearer <токен записи>`.
+Первый падающий тест по образцу удалённого `NT/session-resume-mcp-live.test.ts` (`git show 5dc7d3e:platform/apps/main-node/test/session-resume-mcp-live.test.ts`): агент с сервером записи `shared`, сессия без хранилищ, harness вызывает инструмент, и `scripted-mcp-server` получает `Authorization: Bearer <токен записи>`.
 
 Приёмка:
 

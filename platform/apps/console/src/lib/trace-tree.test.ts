@@ -23,7 +23,6 @@ import {
   rowWindow,
   searchTree,
   setCollapsed,
-  toggleCollapse,
   type RowsContext,
   type TraceFilter,
   type TraceKindGroup,
@@ -252,7 +251,7 @@ describe("строки списка", () => {
   it("явное свёртывание узла перекрывает правило по умолчанию", () => {
     const build = createRowsBuilder();
     const tree = fixtureTree();
-    const open = toggleCollapse(AUTO_COLLAPSE, id("b1", 1), true);
+    const open = setCollapsed(AUTO_COLLAPSE, id("b1", 1), false);
     const rows = build(tree, ctx({ collapse: open }));
     expect(ids(rows)).toContain(id("b1", 16));
     expect(rows.find((row) => row.span.span_id === id("b1", 1))!.collapsed).toBe(false);

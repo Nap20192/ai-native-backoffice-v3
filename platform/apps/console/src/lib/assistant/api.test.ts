@@ -6,7 +6,6 @@ import {
   createAssistantSession,
   fetchSettings,
   findBuilder,
-  isReadTool,
   isWriteTool,
   fetchActions,
   normalizeOpClass,
@@ -25,10 +24,7 @@ describe("assistantToolName", () => {
 });
 
 describe("классы инструментов", () => {
-  it("читающие и пишущие инструменты не пересекаются", () => {
-    expect(isReadTool("list")).toBe(true);
-    expect(isReadTool("get_session_events")).toBe(true);
-    expect(isReadTool("create_agent")).toBe(false);
+  it("инструменты записи ждут кнопки, чтение и черновик нет", () => {
     expect(isWriteTool("create_agent")).toBe(true);
     expect(isWriteTool("apply_changes")).toBe(true);
     expect(isWriteTool("send_message")).toBe(true);

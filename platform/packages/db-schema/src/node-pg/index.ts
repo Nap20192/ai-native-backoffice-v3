@@ -1,12 +1,13 @@
-// Node-PG schema — union of cf-auth + cf-integrations + cf-router with
-// PG-typed columns (BIGINT timestamps, TIMESTAMPTZ for better-auth,
-// BOOLEAN for boolean flags, etc.).
+// Node-PG schema: the cf-auth tables with PG-typed columns (BIGINT
+// timestamps, TIMESTAMPTZ for better-auth, BOOLEAN for boolean flags,
+// etc.).
 //
-// On Node self-host every table lives in one PG database. The schema
-// is the union of what CF splits across 3 D1 bindings.
+// On Node self-host every table lives in one PG database. The integration
+// tables (cleanup.md 5.1) stay in it and in apps/main-node/migrations/
+// without a TS definition.
 //
-// drizzle-kit consumes this barrel via drizzle.node-pg.config.ts and
-// emits migrations into apps/main-node/migrations/.
+// Its migrations live in apps/main-node/migrations/ and are written by
+// hand; this copy has no drizzle-kit configs.
 
 export * from "./cf-auth-auth";
 export * from "./cf-auth-agents";
@@ -17,14 +18,6 @@ export * from "./cf-auth-vaults";
 export * from "./cf-auth-model-cards";
 export * from "./cf-auth-environments";
 export * from "./cf-auth-files";
-export * from "./cf-auth-runtimes";
 export * from "./cf-auth-evals";
-export * from "./cf-auth-usage";
 export * from "./cf-auth-kv";
-export * from "./cf-router-sharding";
-export * from "./cf-integrations-linear";
-export * from "./cf-integrations-github";
-export * from "./cf-integrations-slack";
-export * from "./cf-integrations-feishu";
-export * from "./feishu-ops";
 export * from "./session-runtime";

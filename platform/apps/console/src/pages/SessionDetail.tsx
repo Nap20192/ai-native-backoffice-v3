@@ -989,7 +989,8 @@ export function SessionDetail() {
 
   // Решение по вызову с always_ask. Для встроенных и обычных MCP-инструментов это
   // user.tool_confirmation в потоке, где ждёт вызов. Сбой показывает api() сам,
-  // а блок возвращает кнопки.
+  // а блок возвращает кнопки. Вызов записи платформы сюда не попадает: его
+  // решение шлёт карточка через /v1/oma/platform-mcp/confirm.
   const decideTool = async (decision: ConfirmationDecision) => {
     if (!id) return;
     await managedApi.sessions.events.send(id, {
@@ -1296,7 +1297,7 @@ export function SessionDetail() {
             ? undefined
             : <SessionHistorySkeleton />
       }
-      beforeComposer={<ToolConfirmationRequests events={events} onDecide={decideTool} />}
+      beforeComposer={<ToolConfirmationRequests events={events} sessionId={id ?? ""} onDecide={decideTool} />}
       sessionId={id}
       turns={canonicalTurns}
       agentName={agentName}

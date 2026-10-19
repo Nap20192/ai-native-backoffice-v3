@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter, Route, Routes } from "react-router";
 
+import { mockPlatformMcp } from "../components/assistant/test-fixtures";
 import { I18nProvider } from "../i18n";
 import { server } from "../mocks/server";
 import { SessionDetail } from "./SessionDetail";
@@ -258,5 +259,120 @@ describe("SessionDetail: запросы подтверждения", () => {
   it("без вызовов с ask блока нет", async () => {
     await openSession();
     expect(screen.queryByRole("group", { name: "Ожидает подтверждения" })).toBeNull();
+  });
+});
+
+/** Вызов записи сервера `platform` в обычной сессии, как его пишет Pi. */
+const platformAsk = (over: Frame = {}): Frame => ({
+  type: "agent.mcp_tool_use",
+  id: "toolu_skill",
+  mcp_server_name: "platform",
+  name: "mcp__platform__create_skill",
+  input: { display_title: "review" },
+  evaluated_permission: "ask",
+  ...over,
+});
+
+const SKILL_PREVIEW = {
+  tool: "create_skill",
+  preview_digest: "d-skill",
+  can_confirm: true,
+  owner_name: "Иван",
+  operations: [
+    {
+      op_index: 0,
+      tool: "create_skill",
+      target_kind: "skill",
+      name: "review",
+      class: "create",
+      before_yaml: null,
+      after_yaml: "display_title: review\n",
+      warnings: [],
+    },
+  ],
+};
+
+/** Типы событий, которые страница отправила сама через /v1/sessions/:id/events. */
+function sentEventTypes(): string[] {
+  return api.sessions.events.send.mock.calls.flatMap(([, body]) =>
+    ((body as { events: Frame[] }).events ?? []).map((event) => String(event.type)),
+  );
+}
+
+describe("SessionDetail: вызов записи платформы", () => {
+  // Кнопка карточки создания называется «Создать», не «Применить»: так её
+  // подписывает confirmLabelFor для create_* (ProposalCard.tsx).
+  it("владелец видит карточку preview, «Создать» шлёт confirm с отпечатком из preview", async () => {
+    const seen = mockPlatformMcp([SKILL_PREVIEW]);
+    await openSession();
+    await pushAsk(platformAsk());
+
+    const group = await screen.findByRole("group", { name: "Ожидает подтверждения" });
+    const card = await within(group).findByRole("article", { name: "Создать навык «review»" });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "Создать" })).toBeEnabled());
+    expect(seen.previews).toEqual([{ session_id: "session-1", tool_use_id: "toolu_skill" }]);
+    expect(within(group).queryByRole("button", { name: "Разрешить" })).toBeNull();
+    expect(group).not.toHaveTextContent("панели ассистента");
+
+    await userEvent.click(within(card).getByRole("button", { name: "Создать" }));
+    await waitFor(() => expect(seen.decisions).toHaveLength(1));
+    expect(seen.decisions[0]).toEqual({
+      session_id: "session-1",
+      tool_use_id: "toolu_skill",
+      result: "allow",
+      preview_digest: "d-skill",
+    });
+    expect(await within(card).findByText("Отправлено. Жду результат")).toBeInTheDocument();
+    // Решение записал сервер. Страница своё user.tool_confirmation не шлёт.
+    expect(sentEventTypes()).not.toContain("user.tool_confirmation");
+
+    // Сервер записал решение, поток принёс его: строка уходит.
+    await act(async () => {
+      state.stream!.push({ type: "user.tool_confirmation", id: "sevt_conf_skill", tool_use_id: "toolu_skill", result: "allow" });
+    });
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Ожидает подтверждения" })).toBeNull());
+  });
+
+  it("отказ по карточке уходит в confirm, страница отказ не дублирует", async () => {
+    const seen = mockPlatformMcp([SKILL_PREVIEW]);
+    await openSession();
+    await pushAsk(platformAsk());
+
+    const group = await screen.findByRole("group", { name: "Ожидает подтверждения" });
+    const card = await within(group).findByRole("article", { name: "Создать навык «review»" });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "Создать" })).toBeEnabled());
+    await userEvent.click(within(card).getByRole("button", { name: "Отклонить" }));
+
+    await waitFor(() => expect(seen.decisions).toHaveLength(1));
+    expect(seen.decisions[0]).toMatchObject({ tool_use_id: "toolu_skill", result: "deny", preview_digest: "d-skill" });
+    expect(sentEventTypes()).not.toContain("user.tool_confirmation");
+  });
+
+  it("не владелец видит карточку без кнопок и имя владельца", async () => {
+    const seen = mockPlatformMcp([{ ...SKILL_PREVIEW, can_confirm: false, owner_name: "Анна" }]);
+    await openSession();
+    await pushAsk(platformAsk());
+
+    const group = await screen.findByRole("group", { name: "Ожидает подтверждения" });
+    expect(await within(group).findByText("Подтвердить может только Анна")).toBeInTheDocument();
+    expect(within(group).getByText(/display_title: review/)).toBeInTheDocument();
+    expect(within(group).queryByRole("button", { name: "Создать" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Применить" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Разрешить" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Отклонить" })).toBeNull();
+    expect(group).not.toHaveTextContent("панели ассистента");
+    expect(seen.decisions).toHaveLength(0);
+  });
+
+  it("встроенный вызов с always_ask по-прежнему даёт «Разрешить» и «Отклонить» без preview", async () => {
+    const seen = mockPlatformMcp([SKILL_PREVIEW]);
+    await openSession();
+    await pushAsk();
+
+    const group = await screen.findByRole("group", { name: "Ожидает подтверждения" });
+    expect(within(group).getByRole("button", { name: "Разрешить" })).toBeEnabled();
+    expect(within(group).getByRole("button", { name: "Отклонить" })).toBeEnabled();
+    expect(within(group).queryByRole("article")).toBeNull();
+    expect(seen.previews).toHaveLength(0);
   });
 });

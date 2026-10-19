@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Event } from "../../lib/events";
 import { Label } from "@/components/ui/label";
+import { assistantToolName, isWriteTool } from "../../lib/assistant/api";
+import { PlatformProposal } from "../assistant/PlatformProposal";
+import type { ProposalItem } from "../assistant/ProposalCard";
 
 /**
  * Вызовы инструментов, которые ждут решения человека: у встроенного или MCP
@@ -12,9 +15,16 @@ import { Label } from "@/components/ui/label";
  * `user.tool_confirmation`. Блок стоит над полем ввода страницы сессии и
  * работает на любой сессии, не только на сессии ассистента.
  *
- * Платформенные вызовы ассистента (сервер `platform`) подтверждает только
- * карточка с отпечатком изменения, прямой allow сервер отклоняет. Для них
- * остаётся «Отклонить» и подсказка.
+ * Вызов записи сервера `platform` подтверждает только карточка с отпечатком
+ * изменения, прямой allow сервер отклоняет. Здесь стоит та же карточка, что в
+ * панели ассистента: она сама берёт preview и сама шлёт решение в
+ * `/v1/oma/platform-mcp/confirm` с id этой сессии. Сервер пишет
+ * `user.tool_confirmation`, и строка уходит из блока по событиям. Своё решение
+ * страница за такой вызов не шлёт. Кто не начинал сессию, видит в карточке
+ * владельца и кнопок не получает.
+ *
+ * Чтение платформы подтверждения не просит. Если всё же ждёт другой вызов
+ * платформы, у него нет карточки: остаётся только «Отклонить».
  */
 
 export interface PendingConfirmation {
@@ -35,6 +45,22 @@ export interface ConfirmationDecision {
 }
 
 const PLATFORM_SERVER = "platform";
+
+/** Вызов записи платформы: его решает карточка предложения. */
+function isPlatformWrite(item: PendingConfirmation): boolean {
+  return item.platform && isWriteTool(item.name);
+}
+
+/** Строка карточки из ожидающего вызова, как её строит лента ассистента. */
+function proposalItem(item: PendingConfirmation): ProposalItem {
+  return {
+    kind: "proposal",
+    id: item.id,
+    tool: assistantToolName(item.name),
+    input: item.input,
+    phase: "pending",
+  };
+}
 
 /** Вызовы с `ask` без решения и без результата, в порядке событий. */
 export function pendingConfirmations(events: readonly Event[]): PendingConfirmation[] {
@@ -123,7 +149,7 @@ function Request({
         <>
           {item.platform ? (
             <p className="text-xs text-ddc-text-muted">
-              Изменения платформы подтверждаются карточкой в панели ассистента. Здесь можно только отклонить.
+              У этого вызова платформы нет карточки подтверждения. Его можно только отклонить
             </p>
           ) : null}
           <Label className="flex flex-col gap-1 text-xs text-ddc-text-muted">
@@ -160,9 +186,13 @@ function Request({
 
 export function ToolConfirmationRequests({
   events,
+  sessionId,
   onDecide,
 }: {
   events: readonly Event[];
+  /** Сессия страницы: карточка платформы шлёт preview и решение с этим id. */
+  sessionId: string;
+  /** Решение строки без карточки: встроенный, обычный MCP или вызов платформы без записи. */
   onDecide: (decision: ConfirmationDecision) => Promise<void>;
 }) {
   const pending = useMemo(() => pendingConfirmations(events), [events]);
@@ -178,9 +208,15 @@ export function ToolConfirmationRequests({
         Ожидает подтверждения
       </p>
       <ul className="flex flex-col gap-2">
-        {pending.map((item) => (
-          <Request key={item.id} item={item} onDecide={onDecide} />
-        ))}
+        {pending.map((item) =>
+          isPlatformWrite(item) ? (
+            <li key={item.id}>
+              <PlatformProposal item={proposalItem(item)} sessionId={sessionId} />
+            </li>
+          ) : (
+            <Request key={item.id} item={item} onDecide={onDecide} />
+          ),
+        )}
       </ul>
     </div>
   );

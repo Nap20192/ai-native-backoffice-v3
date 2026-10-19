@@ -2,9 +2,8 @@ import { useCrumbName } from "../lib/crumb-names";
 import { formatDateTime } from "../lib/date-format";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { toast } from "sonner";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -47,7 +46,7 @@ import { Button } from "@/components/ui/button";
 import { PlainButton } from "@/components/ui/plain-button";
 import { PopoverContent } from "@/components/ui/popover";
 
-import { MCP_REGISTRY, type McpRegistryEntry } from "../data/mcp-registry";
+import { MCP_REGISTRY } from "../data/mcp-registry";
 import { useI18n } from "../i18n";
 
 // =================================================================
@@ -823,85 +822,13 @@ function AddCredentialModal({
     clientId: "",
     clientSecret: "",
   });
-  const [tokenSectionOpen, setTokenSectionOpen] = useState(false);
+  // Submit needs the access token for both types, so its section starts open.
+  const [tokenSectionOpen, setTokenSectionOpen] = useState(true);
   const [refreshSectionOpen, setRefreshSectionOpen] = useState(false);
-  const [clientCredsSectionOpen, setClientCredsSectionOpen] = useState(false);
 
-  // Listen for OAuth popup completion. Two transports because COOP
-  // severs window.opener for providers like Sentry (which set
-  // Cross-Origin-Opener-Policy: same-origin on their authorize page) —
-  // postMessage from the popup back to us doesn't work in that case.
-  // BroadcastChannel is same-origin and survives COOP, so use it as a
-  // parallel channel; the popup posts to both. Either firing is enough.
-  const handleOAuthMessage = useCallback(
-    (event: MessageEvent | { data: unknown }) => {
-      const data = (
-        event as {
-          data?: {
-            type?: string;
-            service?: string;
-            probe_ok?: boolean;
-            probe_message?: string | null;
-          };
-        }
-      ).data;
-      if (data?.type === "oauth_complete") {
-        setConnecting(null);
-        onCreated();
-        // Surface the MCP probe result so the user knows whether the just-
-        // stored credential will actually work. Same toasts as the legacy
-        // VaultsList modal.
-        const svc = data.service ?? "MCP-сервер";
-        if (data.probe_ok === true) {
-          toast.success(`Подключено: ${svc}, токен проверен.`);
-        } else if (data.probe_ok === false) {
-          toast.warning(
-            data.probe_message
-              ? `Подключено: ${svc}, но сервер вернул ошибку: ${data.probe_message}`
-              : `Подключено: ${svc}, но сервер отклонил токен.`,
-          );
-        }
-      }
-    },
-    [onCreated],
-  );
-
-  useEffect(() => {
-    window.addEventListener("message", handleOAuthMessage);
-    let bc: BroadcastChannel | null = null;
-    try {
-      bc = new BroadcastChannel("openma-oauth");
-      bc.addEventListener("message", handleOAuthMessage);
-    } catch {
-      // Old browser without BroadcastChannel — fall back to postMessage only.
-    }
-    return () => {
-      window.removeEventListener("message", handleOAuthMessage);
-      if (bc) {
-        bc.removeEventListener("message", handleOAuthMessage);
-        bc.close();
-      }
-    };
-  }, [handleOAuthMessage]);
-
-  const connectMcp = (
-    entry: McpRegistryEntry | { name: string; url: string },
-    opts?: { clientId?: string; clientSecret?: string },
-  ) => {
-    setConnecting(entry.name);
-    const params = new URLSearchParams({
-      mcp_server_url: entry.url,
-      vault_id: vault.id,
-      redirect_uri: window.location.href,
-    });
-    if (opts?.clientId) params.set("client_id", opts.clientId);
-    if (opts?.clientSecret) params.set("client_secret", opts.clientSecret);
-    window.open(
-      `/v1/oma/oauth/authorize?${params.toString()}`,
-      "oauth",
-      "width=600,height=700,popup=yes",
-    );
-  };
+  // The OAuth popup flow is gone: the Node server has no
+  // /v1/oma/oauth/authorize route (404), so the popup could never finish.
+  // Both types now need an access token and go through the direct create.
 
   const createBearerCred = async () => {
     setConnecting("custom");
@@ -950,25 +877,15 @@ function AddCredentialModal({
 
   const submitCustom = () => {
     // Submit rules for the unified Add-credential MCP form:
-    //   - Bearer type or Access token filled → POST a credential
-    //     immediately (mcp_oauth if refresh_token present, else
-    //     static_bearer). Button reads "Добавить".
-    //   - Otherwise → start /v1/oma/oauth/authorize popup. Button reads
-    //     "Подключить". Picking a registry row only fills the MCP Server
-    //     field, never auto-connects.
-    if (!customForm.url) return;
-    if (customForm.type === "bearer" || customForm.token) {
-      void createBearerCred();
-    } else {
-      connectMcp(
-        {
-          name:
-            customForm.name || customForm.pickedName || customForm.url,
-          url: customForm.url,
-        },
-        { clientId: customForm.clientId, clientSecret: customForm.clientSecret },
-      );
-    }
+    //   - MCP server URL and access token filled → POST a credential
+    //     (mcp_oauth if refresh_token present, else static_bearer).
+    //   - No access token → nothing to send. The OAuth popup flow is not
+    //     available on this server, so the submit button stays disabled
+    //     and the OAuth type shows a note instead.
+    // Picking a registry row only fills the MCP Server field, never
+    // auto-connects.
+    if (!customForm.url || !customForm.token) return;
+    void createBearerCred();
   };
 
   return (
@@ -985,15 +902,9 @@ function AddCredentialModal({
           <Button
             onClick={submitCustom}
             loading={connecting === "custom"}
-            disabled={
-              !customForm.url ||
-              !!connecting ||
-              (customForm.type === "bearer" && !customForm.token)
-            }
+            disabled={!customForm.url || !!connecting || !customForm.token}
           >
-            {customForm.token || customForm.type === "bearer"
-              ? "Добавить"
-              : "Подключить"}
+            Добавить
           </Button>
         </>
       }
@@ -1080,13 +991,12 @@ function AddCredentialModal({
           />
         </div>
 
-        {/* Access token — collapsed Optional. Filling this switches the
-            submit path to POST static_bearer + button label changes to
-            "Добавить". Visible regardless of Type so the user can
-            supply a pre-issued OAuth access_token without a handshake. */}
+        {/* Access token. Submit needs it for both types: the OAuth popup
+            flow is not available on this server, so an OAuth credential
+            is a pre-issued access_token. Required, so no "optional" meta
+            and the section starts open. */}
         <Disclosure
           title="Токен доступа"
-          meta="Необязательно"
           open={tokenSectionOpen}
           onOpenChange={setTokenSectionOpen}
         >
@@ -1099,8 +1009,8 @@ function AddCredentialModal({
             aria-label="Токен доступа"
           />
           <p className="mt-1.5 text-xs leading-4 text-muted">
-            Если заполнить, учётные данные сохранятся как статический
-            Bearer-токен, без OAuth-авторизации.
+            Без токена обновления учётные данные сохранятся как статический
+            Bearer-токен.
           </p>
         </Disclosure>
 
@@ -1156,21 +1066,9 @@ function AddCredentialModal({
                   <SelectOption value="none">none</SelectOption>
                 </Select>
               </Field>
-            </div>
-          </Disclosure>
-        )}
-        {/* OAuth client credentials (Optional) — only shown for the
-            OAuth flow. Lets the user override the server's preset
-            client_id/secret on a per-credential basis (GitHub, Feishu,
-            any provider that doesn't support DCR). */}
-        {customForm.type === "oauth" && !customForm.token && (
-          <Disclosure
-            title="Учётные данные OAuth-клиента"
-            meta="Необязательно"
-            open={clientCredsSectionOpen}
-            onOpenChange={setClientCredsSectionOpen}
-          >
-            <div className="space-y-4">
+              {/* OAuth client credentials: createBearerCred reads them only
+                  for mcp_oauth (refresh.client_id and the client_secret of
+                  token_endpoint_auth), so they live with the refresh token. */}
               <TextInput
                 value={customForm.clientId}
                 onChange={(e) =>
@@ -1179,24 +1077,31 @@ function AddCredentialModal({
                 placeholder="ID клиента"
                 aria-label="ID OAuth-клиента"
               />
-              <SecretInput
-                value={customForm.clientSecret}
-                onChange={(e) =>
-                  setCustomForm({
-                    ...customForm,
-                    clientSecret: e.target.value,
-                  })
-                }
-                placeholder="Секрет клиента"
-                aria-label="Секрет OAuth-клиента"
-              />
-              <p className="text-xs leading-4 text-muted">
-                Для OAuth-провайдеров без динамической регистрации клиентов
-                (GitHub, Feishu): укажите client_id и секрет из заранее
-                созданного приложения.
-              </p>
+              <div>
+                <SecretInput
+                  value={customForm.clientSecret}
+                  onChange={(e) =>
+                    setCustomForm({
+                      ...customForm,
+                      clientSecret: e.target.value,
+                    })
+                  }
+                  placeholder="Секрет клиента"
+                  aria-label="Секрет OAuth-клиента"
+                />
+                <p className="mt-1.5 text-xs leading-4 text-muted">
+                  ID и секрет OAuth-клиента нужны, чтобы сервер обновил токен.
+                </p>
+              </div>
             </div>
           </Disclosure>
+        )}
+        {customForm.type === "oauth" && !customForm.token && (
+          <div role="note" className="callout-warning">
+            <TriangleAlertIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
+            Вход через OAuth на этом сервере пока не работает. Вставьте токен доступа, он нужен для
+            подключения.
+          </div>
         )}
       </div>
     </Modal>

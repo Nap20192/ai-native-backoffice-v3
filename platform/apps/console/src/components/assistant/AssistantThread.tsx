@@ -6,11 +6,8 @@ import { Spinner } from "@/components/ui/spinner";
 
 import type { ThreadItem } from "../../lib/assistant/events";
 import { Markdown } from "../Markdown";
-import { BatchProposalCard } from "./BatchProposalCard";
-import { MessageProposalCard } from "./MessageProposalCard";
 import { ModelCardDraftCard } from "./ModelCardDraftCard";
-import { ProposalCard } from "./ProposalCard";
-import { SessionProposalCard } from "./SessionProposalCard";
+import { PlatformProposal } from "./PlatformProposal";
 
 /**
  * Лента панели: реплики, ответы, свёрнутое чтение и карточки предложений
@@ -45,19 +42,6 @@ function ReadRow({ item }: { item: Extract<ThreadItem, { kind: "read" }> }) {
       {item.status === "error" ? <span className="sr-only">Не вышло</span> : null}
     </div>
   );
-}
-
-function Proposal({ item, sessionId }: { item: Extract<ThreadItem, { kind: "proposal" }>; sessionId: string }) {
-  switch (item.tool) {
-    case "apply_changes":
-      return <BatchProposalCard item={item} sessionId={sessionId} />;
-    case "create_session":
-      return <SessionProposalCard item={item} sessionId={sessionId} />;
-    case "send_message":
-      return <MessageProposalCard item={item} sessionId={sessionId} />;
-    default:
-      return <ProposalCard item={item} sessionId={sessionId} />;
-  }
 }
 
 export function AssistantThread({
@@ -95,7 +79,7 @@ export function AssistantThread({
           case "read":
             return <ReadRow key={item.id} item={item} />;
           case "proposal":
-            return <Proposal key={item.id} item={item} sessionId={sessionId} />;
+            return <PlatformProposal key={item.id} item={item} sessionId={sessionId} />;
           case "draft":
             return <ModelCardDraftCard key={item.id} body={item.body} />;
           case "error":

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Главный сценарий verify-agent-console (Playwright, интерфейс консоли на русском):
 //   вход тестовой учёткой → создать окружение → доказать, что окружение работает
-//   (VM поднимается и выполняет команду) → задать окружению пакет и сеть «Ограниченный»
+//   (VM поднимается и выполняет команду) → образы каталога (если launch.sh включил каталог:
+//   workplace и workplace-office собраны, в VM на workplace-office есть soffice, pdftoppm и Python,
+//   pptx переводится в PDF и PNG) → задать окружению пакет и сеть «Ограниченный»
 //   и проверить, что они действуют в VM → создать агента → создать сессию с этим
 //   окружением → ход агента с bash в песочнице → итоговый ответ → доказательства
 //   (скриншоты, ARIA, API, файлы, логи, поток событий) → архив сессий (VM останавливаются).
@@ -14,6 +16,20 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { createHash, randomBytes } from "node:crypto";
+import {
+  CATALOG_IMAGE_KEYS,
+  OFFICE_IMAGE_KEY,
+  catalogImageFacts,
+  officeToolsCommand,
+  officeToolsFacts,
+  officeToolsProblems,
+  pngProblems,
+  renderCommand,
+  renderFacts,
+  renderFileName,
+  renderProblems,
+  shortDigest,
+} from "./catalog-checks.mjs";
 
 // ---------------------------------------------------------------- прогон ---
 const SKILL_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -297,6 +313,10 @@ function commandFor(kind, n) {
         + `echo net_allowed=$(curl -s -m 10 -o /dev/null -w '%{http_code}' ${NET_ALLOWED_URL} || true)`;
     case "alive": // отвечает ли VM после сетевого хода
       return `echo VERIFY_OK_${n} && echo alive_kernel=$(uname -r)`;
+    case "office": // программы образа workplace-office: коды выхода и версии (catalog-checks.mjs)
+      return officeToolsCommand(n);
+    case "render": // pptx → PDF → PNG в VM, PNG в /mnt/session/outputs (catalog-checks.mjs)
+      return renderCommand(n);
     default: // ход агента в главной сессии
       return `mkdir -p /mnt/session/outputs && echo VERIFY_OK_${n} > /mnt/session/outputs/verify-${n}.txt && cat /mnt/session/outputs/verify-${n}.txt && echo kernel=$(uname -r)`;
   }
@@ -874,9 +894,9 @@ async function ensureProbeAgent() {
   saveCreated();
   return agent.id;
 }
-async function startProbeSession(title) {
+async function startProbeSession(title, environmentId = ids.environment) {
   const agentId = await ensureProbeAgent();
-  const session = await api("POST", "/v1/sessions", { agent: agentId, environment_id: ids.environment, title });
+  const session = await api("POST", "/v1/sessions", { agent: agentId, environment_id: environmentId, title });
   created.sessions.push(session.id);
   saveCreated();
   return session;
@@ -935,6 +955,121 @@ async function stepProbeEnvironment() {
     });
   }
   if (!KEEP_SESSION) await archiveAndProveStop("env.probe", session.id);
+}
+
+// Образы каталога (docs/plans/environment-programs.md, срез П1). Каталог включают
+// VERIFY_SANDBOX_IMAGE_CATALOG и VERIFY_SANDBOX_IMAGE_DIR у launch.sh, в run.env это
+// SANDBOX_IMAGE_CATALOG и SANDBOX_IMAGE_DIR. Без них три проверки идут строками «не проверено».
+// Окружение с образом создаётся по API, это обходной путь, как проба: раздел «Образ» карточки
+// (подфункция env-image) сценарий не ведёт. Одна сессия и два хода (программы, затем рендер),
+// чтобы холодный старт образа был один. Шаг идёт до настроек: агент пробы ещё не в архиве.
+const CATALOG_TITLES = {
+  catalog: `каталог образов включён: ${CATALOG_IMAGE_KEYS.join(" и ")} собраны (built: true), дайджест из GET ${CATALOG_PATH} равен index.json каталога образа и файлу .digest на диске`,
+  office: `окружение с образом ${OFFICE_IMAGE_KEY} (по API): VM поднята из этого образа (в логе сервера «creating box» с его дайджестом), soffice --version, pdftoppm -v, python --version и импорт docx, openpyxl, pptx выходят с кодом 0`,
+  render: `в VM на ${OFFICE_IMAGE_KEY} python-pptx пишет слайд 16:9, soffice --headless --convert-to pdf даёт PDF, pdftoppm -png даёт непустой PNG, PNG через /mnt/session/outputs лежит на хосте`,
+};
+async function stepCatalogImages() {
+  const skip = (list, why) => list.forEach(([id, title]) => record(id, title, "не проверено", "", why));
+  const officeChecks = [["env.office_tools", CATALOG_TITLES.office], ["env.render", CATALOG_TITLES.render]];
+  if (!run.SANDBOX_IMAGE_CATALOG) {
+    skip([["env.catalog_enabled", CATALOG_TITLES.catalog], ...officeChecks],
+      "каталог образов в прогоне выключен: launch.sh запущен без VERIFY_SANDBOX_IMAGE_CATALOG и VERIFY_SANDBOX_IMAGE_DIR");
+    return;
+  }
+  // Пути образов ответ сервера не отдаёт: oci_dir берётся из catalog.json, index.json и .digest с диска.
+  const response = await api("GET", CATALOG_PATH).catch((error) => ({ error: error.message }));
+  let catalogFile = null;
+  let fileError = null;
+  try {
+    catalogFile = JSON.parse(readFileSync(run.SANDBOX_IMAGE_CATALOG, "utf8"));
+  } catch (error) {
+    fileError = error.message;
+  }
+  const facts = catalogImageFacts({ response, catalogFile, imageDir: run.SANDBOX_IMAGE_DIR });
+  const catalogJson = saveJson("50-sandbox-catalog", { catalog: run.SANDBOX_IMAGE_CATALOG, image_dir: run.SANDBOX_IMAGE_DIR, response, disk: facts.images });
+  const okCatalog = await check("env.catalog_enabled", CATALOG_TITLES.catalog, () => {
+    assert(!response?.error, `GET ${CATALOG_PATH}: ${response?.error}`);
+    assert(!fileError, `${run.SANDBOX_IMAGE_CATALOG} не читается: ${fileError}`);
+    assert(facts.problems.length === 0, facts.problems.join("; "));
+    return `${catalogJson}; ${facts.images.map((i) => `${i.key} ${shortDigest(i.apiDigest)}${i.fileDigest ? " = .digest" : ", файла .digest нет"}`).join(", ")}`;
+  });
+  if (okCatalog) cover("env-catalog");
+  const image = (response?.images ?? []).find((i) => i?.key === OFFICE_IMAGE_KEY);
+  if (response?.enabled !== true || image?.built !== true || !image.image_digest) {
+    skip(officeChecks, `образ ${OFFICE_IMAGE_KEY} не готов по ответу сервера (enabled=${response?.enabled}, built=${image?.built ?? "нет образа"}): см. env.catalog_enabled`);
+    return;
+  }
+
+  const officeNonce = newNonce();
+  const renderNonce = newNonce();
+  names.officeEnv = `verify-office-${officeNonce}`;
+  let session = null;
+  let vmRan = false;
+  const okTools = await check("env.office_tools", CATALOG_TITLES.office, async () => {
+    const env = await api("POST", "/v1/environments", {
+      name: names.officeEnv,
+      description: `verify-agent-console ${run.RUN_ID}: образ ${OFFICE_IMAGE_KEY}`,
+      config: { type: "cloud", image: OFFICE_IMAGE_KEY },
+    });
+    ids.officeEnvironment = env.id;
+    created.environments.push(env.id);
+    saveCreated();
+    const envFile = saveJson("51-office-environment", env);
+    assert(env.config?.image === OFFICE_IMAGE_KEY, `${envFile}: config.image ${JSON.stringify(env.config?.image)}`);
+    session = await startProbeSession(names.officeEnv, env.id);
+    ids.officeSession = session.id;
+    await sendTurn(session.id, "office", officeNonce);
+    log(`образ ${OFFICE_IMAGE_KEY}: сессия ${session.id}, первый старт VM собирает диск образа в BOXLITE_HOME`);
+    const events = await waitTurnIdle(session.id, officeNonce, FIRST_TURN_TIMEOUT, `образ ${OFFICE_IMAGE_KEY}`);
+    const evFile = saveJson("52-office-session-events", events);
+    const a = analyzeTurn(events, officeNonce);
+    const text = firstResultText(events, officeNonce);
+    vmRan = Boolean(a.pair);
+    assert(a.errors.length === 0, `session.error: ${JSON.stringify(a.errors.map((e) => e.error ?? e)).slice(0, 400)}`);
+    assert(a.pair, `нет tool_result с VERIFY_OK_${officeNonce}; вывод: «${plain(text).slice(0, 300)}»`);
+    const f = officeToolsFacts(text);
+    assert(f.kernel && f.kernel !== HOST_KERNEL, `kernel=${f.kernel}: команда выполнена не в VM`);
+    // Подпись образа в строке лога: «<ключ> <дайджест>» (boxPlan в litebox.ts). Так видно, что VM
+    // поднялась из каталога OCI этого образа, а не из образа сервера с такими же программами.
+    const boxLine = `creating box (image=${OFFICE_IMAGE_KEY} ${image.image_digest}`;
+    assert(serverLogLines().some((l) => l.includes(boxLine)),
+      `в логе сервера нет «${boxLine}…»: VM поднялась не из образа каталога; путь config.image → createSandboxImageSpec (apps/main-node/src/lib/sandbox-environment-image.ts) → boxPlan (packages/sandbox-adapter-litebox/src/litebox.ts)`);
+    const problems = officeToolsProblems(f);
+    assert(problems.length === 0, `${problems.join("; ")}; вывод: «${plain(text).slice(0, 300)}»`);
+    return `${evFile}: ${f.tools.filter((t) => t.version).map((t) => t.version).join(", ")}, импорт docx, openpyxl, pptx с кодом 0, kernel=${f.kernel}; лог сервера: image=${OFFICE_IMAGE_KEY} ${shortDigest(image.image_digest)}`;
+  });
+  if (vmRan) vmStarts += 1;
+  if (!vmRan) {
+    skip([officeChecks[1]], "VM на образе не выполнила команду: см. env.office_tools");
+  } else {
+    const okRender = await check("env.render", CATALOG_TITLES.render, async () => {
+      await sendTurn(session.id, "render", renderNonce);
+      const events = await waitTurnIdle(session.id, renderNonce, TURN_TIMEOUT, `рендер на ${OFFICE_IMAGE_KEY}`);
+      const evFile = saveJson("52-office-session-events", events);
+      const a = analyzeTurn(events, renderNonce);
+      const text = firstResultText(events, renderNonce);
+      assert(a.errors.length === 0, `session.error: ${JSON.stringify(a.errors.map((e) => e.error ?? e)).slice(0, 400)}`);
+      const f = renderFacts(text);
+      const problems = renderProblems(f);
+      assert(problems.length === 0, `${problems.join("; ")}; конец вывода: «${plain(text).slice(-300)}»`);
+      const name = renderFileName(renderNonce);
+      const hostFile = join(run.SESSION_OUTPUTS_DIR, user.tenant_id, session.id, name);
+      assert(existsSync(hostFile), `нет ${hostFile}: PNG не дошёл до хоста через /mnt/session/outputs`);
+      const png = readFileSync(hostFile);
+      const pngIssues = pngProblems(png);
+      assert(pngIssues.length === 0, `${hostFile}: ${pngIssues.join("; ")}`);
+      assert(png.length === f.pngBytes, `на хосте ${png.length} байт, в VM png_bytes=${f.pngBytes}`);
+      const copy = `api/53-${name}`;
+      copyFileSync(hostFile, join(EV, copy));
+      return `${evFile}; ${copy}: PNG ${png.length} байт`;
+    });
+    if (okTools && okRender) cover("env-office");
+  }
+  // VM образа берёт до 1536 МиБ памяти: архив останавливает её до шагов настроек и агента.
+  if (session && !KEEP_SESSION) {
+    if (vmRan) await archiveAndProveStop("env.office", session.id);
+    else await api("POST", `/v1/sessions/${session.id}/archive`).catch(() => {});
+  }
 }
 
 async function stepConfigureEnvironment() {
@@ -1840,6 +1975,9 @@ function writeSummary(abortError) {
   const failed = checks.filter((c) => c.status === "провал");
   const notChecked = [
     ["env.probe_path", "проба окружения сделана техническим агентом по API: действия «проверить окружение» нет ни в консоли, ни в API"],
+    ...(run.SANDBOX_IMAGE_CATALOG
+      ? [["env.office_path", `окружение с образом ${OFFICE_IMAGE_KEY} создано по API: выбор образа в разделе «Образ» карточки сценарий не ведёт (подфункция env-image)`]]
+      : []),
     ...(FAKE
       ? [["model.real", "настоящая модель не вызывалась (режим fake); путь real: VERIFY_MODEL_MODE=real при grep -c '^ANTHROPIC_API_KEY=.' platform/.env = 1"]]
       : [["model.answer_text", "точный текст ответа настоящей модели не проверяется, только события tool_use/tool_result и наличие agent.message"]]),
@@ -1864,6 +2002,9 @@ function writeSummary(abortError) {
     `- учётка: ${user.email}, рабочее пространство ${user.tenant_id}`,
     `- окружение ${ids.environment ?? "—"} (${names.env}), агент ${ids.agent ?? "—"} (${names.agent}), сессия ${ids.session ?? "—"} (${names.session})`,
     `- проба окружения: агент ${ids.probeAgent ?? "—"}, сессии ${ids.probeSession ?? "—"} (nonce ${probeNonce}) и ${ids.settingsSession ?? "—"} после настроек (nonce ${settingsNonce}); ход агента: nonce ${nonce}`,
+    run.SANDBOX_IMAGE_CATALOG
+      ? `- каталог образов: ${run.SANDBOX_IMAGE_CATALOG}, папка образов ${run.SANDBOX_IMAGE_DIR}; окружение ${OFFICE_IMAGE_KEY} ${ids.officeEnvironment ?? "—"} (${names.officeEnv ?? "—"}), сессия ${ids.officeSession ?? "—"}`
+      : "- каталог образов выключен: launch.sh без VERIFY_SANDBOX_IMAGE_CATALOG и VERIFY_SANDBOX_IMAGE_DIR",
     `- ядро хоста ${HOST_KERNEL}, ядро VM ${ids.vmKernel ?? ids.probeVmKernel ?? "—"}`,
     `- ошибок уровня 50 в логе сервера: ${err50} (logs/main-node.journey.log)`,
     "",
@@ -1926,6 +2067,7 @@ try {
     ["вход", stepLogin, true],
     ["окружение", stepCreateEnvironment, true],
     ["проба окружения", stepProbeEnvironment, true],
+    ["образы каталога", stepCatalogImages, false],
     ["настройки окружения", stepConfigureEnvironment, false],
     ["проба настроек окружения", stepProbeSettings, false, () => settingsOk],
     ["агент", stepCreateAgent, true],

@@ -27,6 +27,10 @@ VERIFY_EVIDENCE_ROOT="${VERIFY_EVIDENCE_ROOT:-$REPO_ROOT/.verify-evidence}"
 VERIFY_MODEL_MODE="${VERIFY_MODEL_MODE:-fake}"
 VERIFY_AGENT_MODEL="${VERIFY_AGENT_MODEL:-claude-sonnet-4-6}"
 VERIFY_SANDBOX_IMAGE="${VERIFY_SANDBOX_IMAGE:-node:22-bookworm}"
+# Каталог образов песочницы (platform/sandbox-images/catalog.json) и папка собранных образов.
+# Задаются вместе или не задаются: без них сервер работает без каталога, как раньше.
+VERIFY_SANDBOX_IMAGE_CATALOG="${VERIFY_SANDBOX_IMAGE_CATALOG:-}"
+VERIFY_SANDBOX_IMAGE_DIR="${VERIFY_SANDBOX_IMAGE_DIR:-}"
 VERIFY_START_TIMEOUT_S="${VERIFY_START_TIMEOUT_S:-180}"
 
 # Чужие порты: другой workflow (8787), пробная копия владельца (8788, 5174), vite (5173).
@@ -229,6 +233,8 @@ VERIFY_SERVER_HOME=$VERIFY_SERVER_HOME
 VERIFY_EVIDENCE_ROOT=$VERIFY_EVIDENCE_ROOT
 VERIFY_MODEL_MODE=$VERIFY_MODEL_MODE  VERIFY_AGENT_MODEL=$VERIFY_AGENT_MODEL
 VERIFY_SANDBOX_IMAGE=$VERIFY_SANDBOX_IMAGE
+VERIFY_SANDBOX_IMAGE_CATALOG=${VERIFY_SANDBOX_IMAGE_CATALOG:-(не задан, каталог образов выключен)}
+VERIFY_SANDBOX_IMAGE_DIR=${VERIFY_SANDBOX_IMAGE_DIR:-(не задана)}
 живые прогоны (есть записанные процессы): $(vac_live_runs | tr '\n' ' ')
 EOF
 fi

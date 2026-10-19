@@ -17,6 +17,11 @@ Behavior:
 Note: LibreOffice recalculates .xlsx on load per its default
 calculation settings; conversion re-saves with fresh cached values.
 
+OpenMA port: LibreOffice is found as `soffice` or `libreoffice` and runs
+through _soffice.py with its own temporary profile. When it is missing, the
+guidance names the environment image that has it. A timeout exits 1 with
+a JSON error that says LibreOffice timed out.
+
 Usage:
   xlsx_recalc.py book.xlsx
   xlsx_recalc.py book.xlsx --out recalced.xlsx
@@ -27,10 +32,11 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from _soffice import MISSING_GUIDANCE, OfficeError, convert, find_soffice
 
 
 def count_cached(path):
@@ -51,6 +57,9 @@ def count_cached(path):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(
         description="Recalculate .xlsx formulas headlessly via LibreOffice.")
     ap.add_argument("file", help="path to .xlsx file")
@@ -65,32 +74,25 @@ def main(argv=None):
               file=sys.stderr)
         return 1
 
-    soffice = shutil.which("soffice")
+    soffice = find_soffice()
     if not soffice:
         print(json.dumps({
             "ok": True, "recalculated": False,
             "reason": "LibreOffice (soffice) not found on PATH",
-            "guidance": "Install LibreOffice (e.g. `apt install "
-                        "libreoffice-calc` or `brew install --cask "
-                        "libreoffice`), or open the file in Excel/"
-                        "LibreOffice once and re-save it.",
+            "guidance": MISSING_GUIDANCE,
         }, ensure_ascii=False))
         return 0
 
     with tempfile.TemporaryDirectory() as tmp:
-        proc = subprocess.run(
-            [soffice, "--headless", "--calc", "--convert-to", "xlsx:Calc "
-             "MS Excel 2007 XML", "--outdir", tmp, str(src)],
-            capture_output=True, text=True, encoding="utf-8",
-            timeout=args.timeout,
-            env={"HOME": tmp, "PATH": Path(soffice).parent.as_posix()
-                 + ":/usr/bin:/bin"}, check=False)
-        produced = Path(tmp) / (src.stem + ".xlsx")
-        if proc.returncode != 0 or not produced.exists():
-            print(json.dumps({"ok": False,
-                              "error": "soffice conversion failed",
-                              "stderr": proc.stderr.strip()[-500:]}),
-                  file=sys.stderr)
+        try:
+            produced = convert(
+                soffice, src, tmp, "xlsx:Calc MS Excel 2007 XML", args.timeout,
+                extra=["--calc"],
+                env={"HOME": tmp, "PATH": Path(soffice).parent.as_posix()
+                     + ":/usr/bin:/bin"})
+        except OfficeError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)},
+                             ensure_ascii=False), file=sys.stderr)
             return 1
         formulas, cached = count_cached(produced)
         dest = Path(args.out).resolve() if args.out else src

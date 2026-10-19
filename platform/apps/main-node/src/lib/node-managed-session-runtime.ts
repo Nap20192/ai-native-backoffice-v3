@@ -35,7 +35,9 @@ import type {
   SessionRealtimeWriter,
 } from "@open-managed-agents/session-realtime";
 import { randomUUID } from "node:crypto";
+import { isSandboxEnvironmentError } from "@open-managed-agents/sandbox";
 import { createStrictlyIncreasingEventStamp } from "./node-managed-harness-runtime.js";
+import { sessionErrorMessage } from "./sandbox-environment-failure.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
 import type { SessionExecutionObserver } from "./trace/types.js";
 
@@ -380,7 +382,9 @@ export class DefaultNodeManagedSessionRuntimeDriver
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw signal.aborted ? abortedError(signal) : error;
           }
-          const exhausted = attempt >= Math.max(1, retry.attempts);
+          // A sandbox that cannot boot the environment's VM (unknown image,
+          // packages that do not install) fails the same way on a new VM.
+          const exhausted = attempt >= Math.max(1, retry.attempts) || isSandboxEnvironmentError(error);
           const retryInMs = exhausted ? undefined : retry.delayMs(attempt);
           this.observe(scope, "start_attempt_settled", (observer) => observer.startAttemptSettled({
             ...scope,
@@ -559,7 +563,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
         type: "session.error",
         error: {
           type: "unknown_error",
-          message: error instanceof Error ? error.message : String(error),
+          message: sessionErrorMessage(error),
           retry_status: retryStatus,
         },
         processed_at: this.nextEventStamp(input),

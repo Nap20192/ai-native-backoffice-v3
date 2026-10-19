@@ -540,3 +540,123 @@ def test_recalc_reports_json_both_ways(tmp_path):
     formulas = json.loads(run("xlsx_read.py", out, "--formulas").stdout)
     entry = formulas["formulas"][0]
     assert entry["formula"] == "=SUM(A1:A2)" and entry["cached"] == 5
+
+
+# --- OpenMA port: LibreOffice lookup, profile, timeout, missing tools --------
+
+OFFICE_IMAGE = "Рабочее место с LibreOffice"
+
+
+def formula_book(tmp_path):
+    spec = {"sheets": [{"name": "R", "rows": [[2], [3]],
+                        "cells": {"A3": {"formula": "SUM(A1:A2)"}}}]}
+    spec_path = tmp_path / "fspec.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    book = tmp_path / "f.xlsx"
+    run("xlsx_create.py", spec_path, book)
+    return book
+
+
+def fake_office(bin_dir, name="libreoffice", sleep=0):
+    """A fake LibreOffice that logs argv and copies the input to --outdir."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = bin_dir / "office.log"
+    office = bin_dir / name
+    office.write_text(
+        f"#!{sys.executable}\n"
+        "import os, shutil, sys, time\n"
+        f"open({str(log)!r}, 'a').write(repr(sys.argv[1:]) + '\\n')\n"
+        f"time.sleep({sleep})\n"
+        "args = sys.argv[1:]\n"
+        "shutil.copy(args[-1], os.path.join(args[args.index('--outdir') + 1],"
+        " os.path.basename(args[-1])))\n",
+        encoding="utf-8")
+    office.chmod(0o755)
+    return log
+
+
+def recalc_with_path(path, *args):
+    env = dict(os.environ, LC_ALL="C", LANG="C", PATH=str(path))
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "xlsx_recalc.py"), *map(str, args)],
+        capture_output=True, text=True, env=env, encoding="utf-8", check=False)
+
+
+def test_recalc_without_soffice_names_the_office_image(tmp_path):
+    book = formula_book(tmp_path)
+    proc = recalc_with_path(tmp_path, book)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["recalculated"] is False
+    assert OFFICE_IMAGE in result["guidance"]
+    assert "apt install" not in result["guidance"]
+
+
+def test_recalc_finds_libreoffice_and_isolates_the_profile(tmp_path):
+    book = formula_book(tmp_path)
+    log = fake_office(tmp_path / "bin")
+    proc = recalc_with_path(tmp_path / "bin", book, "--out", tmp_path / "o.xlsx")
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["recalculated"] is True
+    argv = log.read_text(encoding="utf-8")
+    assert "-env:UserInstallation=file://" in argv
+    assert "'--headless'" in argv
+
+
+def test_recalc_stops_on_timeout_with_a_clear_error(tmp_path):
+    book = formula_book(tmp_path)
+    fake_office(tmp_path / "bin", name="soffice", sleep=30)
+    proc = recalc_with_path(tmp_path / "bin", book, "--timeout", "2")
+    assert proc.returncode == 1
+    error = json.loads(proc.stderr)
+    assert "LibreOffice timed out after 2 s" in error["error"]
+
+
+
+def fake_launcher_soffice(bin_dir, pid_file):
+    """A fake soffice shaped like the Debian one: the launcher starts a
+    child (soffice.bin) that hangs. The child writes its PID first."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    child = (f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+             "time.sleep(120)")
+    office = bin_dir / "soffice"
+    office.write_text(
+        f"#!{sys.executable}\n"
+        "import subprocess, sys\n"
+        f"subprocess.run([{sys.executable!r}, '-c', {child!r}])\n",
+        encoding="utf-8")
+    office.chmod(0o755)
+
+
+def process_alive(pid):
+    """True while ``pid`` runs; a zombie waiting for its reaper counts as gone."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
+            return stat.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+def wait_until_gone(pid, seconds=5.0):
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not process_alive(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_recalc_timeout_also_stops_the_office_child(tmp_path):
+    book = formula_book(tmp_path)
+    pid_file = tmp_path / "child.pid"
+    fake_launcher_soffice(tmp_path / "bin", pid_file)
+    proc = recalc_with_path(tmp_path / "bin", book, "--timeout", "2")
+    assert proc.returncode == 1
+    assert "LibreOffice timed out after 2 s" in json.loads(proc.stderr)["error"]
+    child = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        assert wait_until_gone(child), "soffice.bin outlived the timeout"
+    finally:
+        if process_alive(child):
+            os.kill(child, 9)

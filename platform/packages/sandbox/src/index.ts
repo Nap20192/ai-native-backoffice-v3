@@ -60,8 +60,11 @@ export { createNoEnvironmentSandbox, isNoEnvironmentSandbox } from "./no-environ
 export {
   buildEnvironmentSetupScript,
   environmentPackageLists,
+  environmentSetupFailure,
+  isSandboxEnvironmentError,
   PACKAGE_MANAGER_HOSTS,
   SandboxEnvironmentError,
+  SETUP_OUTPUT_TAIL_LENGTH,
   type SandboxEgress,
   type SandboxEnvironmentErrorCode,
   type SandboxEnvironmentImage,
@@ -70,6 +73,7 @@ export {
   type SandboxEnvironmentSnapshot,
   type SandboxEnvironmentSpec,
   type SandboxPackageManager,
+  type SandboxPackagesFailure,
   type SandboxShell,
   type SandboxVmResources,
 } from "./environment-setup";

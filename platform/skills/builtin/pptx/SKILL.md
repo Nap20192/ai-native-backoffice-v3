@@ -1,8 +1,8 @@
 ---
 name: pptx
-description: Create, read, edit .pptx decks with python-pptx.
+description: Read, edit, fill templates and check .pptx decks with python-pptx; render slides and convert to PDF with LibreOffice.
 display_title: PowerPoint (pptx)
-version: 1.1.0
+version: 1.2.0
 author: Nous Research
 license: MIT
 platforms: [linux, macos, windows]
@@ -15,54 +15,42 @@ metadata:
 
 # Powerpoint Skill
 
-Create, inspect, and edit PowerPoint (.pptx) presentations using the
-python-pptx library. Five helper scripts cover deck creation from a JSON
-spec, structured read-back, in-place edits, template-driven brand decks,
-and slide rendering — all offline, no PowerPoint installation required.
+Inspect, edit and check PowerPoint (.pptx) presentations with python-pptx.
+The helper scripts read a deck back as JSON, edit it in place, fill a
+brand template, and render slides to PNG through LibreOffice.
 
 ## Platform notes (OpenMA)
 
 - This skill is mounted at `/workspace/.openma/skills/pptx/latest/pptx/`. Run helpers by full path, for example
-  `python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/<script>.py --help`. Use `python3`: the sandbox
-  may have no `python` command.
+  `python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/<script>.py --help`.
 - These paths are for an agent that takes the latest version. If the agent
   pins a version, the skill is at `/workspace/.openma/skills/pptx/<version>/pptx/`,
   the folder of this SKILL.md. Use that folder in place of
   `/workspace/.openma/skills/pptx/latest/pptx/` in every command.
 - Save every file the user should receive directly in `/mnt/session/outputs/`.
   Do not create subfolders there: the session file list shows top-level files
-  only. Keep JSON specs, drafts and intermediate files in `/workspace/`.
+  only. Keep JSON specs, drafts and renders in `/workspace/`.
 - Tools: write specs with `write`, read files with `read` (it also shows PNG
   images), run commands with `bash`.
-- Dependencies: check with `python3 -c "import pptx"`. If it fails,
-  run `python3 -m pip install --break-system-packages python-pptx`. If pip
-  itself is missing, run `apt-get update && apt-get install -y python3-pip`
-  first. An environment created from the "Документы" template installs
-  python-pptx and the other document packages when the sandbox starts.
+- Programs. The environment image "Рабочее место с LibreOffice" has python-pptx,
+  LibreOffice (`soffice`) and poppler (`pdftoppm`, `pdftotext`).
+  Check with `command -v soffice` and `python3 -c "import pptx"`.
+- If `command -v soffice` prints nothing or the import fails, tell the user to pick the image
+  "Рабочее место с LibreOffice" on the environment card and start a new session.
+  Do not install LibreOffice with apt-get: it is too large for the sandbox.
+  Until then read and edit the deck and check it with `pptx_read.py --outline`.
 
 ## When to Use
 
-- The user asks to build a slide deck, report presentation, or pitch deck.
 - You need to extract text, notes, tables, chart data, or images from a
   .pptx someone shared.
 - You need to update an existing deck: replace text, refresh or patch
   chart data, swap a logo, duplicate/remove/reorder slides, set
   backgrounds, footers, hyperlinks, or speaker notes.
 - You must produce an on-brand deck from a company .pptx template.
-- Do NOT use this for .ppt (legacy binary) files — convert them first with
-  `soffice --convert-to pptx old.ppt` if LibreOffice is available.
-
-## Prerequisites
-
-- Python 3.10+ with `python-pptx` installed
-  (`pip install python-pptx`).
-- Optional: LibreOffice (`soffice`) plus poppler (`pdftoppm` or
-  `pdftocairo`) for rendering slides to PNGs and for PDF export.
-  `pptx_render.py` detects both with `shutil.which` and degrades
-  gracefully (reports `{"rendered": false, "missing": [...]}`, exit 0)
-  when absent — all create/read/edit operations work without them.
-- Check availability via `bash`:
-  `python3 -c "import pptx; print(pptx.__version__)"` and `which soffice pdftoppm`.
+- You need to see the slides as images or export the deck to PDF.
+- Do NOT use this for .ppt (legacy binary) files. Convert them first with
+  `timeout 180 soffice --headless --convert-to pptx --outdir /workspace/ old.ppt`.
 
 ## How to Run
 
@@ -70,7 +58,6 @@ All scripts live in `scripts/`, take `--help`, print JSON to stdout, and
 exit non-zero on failure. Run them with `bash`:
 
 ```bash
-python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_create.py deck.json /mnt/session/outputs/out.pptx
 python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_read.py deck.pptx --outline      # full JSON outline
 python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_read.py deck.pptx --notes        # speaker notes
 python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_read.py deck.pptx --images ./img # export pictures
@@ -78,19 +65,14 @@ python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_edit.py deck.ppt
 python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_edit.py deck.pptx --chart-data update.json
 python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_edit.py deck.pptx --duplicate-slide 2
 python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_edit.py deck.pptx --remove-slide 3 --move-slide 2 0
-python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_from_template.py brand.pptx out.pptx --values vals.json
-python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_render.py deck.pptx --outdir ./render  # slide PNGs
+python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_from_template.py brand.pptx /mnt/session/outputs/out.pptx --values vals.json
+python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_render.py deck.pptx --outdir /workspace/render  # slide PNGs
 ```
-
-Author JSON specs with `write`; inspect script output and generated
-JSON with `read`.
 
 ## Quick Reference
 
 | Task | Command |
 |---|---|
-| New deck from spec | `pptx_create.py spec.json out.pptx` |
-| 16:9 vs 4:3 | `"slide_size": "16:9"` or `"4:3"` in the spec |
 | Outline as JSON | `pptx_read.py deck.pptx --outline` |
 | Export images | `pptx_read.py deck.pptx --images DIR` |
 | Replace text | `pptx_edit.py deck.pptx --replace-text OLD NEW` |
@@ -108,25 +90,11 @@ JSON with `read`.
 | Append notes | `pptx_edit.py deck.pptx --append-notes N TEXT` |
 | Fill template | `pptx_from_template.py tpl.pptx out.pptx --values v.json` |
 | Render slide PNGs | `pptx_render.py deck.pptx --outdir DIR` |
+| New deck from a JSON spec (format in `--help`) | `pptx_create.py spec.json out.pptx` |
 
 ## Procedure
 
-### 1. Create a deck
-
-Write a JSON spec (see `pptx_create.py --help` for the full format), then
-run `pptx_create.py`. Per slide you can set: `layout` (title,
-title_content, section, two_content, title_only, blank), `title`,
-`subtitle`, `bullets` (strings, or dicts with `level` 0-4, `size` pt,
-`bold`, `italic`, `font`, `color` hex, `link` URL for a hyperlink),
-`background` (solid hex), `footer` (text; enables the layout's footer
-placeholder), `slide_number` (true; enables the layout's slide-number
-placeholder), `images` (path + left/top/width/height in inches), `tables`
-(`rows` as list-of-lists), `shapes` (rectangle, rounded_rectangle, oval,
-diamond, right_arrow, chevron, with `fill` hex + optional `text`),
-`charts` (bar, bar_h, line, pie with `categories` + `series`), and
-`notes` (speaker notes).
-
-### 2. Read a deck
+### 1. Read a deck
 
 `pptx_read.py deck.pptx --outline` returns slide size, layout inventory,
 and per slide: layout name, all shape texts, table cells, image inventory
@@ -134,7 +102,7 @@ and per slide: layout name, all shape texts, table cells, image inventory
 Use `--images DIR` to dump embedded pictures to files, then
 `read` on any exported image if you need to see its content.
 
-### 3. Edit a deck
+### 2. Edit a deck
 
 `pptx_edit.py` combines operations in one pass; use `--output` to keep the
 original. Text replacement scans slide shapes, table cells, and notes.
@@ -160,7 +128,7 @@ modify → replace; the per-part UX is a wrapper, and any chart data not
 expressible as categories + numeric series will be normalized by the
 round-trip.
 
-### 4. Build from a template
+### 3. Build from a template
 
 `pptx_from_template.py` opens a brand .pptx, replaces every
 `{{token}}` from a values JSON across slides/tables/notes, and can append
@@ -169,28 +137,40 @@ so they inherit the master's fonts and colors. Tip: to start from a
 template with zero slides, delete existing ones afterward with
 `pptx_edit.py --remove-slide`.
 
-### 5. Visual verification
+### 4. Visual check
 
-`pptx_render.py deck.pptx --outdir ./render` converts the deck to PDF
-with `soffice --headless` and splits it into one PNG per slide with
-`pdftoppm` (or `pdftocairo`). Output JSON lists the PNG paths — review
-each with `read`. When either tool is missing the script exits
-0 with `{"rendered": false, "missing": [...]}` and guidance; fall back to
-the JSON outline from `pptx_read.py`, which verifies content and
-structure, just not visuals.
+Render every slide to PNG and look at each one with `read`:
+
+```bash
+python3 /workspace/.openma/skills/pptx/latest/pptx/scripts/pptx_render.py /mnt/session/outputs/deck.pptx --outdir /workspace/render
+```
+
+The script runs the same two steps you can run by hand:
+
+```bash
+timeout 180 soffice --headless --convert-to pdf --outdir /workspace/render /mnt/session/outputs/deck.pptx
+pdftoppm -png -r 80 /workspace/render/deck.pdf /workspace/render/slide
+```
+
+80 dpi is enough to see overlapping shapes, cut text and wrong colors. The
+script gives LibreOffice its own temporary profile, so it works while
+another LibreOffice runs, and stops after `--timeout` seconds (180 by
+default). When `soffice` is missing it exits 0 with
+`{"rendered": false, ...}` and names the image to pick; fall back to
+`pptx_read.py --outline`, which checks content but not looks.
 
 ## Converting to PDF
 
-If LibreOffice is installed, export the finished deck to PDF directly:
-
 ```bash
-soffice --headless --convert-to pdf --outdir /mnt/session/outputs/ deck.pptx
+timeout 180 soffice --headless --convert-to pdf --outdir /mnt/session/outputs/ deck.pptx
 ```
 
-The output lands at `/mnt/session/outputs/deck.pdf`. Fonts not installed on the host are
-substituted, so render-verify (Procedure step 5) before shipping the PDF.
-There is no offline pure-Python .pptx→PDF path; if `soffice` is absent,
-say so rather than approximating.
+The output lands at `/mnt/session/outputs/deck.pdf`. If the command prints
+nothing and no PDF appears, another LibreOffice holds the default
+profile: add `-env:UserInstallation=file:///tmp/lo-profile` right after
+`soffice`. Fonts that are not installed are substituted, so render the
+PDF pages (step 4) before you hand it over. There is no pure-Python
+.pptx to PDF path; if `soffice` is missing, say so and name the image.
 
 ## Pitfalls
 
@@ -219,23 +199,23 @@ say so rather than approximating.
   with a clear message (add a textbox instead).
 - Hyperlinks apply to whole runs; `--hyperlink` links every run
   containing the given text on that slide.
-- The default python-pptx template is 4:3; the create script sets 16:9
-  unless the spec says otherwise. Custom templates keep their own size.
+- The default python-pptx template is 4:3. In your own python-pptx code
+  set `prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)`
+  for 16:9. Custom templates keep their own size.
 - Layout indexes vary by template. For brand templates, list layout names
   first: `pptx_read.py template.pptx --outline` (`layouts_available`).
-- `slide.shapes.title` is None on blank layouts — the create script
-  handles this, but remember it when writing ad-hoc python-pptx code.
+- `slide.shapes.title` is None on blank layouts; check it in ad-hoc
+  python-pptx code.
 - Always pass `encoding="utf-8"` when writing spec files; tokens like
   `{{city}}` may be filled with non-ASCII values.
 
 ## Verification
 
-1. After any create/edit, run `pptx_read.py OUT.pptx --outline` and check
+1. After any edit, run `pptx_read.py OUT.pptx --outline` and check
    slide count, texts, tables, notes, and chart values match intent.
 2. `--images DIR` then file-size check confirms pictures embedded.
-3. Render every slide with `pptx_render.py deck.pptx --outdir ./render`
-   and review each PNG with `read` — this catches overlapping
-   shapes, truncated text, and color problems the outline cannot. If the
-   render tools are missing, the script says so; rely on the outline.
+3. Render every slide (step 4) and review each PNG with `read`. This
+   catches overlapping shapes, truncated text, and color problems the
+   outline cannot.
 4. The bundled test suite is the full contract:
-   `python -m pytest tests/ -q` (requires python-pptx + pytest).
+   `python3 -m pytest tests/ -q` (requires python-pptx + pytest).

@@ -30,6 +30,8 @@ const SAFE_METHODS = new Set([
   "inspect",
   "sessionOutputMountCapabilities",
   "registerCommandSecrets",
+  // A synchronous read of what the VM boots with; it never creates the VM.
+  "environmentSnapshot",
 ]);
 
 function assertValid(guard: SandboxExecutionGuard): void {

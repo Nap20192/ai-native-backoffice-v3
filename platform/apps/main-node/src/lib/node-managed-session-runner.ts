@@ -1,6 +1,7 @@
 import { SessionSandboxRuntime, type SessionSandboxMode } from "@open-managed-agents/session-runtime";
 import {
   withSandboxExecutionGuard,
+  type SandboxEnvironmentError,
   type SandboxExecutor,
 } from "@open-managed-agents/sandbox";
 import { randomUUID } from "node:crypto";
@@ -27,6 +28,7 @@ import {
   type StopNodeManagedSessionRuntime,
   type ArchiveNodeManagedSessionThread,
 } from "./node-managed-session-runtime.js";
+import { sessionErrorMessage, watchEnvironmentFailure } from "./sandbox-environment-failure.js";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
 import { nodeManagedStopReason, pendingConfirmations, waitingCalls } from "./node-managed-stop-reason.js";
@@ -574,11 +576,21 @@ export class DefaultNodeManagedSessionRunner
     // controller when renewal fails. The guard keeps provider calls from a
     // stale runner from continuing after that cancellation; canonical frame
     // writes are fenced separately by DefaultNodeManagedSessionRuntimeDriver.
-    const sandbox = input.executionFence === undefined
+    const fenced = input.executionFence === undefined
       ? rawSandbox
       : withSandboxExecutionGuard(rawSandbox, {
           signal: abortController.signal,
         });
+    // The VM boots on the first sandbox call. When it cannot boot (the
+    // environment packages fail), every call fails the same way and the bash
+    // tool would hand the error to the model as text: the turn stops instead
+    // and reports it (plan environment-programs, slice П5).
+    let environmentFailure: SandboxEnvironmentError | undefined;
+    const sandbox = watchEnvironmentFailure(fenced, (error) => {
+      if (environmentFailure !== undefined) return;
+      environmentFailure = error;
+      abortController.abort(error);
+    });
     let subagents: ManagedNodeSubagents | undefined;
     const limits = this.sessionLimitGate(input, () => runtime, () => subagents);
     const runtime = new ManagedNodeHarnessRuntime({
@@ -798,8 +810,11 @@ export class DefaultNodeManagedSessionRunner
           const agentEventsBefore = runtime.agentEventCount;
           try {
             await this.dependencies.buildHarness().run(harnessContext);
+            // Pi returns when the turn is aborted.
+            if (environmentFailure !== undefined) throw environmentFailure;
             return;
           } catch (error) {
+            if (environmentFailure !== undefined) throw environmentFailure;
             if (!(error instanceof Error)) throw error;
             // Pi stops at the Session limit with its own error. The turn ends
             // on budget_reached: no retry and no session.error (plan
@@ -951,7 +966,7 @@ export class DefaultNodeManagedSessionRunner
         type: "session.error",
         error: {
           type: "unknown_error",
-          message: error instanceof Error ? error.message : String(error),
+          message: sessionErrorMessage(environmentFailure ?? error),
           // The turn may have produced side effects (tool calls), so it is not
           // retried automatically: CMA semantics for a dead turn are `exhausted`.
           retryStatus: "exhausted",
@@ -1066,6 +1081,11 @@ export class DefaultNodeManagedSessionRunner
       } finally {
         if (this.abortControllers.get(input) === abortController) {
           this.abortControllers.delete(input);
+        }
+        // A sandbox whose VM did not boot keeps failing: the next turn
+        // starts a new one.
+        if (environmentFailure !== undefined && this.sandboxes.get(input) === rawSandbox) {
+          await this.discardSandbox(input).catch(() => undefined);
         }
       }
       if (finalizationError !== undefined && !runFailed) {

@@ -22,7 +22,6 @@ import { NodeSessionLimits, sessionLimitContinuations } from "../lib/node-sessio
 import { buildTools, disposeTools } from "@open-managed-agents/agent/harness/tools";
 
 import { generateText } from "ai";
-import { composeSystemPrompt } from "@open-managed-agents/agent/harness/platform-guidance";
 import { agentUsesAssemblySkillMount } from "@open-managed-agents/agent/harness/assembly/skill-config";
 import type { HarnessContext } from "@open-managed-agents/agent/harness/interface";
 
@@ -79,9 +78,8 @@ import { ApplicationBackedNodeManagedSessionRuntimeEngine, DefaultNodeManagedSes
 import { DefaultNodeManagedSessionRunner } from "../lib/node-managed-session-runner.js";
 import { createSandboxImageSpec } from "../lib/sandbox-environment-image.js";
 import {
-  buildNodeManagedSkillReminders,
+  buildNodeManagedTurnPrompt,
   resolveNodeManagedSkillMounts,
-  buildNodeManagedAppendablePromptReminders,
   NodeManagedSessionInputPreparer,
 } from "../lib/node-managed-session-inputs.js";
 import { harnessUserMessage } from "../lib/node-managed-harness-user-message.js";
@@ -606,7 +604,6 @@ export async function createManagedNodeRuntime(
         thinkingLevel: typeof agent.model === "string" ? undefined : agent.model.effort,
         speed: typeof agent.model === "string" ? undefined : agent.model.speed === "fast" ? "fast" : "standard",
       });
-      const rawSystemPrompt = input.session.agent.system ?? "";
       const assemblySkills = agentUsesAssemblySkillMount(agent);
       const skillMounts = assemblySkills
         ? await resolveNodeManagedSkillMounts(
@@ -616,10 +613,13 @@ export async function createManagedNodeRuntime(
             .port(managedAgentsPortTokens.skillVersions),
         )
         : undefined;
-      const platformReminders = [
-        ...(assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
-        ...buildNodeManagedAppendablePromptReminders(input.session),
-      ];
+      // The "Environment" block of this turn's sandbox goes first.
+      const { rawSystemPrompt, platformReminders, systemPrompt } = buildNodeManagedTurnPrompt({
+        session: input.session,
+        sandbox: input.sandbox,
+        tools: input.tools,
+        assemblySkills,
+      });
       return {
         agent,
         userMessage: harnessUserMessage(input.acceptedEvents),
@@ -628,7 +628,7 @@ export async function createManagedNodeRuntime(
         tools: { ...input.tools },
         model: input.model,
         pi,
-        systemPrompt: composeSystemPrompt(rawSystemPrompt, platformReminders),
+        systemPrompt,
         rawSystemPrompt,
         platformReminders,
         ...(skillMounts?.length ? { skillMounts } : {}),

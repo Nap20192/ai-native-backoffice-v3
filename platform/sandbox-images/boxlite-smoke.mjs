@@ -119,7 +119,7 @@ async function main() {
   const { JsBoxlite, SimpleBox } = await import(pathToFileURL(require.resolve('@boxlite-ai/boxlite')).href);
   const office = manifest.dpkg.some(({ name }) => name === 'libreoffice-writer-nogui');
   // Unrestricted network, as the adapter maps an unrestricted environment.
-  const options = { rootfsPath: directory, cpus: 2, memoryMib: office ? 2048 : 1024,
+  const options = { rootfsPath: directory, cpus: 2, memoryMib: office ? 1536 : 1024,
     diskSizeGb: office ? 8 : 6, workingDir: '/workspace', user: '0:0', network: { mode: 'enabled' } };
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const runDir = join(cache, 'measurements', runId);

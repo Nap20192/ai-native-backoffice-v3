@@ -10,6 +10,11 @@ Output is JSON. When both tools are present:
 When either tool is missing the script still exits 0 and reports:
   {"rendered": false, "missing": ["soffice"], "guidance": "..."}
 so callers can degrade gracefully (fall back to pptx_read.py --outline).
+
+OpenMA port: LibreOffice is found as `soffice` or `libreoffice` and runs
+through _soffice.py with its own temporary profile and a --timeout. When it
+is missing, the guidance names the environment image that has it. A failed
+or hung conversion exits 1 with one line on stderr instead of a traceback.
 """
 import argparse
 import glob
@@ -20,10 +25,12 @@ import subprocess
 import sys
 import tempfile
 
+from _soffice import MISSING_GUIDANCE, OfficeError, convert, find_soffice
+
 
 def find_tools():
     """Return (soffice, splitter, missing) using shutil.which."""
-    soffice = shutil.which("soffice")
+    soffice = find_soffice()
     splitter = shutil.which("pdftoppm") or shutil.which("pdftocairo")
     missing = []
     if not soffice:
@@ -33,36 +40,30 @@ def find_tools():
     return soffice, splitter, missing
 
 
-def render(pptx_path, out_dir, prefix, dpi):
+def render(pptx_path, out_dir, prefix, dpi, timeout=180):
     soffice, splitter, missing = find_tools()
     if missing:
         return {
             "rendered": False, "missing": missing,
-            "guidance": "Install LibreOffice (soffice) and poppler-utils "
-                        "(pdftoppm/pdftocairo) to render slides. Without "
-                        "them, verify decks with pptx_read.py --outline "
-                        "instead.",
+            "guidance": MISSING_GUIDANCE + " Until then, verify decks "
+                        "with pptx_read.py --outline.",
         }
 
     os.makedirs(out_dir, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        proc = subprocess.run(
-            [soffice, "--headless", "--convert-to", "pdf",
-             "--outdir", tmp, pptx_path],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=300, check=False)
-        pdfs = glob.glob(os.path.join(tmp, "*.pdf"))
-        if proc.returncode != 0 or not pdfs:
-            raise SystemExit(f"soffice PDF conversion failed: {proc.stderr}")
-        pdf = pdfs[0]
+        pdf = str(convert(soffice, pptx_path, tmp, "pdf", timeout))
         out_prefix = os.path.join(out_dir, prefix)
-        proc = subprocess.run(
-            [splitter, "-png", "-r", str(dpi), pdf, out_prefix],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=300, check=False)
+        try:
+            proc = subprocess.run(
+                [splitter, "-png", "-r", str(dpi), pdf, out_prefix],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:
+            raise OfficeError(f"{os.path.basename(splitter)} timed out "
+                              f"after {timeout} s") from None
         if proc.returncode != 0:
-            raise SystemExit(f"{os.path.basename(splitter)} failed: "
-                             f"{proc.stderr}")
+            raise OfficeError(f"{os.path.basename(splitter)} failed: "
+                              f"{proc.stderr.strip()}")
 
     files = sorted(glob.glob(out_prefix + "*.png"))
     return {"rendered": True, "files": files}
@@ -80,12 +81,19 @@ def main(argv=None):
                         help="directory for PNGs (default: ./render)")
     parser.add_argument("--prefix", default="slide",
                         help="PNG filename prefix (default: slide)")
-    parser.add_argument("--dpi", type=int, default=100,
-                        help="render resolution (default: 100)")
+    parser.add_argument("--dpi", type=int, default=80,
+                        help="render resolution (default: 80)")
+    parser.add_argument("--timeout", type=int, default=180,
+                        help="seconds per conversion step (default: 180)")
     args = parser.parse_args(argv)
 
-    result = render(args.pptx, args.outdir, args.prefix, args.dpi)
-    print(json.dumps(result, indent=2))
+    try:
+        result = render(args.pptx, args.outdir, args.prefix, args.dpi,
+                        args.timeout)
+    except OfficeError as exc:
+        print(f"Render failed: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 

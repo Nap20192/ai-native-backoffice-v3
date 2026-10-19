@@ -20,7 +20,7 @@
       "label": "Рабочее место с LibreOffice",
       "oci_dir": "workplace-office-2026.10.1",
       "disk_gb": 8,
-      "memory_mib": 2048,
+      "memory_mib": 1536,
       "cpus": 2
     }
   },

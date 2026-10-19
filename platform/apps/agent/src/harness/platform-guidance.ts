@@ -22,8 +22,23 @@ export const loopStopGuidance =
 export const sessionOutputsGuidance =
   "Files you write under `/mnt/session/outputs/` persist after the session ends and are downloadable by the user from the session's Files panel. Use this path for final artifacts the user should keep (reports, exports, generated docs, packaged code). Files written anywhere else (e.g. `/workspace/`) are scratch — they may be lost on container recycle and are not user-accessible.";
 
-export const platformGuidance =
-  `${authenticatedCommandGuidance}\n\n${loopStopGuidance}\n\n${sessionOutputsGuidance}`;
+// The Qwen skill evaluation (.verify-evidence/skill-eval-qwen/report.md)
+// found these two habits came from the docx/xlsx/pptx create procedures,
+// which docs/plans/environment-programs.md (Н2, Н3) removed from the skills.
+// One sentence each: they ride on every turn of every agent.
+export const readBackGuidance =
+  "After you write a file for the user, read it back and check it against the task.";
+
+export const slideSizeGuidance =
+  "Make new slide decks 16:9 unless the user asks for another size.";
+
+export const platformGuidance = [
+  authenticatedCommandGuidance,
+  loopStopGuidance,
+  sessionOutputsGuidance,
+  readBackGuidance,
+  slideSizeGuidance,
+].join("\n\n");
 
 /**
  * Compose agent.system + platform guidance + optional platform reminders

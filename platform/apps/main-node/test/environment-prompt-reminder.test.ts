@@ -124,6 +124,8 @@ describe("environment reminder of a turn", () => {
     expect(reminder.text.length).toBeLessThanOrEqual(1500);
   });
 
+  // The legacy image has the Debian system Python without pip: the block does
+  // not promise pip, it says how to get it and that installs need the flag.
   it("names LibreOffice for the office image and never promises pip on the legacy image", () => {
     const officeText = remind({
       snapshot: snapshot(unrestricted), imageManifest: office,
@@ -136,7 +138,8 @@ describe("environment reminder of a turn", () => {
     }).text;
     expect(legacyText).toContain("python3 3.11 without pip");
     expect(legacyText).not.toContain("/opt/venv");
-    expect(legacyText).not.toContain("pip install");
+    expect(legacyText).not.toContain("pip install <name>");
+    expect(legacyText).toContain("apt-get install -y python3-pip once, then pip install --break-system-packages <name>");
     expect(legacyText).toContain("apt-get install -y <name>");
   });
 

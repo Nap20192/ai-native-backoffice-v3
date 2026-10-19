@@ -18,7 +18,10 @@ import {
   type EnvironmentPromptSnapshot,
   type EnvironmentWebSearch,
 } from "@open-managed-agents/agent/harness/environment-prompt";
-import type { SandboxEnvironmentSnapshot } from "@open-managed-agents/sandbox";
+import {
+  supportsEnvironmentSnapshot,
+  type SandboxEnvironmentSnapshot,
+} from "@open-managed-agents/sandbox";
 
 export const ENVIRONMENT_REMINDER_SOURCE = "environment";
 
@@ -199,4 +202,20 @@ export function buildNodeManagedEnvironmentReminder(
     prompt = { executor: "host", ...options };
   }
   return { source: ENVIRONMENT_REMINDER_SOURCE, text: buildEnvironmentPrompt(prompt) };
+}
+
+/**
+ * The reminder of the sandbox a turn runs in. A sandbox without a snapshot
+ * gets the `unknown` block: the turn cannot tell which adapter it has.
+ * Search is available when the agent's tools include `web_search`; the
+ * search runs on the server, not in the VM.
+ */
+export function environmentReminderOfSandbox(
+  sandbox: unknown,
+  tools: Readonly<Record<string, unknown>>,
+): NodeManagedEnvironmentReminder {
+  return buildNodeManagedEnvironmentReminder({
+    snapshot: supportsEnvironmentSnapshot(sandbox) ? sandbox.environmentSnapshot() : null,
+    webSearch: Object.hasOwn(tools, "web_search") ? "on" : "off",
+  });
 }

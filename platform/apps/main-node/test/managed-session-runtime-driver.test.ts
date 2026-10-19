@@ -12,6 +12,7 @@ import type {
 } from "@open-managed-agents/session-realtime";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import { MemorySessionRealtimeHub } from "@open-managed-agents/session-realtime-memory";
+import { SandboxEnvironmentError } from "@open-managed-agents/sandbox";
 import * as runtimeModule from "../src/lib/node-managed-session-runtime.js";
 
 const session: Session = {
@@ -158,6 +159,45 @@ describe("DefaultNodeManagedSessionRuntimeDriver", () => {
       { type: "session.error", error: { type: "unknown_error", message: "[unauthenticated] invalid username: 'user'", retryStatus: "retrying" } },
       { type: "session.status_rescheduled" },
     ]);
+  });
+
+  it("reports failed environment packages once, in Russian, with the manager and the end of the output", async () => {
+    let starts = 0;
+    const failure = new SandboxEnvironmentError(
+      "packages_failed",
+      "LiteBoxSandbox: environment packages failed to install (exit 1): ...",
+      { manager: "pip", exitCode: 1, outputTail: "ERROR: No matching distribution found for nope-pkg\n[oma-setup] pip failed (exit 1)" },
+    );
+    const { accept, events } = startFailureDriver(async () => { starts++; throw failure; });
+    await expect(accept()).rejects.toBe(failure);
+    // Another VM would run the same install: a broken package list does not retry.
+    expect(starts).toBe(1);
+    expect(events()).toEqual([
+      {
+        type: "session.error",
+        error: {
+          type: "unknown_error",
+          message: "Пакеты окружения не поставились: pip, код 1. Поправьте список пакетов окружения и отправьте сообщение снова. " +
+            "Конец вывода установки:\nERROR: No matching distribution found for nope-pkg\n[oma-setup] pip failed (exit 1)",
+          retryStatus: "exhausted",
+        },
+      },
+      { type: "session.status_idle", stopReason: { type: "retries_exhausted" } },
+    ]);
+  });
+
+  it("does not retry an image the catalog cannot give and keeps its Russian reason", async () => {
+    let starts = 0;
+    const { accept, events } = startFailureDriver(async () => {
+      starts++;
+      throw new SandboxEnvironmentError("image_unavailable", "Образ песочницы «nope» не найден в каталоге образов");
+    });
+    await expect(accept()).rejects.toThrow("Образ песочницы «nope»");
+    expect(starts).toBe(1);
+    expect(events()[0]).toEqual({
+      type: "session.error",
+      error: { type: "unknown_error", message: "Образ песочницы «nope» не найден в каталоге образов", retryStatus: "exhausted" },
+    });
   });
 
   it("stamps exhausted session.error before the idle that follows it when the clock does not advance", async () => {

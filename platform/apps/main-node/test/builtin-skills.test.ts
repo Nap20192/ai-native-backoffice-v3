@@ -128,6 +128,22 @@ describe("shipped document skills", () => {
     }
   });
 
+  it("keep every script and reference that SKILL.md names", async () => {
+    const entries = await loadBuiltinSkills(SHIPPED);
+    for (const entry of entries) {
+      const id = entry.skill.id;
+      const manifest = readFileSync(join(SHIPPED, id, "SKILL.md"), "utf8");
+      const scripts = new Set(manifest.match(/\b[A-Za-z0-9_]+\.py\b/gu) ?? []);
+      const references = new Set(manifest.match(/references\/[A-Za-z0-9_.-]+\.md/gu) ?? []);
+      expect(scripts.size, `${id}: SKILL.md names no script`).toBeGreaterThan(0);
+      const missing = [
+        ...[...scripts].filter((name) => !existsSync(join(SHIPPED, id, "scripts", name))),
+        ...[...references].filter((path) => !existsSync(join(SHIPPED, id, path))),
+      ];
+      expect(missing, `${id}: SKILL.md names files that are not in the skill`).toEqual([]);
+    }
+  });
+
   it("are copied into the Docker image", () => {
     const dockerfile = readFileSync(join(PLATFORM, "apps/main-node/Dockerfile"), "utf8");
     expect(dockerfile).toMatch(/^COPY skills skills$/mu);

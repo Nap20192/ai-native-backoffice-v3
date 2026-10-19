@@ -21,3 +21,7 @@
 - `scripts/pdf_stamp.py`. Без `--font` штамп рисуется шрифтом из `_fonts.py`.
 - `scripts/pdf_make_form.py`. Подписи полей рисуются шрифтом из `_fonts.py`.
 - `tests/test_pdf_skill.py`. В конец добавлены три проверки кириллицы и проверки таблицы: ключ `headers`, отказ на неверную спецификацию, сборка примера из SKILL.md.
+
+## Правка 2026-10-19: poppler
+
+- `SKILL.md`, шаг 3 «Check the file after writing». Добавлены команды poppler `pdftotext -layout`, `pdfinfo` и `pdftoppm -png -r 80` для проверки любого PDF и строка о том, что poppler есть в образах «Рабочее место агента» и «Рабочее место с LibreOffice». Версия 1.3.0.

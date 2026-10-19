@@ -11,6 +11,9 @@
 #   (scripts/cleanup.sh для своей папки) и пишет «ПРЕРВАН на шаге launch» в summary.md.
 # Переменные: VERIFY_PORT (8791), VERIFY_FAKE_PORT (8792), VERIFY_FAKE_MCP_PORT (8793), VERIFY_MODEL_MODE (fake|real),
 #   VERIFY_LITEBOX_DISK_SIZE_GB / VERIFY_LITEBOX_MEMORY_MIB (диск и память VM, по умолчанию как в BoxLite),
+#   VERIFY_SANDBOX_IMAGE_CATALOG / VERIFY_SANDBOX_IMAGE_DIR (каталог образов песочницы и папка собранных
+#   образов, только вместе; сервер получает их как SANDBOX_IMAGE_CATALOG и SANDBOX_IMAGE_DIR, без них
+#   каталог выключен),
 #   VERIFY_CONSOLE_DIR (готовая сборка консоли, тогда сборка пропускается), VERIFY_RUN_ID.
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -36,6 +39,24 @@ LIVE_RUNS="$(vac_live_runs | tr '\n' ' ')"
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || vac_die "/dev/kvm недоступен на чтение и запись: LiteBox не запустит VM"
 [ -x "$MAIN_NODE_DIR/node_modules/.bin/tsx" ] || vac_die "нет $MAIN_NODE_DIR/node_modules/.bin/tsx: зависимости platform не установлены"
 [ -x "$CONSOLE_SRC_DIR/node_modules/.bin/vite" ] || vac_die "нет vite в apps/console/node_modules"
+
+# Каталог образов песочницы: обе переменные или ни одной. Без папки образов сервер искал бы
+# образы в ./data/sandbox-images своей папки, а сценарий не знал бы, какую папку сверять.
+# Пути становятся абсолютными: сервер работает из apps/main-node, сценарий из другой папки.
+# Ведущий ~/ раскрывается здесь, как у сервера (sandboxCatalogSettings): `env VAR=~/…` его не раскрывает.
+case "$VERIFY_SANDBOX_IMAGE_CATALOG" in "~/"*) VERIFY_SANDBOX_IMAGE_CATALOG="$HOME/${VERIFY_SANDBOX_IMAGE_CATALOG#\~/}" ;; esac
+case "$VERIFY_SANDBOX_IMAGE_DIR" in "~/"*) VERIFY_SANDBOX_IMAGE_DIR="$HOME/${VERIFY_SANDBOX_IMAGE_DIR#\~/}" ;; esac
+if [ -n "$VERIFY_SANDBOX_IMAGE_CATALOG$VERIFY_SANDBOX_IMAGE_DIR" ]; then
+  [ -n "$VERIFY_SANDBOX_IMAGE_CATALOG" ] && [ -n "$VERIFY_SANDBOX_IMAGE_DIR" ] \
+    || vac_die "VERIFY_SANDBOX_IMAGE_CATALOG и VERIFY_SANDBOX_IMAGE_DIR задаются вместе (задана только одна)"
+  [ -f "$VERIFY_SANDBOX_IMAGE_CATALOG" ] && [ -r "$VERIFY_SANDBOX_IMAGE_CATALOG" ] \
+    || vac_die "каталог образов не читается: VERIFY_SANDBOX_IMAGE_CATALOG=$VERIFY_SANDBOX_IMAGE_CATALOG"
+  jq -e '.images | type == "object"' "$VERIFY_SANDBOX_IMAGE_CATALOG" >/dev/null 2>&1 \
+    || vac_die "в каталоге образов нет объекта images: $VERIFY_SANDBOX_IMAGE_CATALOG (сервер с таким каталогом не стартует)"
+  [ -d "$VERIFY_SANDBOX_IMAGE_DIR" ] || vac_die "нет папки образов: VERIFY_SANDBOX_IMAGE_DIR=$VERIFY_SANDBOX_IMAGE_DIR"
+  VERIFY_SANDBOX_IMAGE_CATALOG="$(readlink -f -- "$VERIFY_SANDBOX_IMAGE_CATALOG")"
+  VERIFY_SANDBOX_IMAGE_DIR="$(readlink -f -- "$VERIFY_SANDBOX_IMAGE_DIR")"
+fi
 
 RUN_ID="${VERIFY_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="$VERIFY_STATE_ROOT/runs/$RUN_ID"
@@ -79,7 +100,7 @@ CONSOLE_TREE_HASH="$(vac_tree_hash $VAC_CONSOLE_PATHS)"
 SERVER_TREE_HASH="$(vac_tree_hash $VAC_SERVER_PATHS)"
 HOST_BOXLITE_LOGS_BEFORE="$( (cat "$HOME"/.boxlite/logs/* 2>/dev/null || true) | wc -c | tr -d ' ')"
 
-case "$RUN_DIR$EVIDENCE_DIR$REPO_ROOT$CONSOLE_DIR$VERIFY_BOXLITE_HOME$VERIFY_SERVER_HOME" in
+case "$RUN_DIR$EVIDENCE_DIR$REPO_ROOT$CONSOLE_DIR$VERIFY_BOXLITE_HOME$VERIFY_SERVER_HOME$VERIFY_SANDBOX_IMAGE_CATALOG$VERIFY_SANDBOX_IMAGE_DIR" in
   *[[:space:]\"\'\$\`]*) vac_die "в путях есть пробелы или кавычки: run.env так не записать" ;;
 esac
 cat > "$RUN_DIR/run.env" <<EOF
@@ -96,6 +117,8 @@ VERIFY_FAKE_PORT=$VERIFY_FAKE_PORT
 MODEL_MODE=$MODE
 AGENT_MODEL=$VERIFY_AGENT_MODEL
 SANDBOX_IMAGE=$VERIFY_SANDBOX_IMAGE
+SANDBOX_IMAGE_CATALOG=$VERIFY_SANDBOX_IMAGE_CATALOG
+SANDBOX_IMAGE_DIR=$VERIFY_SANDBOX_IMAGE_DIR
 LITEBOX_DISK_SIZE_GB=${VERIFY_LITEBOX_DISK_SIZE_GB:-}
 LITEBOX_MEMORY_MIB=${VERIFY_LITEBOX_MEMORY_MIB:-}
 DATA_DIR=$DATA_DIR
@@ -133,6 +156,11 @@ umask 022
 log "прогон $RUN_ID, режим модели: $MODE, git $GIT_REV (изменённых файлов: консоль $CONSOLE_DIRTY, сервер $SERVER_DIRTY; хэши изменений: консоль $CONSOLE_TREE_HASH, сервер $SERVER_TREE_HASH)"
 log "данные: $DATA_DIR"
 log "доказательства: $EVIDENCE_DIR"
+if [ -n "$VERIFY_SANDBOX_IMAGE_CATALOG" ]; then
+  log "каталог образов: $VERIFY_SANDBOX_IMAGE_CATALOG, папка образов $VERIFY_SANDBOX_IMAGE_DIR"
+else
+  log "каталог образов выключен: VERIFY_SANDBOX_IMAGE_CATALOG не задан, все VM на $VERIFY_SANDBOX_IMAGE"
+fi
 
 # --- 1. Консоль ---------------------------------------------------------------
 if [ -n "${VERIFY_CONSOLE_DIR:-}" ]; then
@@ -188,6 +216,7 @@ start_server() {
   local disk_gb="${VERIFY_LITEBOX_DISK_SIZE_GB:-}" memory_mib="${VERIFY_LITEBOX_MEMORY_MIB:-}"
   local port="$VERIFY_PORT" host="$VERIFY_HOST" image="$VERIFY_SANDBOX_IMAGE"
   local server_home="$VERIFY_SERVER_HOME" boxlite_home="$VERIFY_BOXLITE_HOME"
+  local image_catalog="$VERIFY_SANDBOX_IMAGE_CATALOG" image_dir="$VERIFY_SANDBOX_IMAGE_DIR"
   # Чистое окружение: из оболочки остаются только PATH и локаль.
   local v
   for v in $(compgen -e); do
@@ -203,6 +232,8 @@ start_server() {
   export DREAM_CURATOR_MODE=dedup LOG_LEVEL=info
   [ -n "$disk_gb" ] && export LITEBOX_DISK_SIZE_GB="$disk_gb"
   [ -n "$memory_mib" ] && export LITEBOX_MEMORY_MIB="$memory_mib"
+  # Каталог образов: config.image окружения выбирает образ из него (sandbox-environment-image.ts).
+  [ -n "$image_catalog" ] && export SANDBOX_IMAGE_CATALOG="$image_catalog" SANDBOX_IMAGE_DIR="$image_dir"
   if [ "$MODE" = fake ]; then
     export ANTHROPIC_API_KEY=verify-local-fake-key ANTHROPIC_BASE_URL="$FAKE_URL"
   else

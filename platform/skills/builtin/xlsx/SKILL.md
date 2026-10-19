@@ -1,8 +1,8 @@
 ---
 name: xlsx
-description: Create, read, edit Excel .xlsx workbooks and CSVs.
+description: Read, edit, restructure Excel .xlsx workbooks and CSVs; recalculate formulas and convert to PDF with LibreOffice.
 display_title: Excel (xlsx)
-version: 1.1.0
+version: 1.2.0
 author: Nous Research
 license: MIT
 platforms: [linux, macos, windows]
@@ -15,54 +15,44 @@ metadata:
 
 # Xlsx Skill
 
-Work with Excel .xlsx workbooks using Python and openpyxl: build styled
-multi-sheet workbooks with formulas and charts, inspect or dump existing
-files, edit cells and structure, and convert to/from CSV. All helper
-scripts are argparse CLIs that print JSON and use explicit UTF-8 I/O.
+Work with Excel .xlsx workbooks using Python and openpyxl: inspect or
+dump existing files, edit cells and structure, convert to and from CSV.
+LibreOffice recalculates formulas and turns the workbook into PDF. All
+helper scripts are argparse CLIs that print JSON and use explicit UTF-8 I/O.
 
 ## Platform notes (OpenMA)
 
 - This skill is mounted at `/workspace/.openma/skills/xlsx/latest/xlsx/`. Run helpers by full path, for example
-  `python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/<script>.py --help`. Use `python3`: the sandbox
-  may have no `python` command.
+  `python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/<script>.py --help`.
 - These paths are for an agent that takes the latest version. If the agent
   pins a version, the skill is at `/workspace/.openma/skills/xlsx/<version>/xlsx/`,
   the folder of this SKILL.md. Use that folder in place of
   `/workspace/.openma/skills/xlsx/latest/xlsx/` in every command.
 - Save every file the user should receive directly in `/mnt/session/outputs/`.
   Do not create subfolders there: the session file list shows top-level files
-  only. Keep JSON specs, drafts and intermediate files in `/workspace/`.
+  only. Keep JSON specs, drafts and page images in `/workspace/`.
 - Tools: write specs with `write`, read files with `read` (it also shows PNG
   images), run commands with `bash`.
-- Dependencies: check with `python3 -c "import openpyxl"`. If it fails,
-  run `python3 -m pip install --break-system-packages openpyxl`. If pip
-  itself is missing, run `apt-get update && apt-get install -y python3-pip`
-  first. An environment created from the "Документы" template installs
-  openpyxl and the other document packages when the sandbox starts.
+- Programs. The environment image "Рабочее место с LibreOffice" has openpyxl,
+  LibreOffice (`soffice`) and poppler (`pdftoppm`, `pdftotext`).
+  Check with `command -v soffice` and `python3 -c "import openpyxl"`.
+- If `command -v soffice` prints nothing or the import fails, tell the user to pick the image
+  "Рабочее место с LibreOffice" on the environment card and start a new session.
+  Do not install LibreOffice with apt-get: it is too large for the sandbox.
+  Until then formulas stay without results; say so when you hand the file over.
 
 ## When to Use
 
-- Creating .xlsx reports: multiple sheets, number formats, styling,
-  merged cells, freeze panes, autofilter, conditional formatting,
-  charts, data-validation dropdowns, native Excel tables, defined
-  names, hyperlinks, cell notes, sheet protection.
 - Reading a workbook: sheet inventory, dumping data as JSON or CSV,
   listing formulas vs cached values, notes, defined names, tables.
 - Editing existing files: set cells, append rows, insert/delete
   rows/columns (reference-aware via `xlsx_restructure.py`),
   copy/rename sheets, tables, names, notes, protection.
-- Recalculating formulas headlessly via LibreOffice
-  (`xlsx_recalc.py`).
+- Recalculating formulas headlessly via LibreOffice (`xlsx_recalc.py`).
+- A PDF of the workbook or a look at how it prints.
 - CSV interop with type inference and non-UTF-8 encodings.
-- Not for the legacy .xls binary format (use LibreOffice to convert
-  first: `soffice --headless --convert-to xlsx old.xls`).
-
-## Prerequisites
-
-- Python 3.10+ with `openpyxl` (`pip install openpyxl`). No other
-  third-party packages are needed; everything else is stdlib.
-- Optional: LibreOffice (`soffice`) for headless recalculation or
-  format conversion.
+- Not for the legacy .xls binary format. Convert it first:
+  `timeout 180 soffice --headless --convert-to xlsx --outdir /workspace/ old.xls`.
 
 ## How to Run
 
@@ -70,25 +60,20 @@ Run the helper scripts with the `bash` tool from this skill's
 `scripts/` directory (every script supports `--help`):
 
 ```bash
-python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_create.py spec.json /mnt/session/outputs/report.xlsx   # build from JSON spec
 python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_read.py report.xlsx --sheets      # inventory
 python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_read.py report.xlsx --json --sheet Data
 python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_read.py report.xlsx --formulas
 python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_edit.py report.xlsx --sheet Data --set B2=42 --recalc
 python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_restructure.py report.xlsx --sheet Data --insert-rows 3:2
 python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_recalc.py report.xlsx
-python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/csv_to_xlsx.py data.csv out.xlsx --encoding utf-8
-python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_to_csv.py report.xlsx out.csv --sheet Data
+python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/csv_to_xlsx.py data.csv /mnt/session/outputs/out.xlsx --encoding utf-8
+python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_to_csv.py report.xlsx /mnt/session/outputs/out.csv --sheet Data
 ```
-
-Author the JSON spec with `write`, inspect script JSON output with
-`read` or directly from stdout.
 
 ## Quick Reference
 
 | Task | Command |
 |---|---|
-| Create workbook from spec | `xlsx_create.py spec.json out.xlsx` |
 | Sheet names + dimensions | `xlsx_read.py f.xlsx --sheets` |
 | Dump sheet as JSON | `xlsx_read.py f.xlsx --json --sheet S` |
 | Dump sheet as CSV | `xlsx_read.py f.xlsx --csv --out d.csv` |
@@ -110,42 +95,41 @@ Author the JSON spec with `write`, inspect script JSON output with
 | Force recalc on open | `xlsx_edit.py f.xlsx --recalc` |
 | CSV -> styled xlsx | `csv_to_xlsx.py in.csv out.xlsx` |
 | xlsx -> CSV | `xlsx_to_csv.py f.xlsx out.csv --encoding utf-8` |
+| New workbook from a JSON spec (format in `--help`) | `xlsx_create.py spec.json out.xlsx` |
 
 ## Procedure
 
-1. **Create**: write a JSON spec (schema documented in
-   `xlsx_create.py --help` and its docstring). Each sheet supports
-   `rows` (scalars or styled cell objects), sparse `cells` overrides,
-   `column_widths`, `row_heights`, `merges`, `freeze_panes`,
-   `autofilter`, `conditional_formats` (cell_is rules and color
-   scales), `charts` (bar/line/pie from cell ranges),
-   `validations` (list dropdowns), `tables` (native Excel tables with
-   a style name), and `protection`. Workbook-level `defined_names`
-   maps names to refs. Cell objects also take `hyperlink` and `note`.
-   Typed values: JSON numbers/bools
-   pass through; dates use `{"value": "2026-01-31", "type": "date"}`.
-   Number formats are Excel format strings: currency `"$#,##0.00"`,
-   percent `"0.0%"`, date `"yyyy-mm-dd"`.
-2. **Formulas**: set with `"formula": "SUM(B2:B9)"` in the spec or
-   `--set "C1==SUM(A:A)"` in the editor. When writing formulas, add
-   `"full_calc_on_load": true` (spec) or `--recalc` (editor); this sets
-   the workbook's `fullCalcOnLoad` flag so Excel/LibreOffice recompute
-   everything on open. openpyxl itself NEVER evaluates formulas.
-3. **Read**: `--sheets` for inventory (names, dimensions, merged
+1. **Formulas and recalculation**: set a formula with
+   `xlsx_edit.py f.xlsx --set "C1==SUM(A:A)"` and add `--recalc`, which
+   sets the workbook's `fullCalcOnLoad` flag so Excel and LibreOffice
+   recompute on open. openpyxl itself NEVER evaluates formulas, so a file
+   it wrote has no results yet. Recalculate it with LibreOffice before
+   you read numbers back or hand the file over:
+
+   ```bash
+   python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_recalc.py /mnt/session/outputs/report.xlsx
+   python3 /workspace/.openma/skills/xlsx/latest/xlsx/scripts/xlsx_read.py /mnt/session/outputs/report.xlsx --formulas
+   ```
+
+   `xlsx_recalc.py` runs `soffice --headless` with its own temporary
+   profile, re-saves the file with fresh cached values and prints
+   `formula_cells` and `with_cached_values`. `--formulas` then pairs each
+   formula with its result; look for `#DIV/0!`, `#REF!`, `#NAME?` and
+   `#VALUE!`. When `soffice` is missing the script exits 0 with
+   `{"recalculated": false, ...}` and names the image to pick.
+2. **Read**: `--sheets` for inventory (names, dimensions, merged
    ranges, chart count, tables, protection, defined names),
    `--json`/`--csv` for data, `--formulas` to
    pair each formula string with its cached result, `--notes` for
    cell comments, `--names` for defined names. Cached results
    exist only if the file was last saved by a real spreadsheet app;
-   files fresh from openpyxl return `null` there. To materialize
-   results headlessly run `xlsx_recalc.py file.xlsx` (uses
-   LibreOffice; prints `{"recalculated": false, ...}` and exits 0
-   when `soffice` is absent), then reload with `--data-only`.
-4. **Edit**: `xlsx_edit.py` applies renames/copies first, then
+   files fresh from openpyxl return `null` there. To get the
+   results, recalculate with LibreOffice (step 1), then read again.
+3. **Edit**: `xlsx_edit.py` applies renames/copies first, then
    structural row/column changes, then `--set`/`--append`. It edits in
    place unless `--out` is given — copy the file first if you need the
    original.
-5. **Restructure**: for insert/delete on sheets that have formulas,
+4. **Restructure**: for insert/delete on sheets that have formulas,
    merges, tables, or filters, use `xlsx_restructure.py` instead of
    `xlsx_edit.py`. It rewrites formula references on ALL sheets
    (absolute `$` refs, ranges, cross-sheet refs), shifts merges,
@@ -153,7 +137,7 @@ Author the JSON spec with `write`, inspect script JSON output with
    ranges, table refs, defined names, and row/column dimensions, then
    prints a JSON report including a `not_shifted` list. Rules and
    limits: `references/restructuring.md`.
-6. **CSV interop**: `csv_to_xlsx.py` infers int/float/bool/ISO-date
+5. **CSV interop**: `csv_to_xlsx.py` infers int/float/bool/ISO-date
    per cell and styles the header row; `xlsx_to_csv.py` writes ISO
    dates and blank strings for empty cells. Both default to UTF-8 and
    accept `--encoding` (e.g. `utf-8-sig` for Excel-friendly BOM,
@@ -161,17 +145,30 @@ Author the JSON spec with `write`, inspect script JSON output with
 
 ## Converting to PDF
 
-LibreOffice converts headlessly (also works for CSV export of a single
-sheet):
-
 ```bash
-soffice --headless --convert-to pdf report.xlsx --outdir /mnt/session/outputs/
-soffice --headless --convert-to csv report.xlsx --outdir /mnt/session/outputs/  # 1st sheet only
+timeout 180 soffice --headless --convert-to pdf --outdir /mnt/session/outputs/ report.xlsx
+timeout 180 soffice --headless --convert-to csv --outdir /mnt/session/outputs/ report.xlsx  # 1st sheet only
 ```
 
 Only the first sheet lands in a CSV; for other sheets use
-`xlsx_to_csv.py --sheet NAME`. If `soffice` is missing, install
-LibreOffice or hand the file to the user unconverted.
+`xlsx_to_csv.py --sheet NAME`. If the command prints nothing and no file
+appears, another LibreOffice holds the default profile: add
+`-env:UserInstallation=file:///tmp/lo-profile` right after `soffice`. If
+`soffice` is missing, hand the file over unconverted and name the image
+from Platform notes.
+
+## Visual check
+
+To see how the sheets print (column widths, cut numbers, page breaks),
+convert to PDF in `/workspace/`, turn pages into PNG and look at them
+with `read`:
+
+```bash
+timeout 180 soffice --headless --convert-to pdf --outdir /workspace/pages /mnt/session/outputs/report.xlsx
+pdftoppm -png -r 80 /workspace/pages/report.pdf /workspace/pages/page
+```
+
+`###` in a cell on the page means the column is too narrow for the number.
 
 ## Pitfalls
 
@@ -205,13 +202,12 @@ LibreOffice or hand the file to the user unconverted.
 
 ## Verification
 
-- After creating: `xlsx_read.py out.xlsx --sheets` and confirm sheet
-  names, dimensions, merged ranges, and chart counts match intent.
-- Dump data with `--json` and compare against the source values.
-- After edits: re-dump the touched range; if formulas were written,
-  confirm `--formulas` lists them and that `--recalc` was applied.
+- After edits: re-dump the touched range with `--json`; if formulas were
+  written, run `xlsx_recalc.py` and confirm `--formulas` shows results
+  and no error values.
+- `xlsx_read.py out.xlsx --sheets` confirms sheet names, dimensions,
+  merged ranges, and chart counts.
 - After `xlsx_restructure.py`: read its JSON report, then re-run
   `--formulas` and `--sheets` to confirm references and ranges landed
   where expected.
-- For a full visual check, open in LibreOffice:
-  `soffice --headless --convert-to pdf out.xlsx` and inspect the PDF.
+- For a full visual check, render the pages (see Visual check).

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SandboxExecutor } from "@open-managed-agents/sandbox";
+import { SandboxEnvironmentError, type SandboxExecutor } from "@open-managed-agents/sandbox";
 import { SessionLimitError, type SessionEvent } from "@open-managed-agents/shared";
 import type {
   Environment,
@@ -525,6 +525,86 @@ describe("DefaultNodeManagedSessionRunner", () => {
       "error:retrying", "session.status_rescheduled",
       "error:exhausted", "idle:retries_exhausted",
     ]);
+  });
+
+  it("ends the turn with a Russian session.error when the VM packages fail on the first bash", async () => {
+    const failure = new SandboxEnvironmentError(
+      "packages_failed",
+      "LiteBoxSandbox: environment packages failed to install (exit 100): ...",
+      { manager: "apt", exitCode: 100, outputTail: "E: Unable to locate package nope\n[oma-setup] apt failed (exit 100)" },
+    );
+    const sandboxes: Array<{ exec: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }> = [];
+    let nextId = 0;
+    let runs = 0;
+    let abortedAfterExec: boolean | undefined;
+    let toolText = "";
+    const runner = new DefaultNodeManagedSessionRunner({
+      outcomes: { evaluate: async () => { throw new Error("unexpected outcome evaluation"); } },
+      confirmedTools: { execute: async () => { throw new Error("unexpected confirmed tool execution"); } },
+      buildSandbox: async () => {
+        // The VM boots on the first call and its packages fail; every later call fails the same way.
+        const sandbox = { exec: vi.fn(async () => { throw failure; }), destroy: vi.fn(async () => {}) };
+        sandboxes.push(sandbox);
+        return sandbox as unknown as SandboxExecutor;
+      },
+      buildModel: async () => ({}),
+      buildTools: async () => ({}),
+      buildHarness: () => ({
+        run: async (context) => {
+          runs += 1;
+          const ctx = context as {
+            sandbox: SandboxExecutor;
+            runtime: { broadcast(event: unknown): void; abortSignal: AbortSignal };
+          };
+          ctx.runtime.broadcast({ type: "agent.tool_use", id: "tool_01", name: "bash", input: { command: "ls" } });
+          // The bash tool turns a thrown error into text for the model.
+          toolText = await ctx.sandbox.exec("ls").catch((error: Error) => `Error: ${error.message}`);
+          abortedAfterExec = ctx.runtime.abortSignal.aborted;
+          // Pi returns when the turn is aborted.
+        },
+      }),
+      buildHarnessContext: async (input) => input,
+      clock: { now: () => new Date("2026-08-26T03:30:00.000Z") },
+      ids: { nextEventId: () => `event_packages_0${++nextId}` },
+      harnessRetry: { attempts: 3, delayMs: () => 0 },
+    } as never);
+    await runner.start({ workspaceId: "workspace_01", sessionId: session.id, session, environment, initialEvents: [] });
+    const output: Array<Record<string, unknown>> = [];
+    const event: NodeManagedSessionRunnerAcceptInput["events"][number] = {
+      id: "event_user_packages", type: "user.message",
+      content: [{ type: "text", text: "List files" }], processedAt: "2026-08-26T03:29:00.000Z",
+    };
+    const result = await runner.accept({
+      workspaceId: "workspace_01", sessionId: session.id, session, environment, initialEvents: [],
+      events: [event], historyEvents: [event],
+      executionFence: {
+        workspaceId: "workspace_01", sessionId: session.id, executionId: event.id, attemptId: "attempt_01",
+        ownerId: "worker_01", generation: 1, expiresAt: "2026-08-26T03:31:00.000Z",
+      },
+      output: async (frame) => { output.push(frame as Record<string, unknown>); },
+    }).then(() => undefined, (error: unknown) => error);
+
+    expect(result).toBe(failure);
+    expect(runs).toBe(1);
+    expect(toolText).toContain("environment packages failed to install");
+    expect(abortedAfterExec).toBe(true);
+    expect(output.map((frame) => String(frame.type))).toEqual([
+      "session.status_running", "agent.tool_use", "session.error", "session.status_idle",
+    ]);
+    expect(output[2]?.error).toEqual({
+      type: "unknown_error",
+      message: "Пакеты окружения не поставились: apt, код 100. Поправьте список пакетов окружения и отправьте сообщение снова. " +
+        "Конец вывода установки:\nE: Unable to locate package nope\n[oma-setup] apt failed (exit 100)",
+      retry_status: "exhausted",
+    });
+    expect(output[3]?.stop_reason).toEqual({ type: "retries_exhausted" });
+
+    // The failed VM is gone: the next message boots a new one instead of
+    // failing on the cached error.
+    expect(sandboxes[0]?.destroy).toHaveBeenCalledTimes(1);
+    expect(runner.connectedSandbox({ workspaceId: "workspace_01", sessionId: session.id })).toBeNull();
+    await runner.start({ workspaceId: "workspace_01", sessionId: session.id, session, environment, initialEvents: [] });
+    expect(sandboxes).toHaveLength(2);
   });
 
   it("reports a failed fenced final collection as exhausted and goes idle", async () => {

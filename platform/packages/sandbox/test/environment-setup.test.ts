@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildEnvironmentSetupScript,
   environmentPackageLists,
+  environmentSetupFailure,
+  isSandboxEnvironmentError,
   PACKAGE_MANAGER_HOSTS,
+  SandboxEnvironmentError,
   type SandboxEnvironmentPackages,
 } from "../src/index";
 
@@ -136,6 +139,42 @@ describe("buildEnvironmentSetupScript", () => {
     const failed = run({ go: ["bad@latest", "b@latest"] }, ["go"], { "go install bad": 1 });
     expect(failed.status).toBe(1);
     expect(failed.calls).toEqual(["go [install] [bad@latest]"]);
+  });
+});
+
+describe("environmentSetupFailure", () => {
+  it("names the manager and the exit code of the section that failed", () => {
+    const r = run({ apt: ["jq"], pip: ["nope-pkg"] }, ["apt-get", "python3"], { "python3 install": 1 });
+    expect(r.status).toBe(1);
+    const failure = environmentSetupFailure(`${r.stdout}\n${r.stderr}`, r.status);
+    expect(failure).toMatchObject({ manager: "pip", exitCode: 1 });
+    expect(failure.outputTail).toContain("[oma-setup] pip failed (exit 1)");
+  });
+
+  it("names the manager that was running when the script stopped without a failure line", () => {
+    const output = "[oma-setup] apt: 1 package(s)\n[oma-setup] npm: 2 package(s)\nnpm http fetch GET 200";
+    expect(environmentSetupFailure(output, null)).toEqual({ manager: "npm", exitCode: null, outputTail: output });
+    expect(environmentSetupFailure("killed", 137)).toEqual({ manager: null, exitCode: 137, outputTail: "killed" });
+  });
+
+  it("keeps only the end of a long output", () => {
+    const output = `${"x".repeat(2_000)}\n[oma-setup] gem failed (exit 2)`;
+    const failure = environmentSetupFailure(output, 2);
+    expect(failure.manager).toBe("gem");
+    expect(failure.outputTail.length).toBe(600);
+    expect(failure.outputTail.endsWith("[oma-setup] gem failed (exit 2)")).toBe(true);
+  });
+});
+
+describe("SandboxEnvironmentError", () => {
+  it("carries the failed install for packages_failed and nothing for the image codes", () => {
+    const packages = { manager: "pip" as const, exitCode: 1, outputTail: "ERROR: No matching distribution" };
+    const failed = new SandboxEnvironmentError("packages_failed", "environment packages failed", packages);
+    expect(failed.packages).toEqual(packages);
+    expect(isSandboxEnvironmentError(failed)).toBe(true);
+    const image = new SandboxEnvironmentError("image_unavailable", "Образ песочницы «x» не найден");
+    expect(image.packages).toBeNull();
+    expect(isSandboxEnvironmentError(new Error("other"))).toBe(false);
   });
 });
 

@@ -29,12 +29,42 @@ describe("environment prompt facts", () => {
     expect(buildEnvironmentPrompt({ executor: "remote" })).toContain("outside the platform sandbox");
     expect(buildEnvironmentPrompt({ executor: "unknown" })).toContain("Check them with commands");
   });
-  it("never promises venv or pip for legacy images", () => {
+  // The legacy image has the Debian system Python without pip and without a
+  // venv. The block does not promise pip, it says how to get it: pip from apt,
+  // then installs with --break-system-packages (PEP 668 on Debian 12).
+  it("never promises venv or pip for legacy images and names the system pip flag", () => {
     const legacy = { ...manifest, python: { version: "3.11" }, packageManagers: ["apt", "npm"] as const, packages: { apt: [], pip: [], npm: [] } };
     const prompt = buildEnvironmentPrompt({ executor: "vm", manifest: legacy, snapshot });
     expect(prompt).toContain("python3 3.11 without pip");
     expect(prompt).not.toContain("/opt/venv");
-    expect(prompt).not.toContain("pip install");
+    expect(prompt).not.toContain("pip install <name>");
+    expect(prompt).toContain("apt-get install -y python3-pip");
+    expect(prompt).toContain("pip install --break-system-packages <name>");
+    expect(prompt.length).toBeLessThanOrEqual(1500);
+
+    const closed = buildEnvironmentPrompt({ executor: "vm", manifest: legacy,
+      snapshot: { networking: { type: "limited", allowPackageManagers: false, allowedHosts: [] } } });
+    expect(closed).not.toContain("pip install");
+    expect(closed).not.toContain("python3-pip");
+
+    const registries = buildEnvironmentPrompt({ executor: "vm", manifest: legacy,
+      snapshot: { networking: { type: "limited", allowPackageManagers: true, allowedHosts: [] } } });
+    expect(registries).toContain("Reachable: package registries (Debian, npm).");
+    expect(registries).not.toContain("python3-pip");
+  });
+  it("installs into the system Python with the flag when the image has pip but no venv", () => {
+    const system = { ...manifest, python: { version: "3.11" } };
+    const prompt = buildEnvironmentPrompt({ executor: "vm", manifest: system, snapshot });
+    expect(prompt).toContain("python3 3.11 with pip");
+    expect(prompt).toContain("pip install --break-system-packages <name>");
+    expect(prompt).not.toContain("pip install <name>");
+    expect(prompt).not.toContain("python3-pip");
+  });
+  it("keeps plain pip install for the venv of a catalog image", () => {
+    const prompt = buildEnvironmentPrompt({ executor: "vm", manifest, snapshot });
+    expect(prompt).toContain("Python 3.11 (python and pip use the venv /opt/venv)");
+    expect(prompt).toContain("pip install <name>");
+    expect(prompt).not.toContain("break-system-packages");
   });
   it("describes closed registries without recommending installation", () => {
     const prompt = buildEnvironmentPrompt({ executor: "vm", manifest,

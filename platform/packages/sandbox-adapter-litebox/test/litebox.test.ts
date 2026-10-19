@@ -688,6 +688,16 @@ describe("LiteBoxSandbox", () => {
       "environment packages failed to install (exit 100) (networking is limited and package managers are not allowed)",
     );
     await expect(failure).rejects.toThrow(/E: Unable to locate package nope\n\[oma-setup\] apt failed \(exit 100\)$/);
+    // The host reads the manager and the code from the error, not from its text.
+    await expect(failure).rejects.toMatchObject({
+      name: "SandboxEnvironmentError",
+      code: "packages_failed",
+      packages: {
+        manager: "apt",
+        exitCode: 100,
+        outputTail: "[oma-setup] apt: 1 package(s)\nE: Unable to locate package nope\n[oma-setup] apt failed (exit 100)",
+      },
+    });
     await expect(sandbox.exec("y")).rejects.toThrow("environment packages failed to install");
     expect(box.stop).toHaveBeenCalledTimes(1);
     expect(sdk.options[0]?.network).toEqual({ mode: "disabled" });
@@ -698,9 +708,11 @@ describe("LiteBoxSandbox", () => {
       .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ exitCode: 127, stdout: "", stderr: "[oma-setup] npm not found in the sandbox image\n" });
     const unrestricted = new LiteBoxSandbox({ environment: { packages: { npm: ["x"] } } });
-    await expect(unrestricted.exec("x")).rejects.toThrow(
+    const missing = unrestricted.exec("x");
+    await expect(missing).rejects.toThrow(
       "environment packages failed to install (exit 127): [oma-setup] npm not found in the sandbox image",
     );
+    await expect(missing).rejects.toMatchObject({ code: "packages_failed", packages: { manager: null, exitCode: 127 } });
     await unrestricted.destroy();
   });
 

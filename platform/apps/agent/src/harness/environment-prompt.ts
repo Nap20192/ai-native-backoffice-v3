@@ -110,8 +110,13 @@ function hostOf(address: string): string | null {
   }
 }
 
-function installCommand(manager: InstallManager): string {
-  if (manager === "pip") return "pip install <name>";
+/**
+ * `systemPython`: the image's Python has no venv. On Debian 12 that Python
+ * is marked externally managed (PEP 668), so pip refuses to install without
+ * --break-system-packages.
+ */
+function installCommand(manager: InstallManager, systemPython: boolean): string {
+  if (manager === "pip") return systemPython ? "pip install --break-system-packages <name>" : "pip install <name>";
   if (manager === "apt") return "apt-get install -y <name>";
   return "npm install -g <name>";
 }
@@ -135,6 +140,7 @@ function vmLines(
     `${OUTPUTS_LINE} Everything else, including packages you install, disappears when the session's VM stops.`,
   ];
   const managers = new Set(manifest.packageManagers);
+  const systemPython = manifest.python !== undefined && !manifest.python.venv;
   const preinstalled: string[] = [];
   if (manifest.python) {
     const version = fact(manifest.python.version);
@@ -194,9 +200,15 @@ function vmLines(
   lines.push(webSearchLine(input.webSearch));
 
   if (registriesOpen && installable.length > 0) {
-    const commands = installable.map(installCommand).join(", ");
+    const commands = installable.map((manager) => installCommand(manager, systemPython)).join(", ");
+    // pip is not in the image, but apt can add it for the system Python.
+    // Only on an open network: a limited one names the registries of the
+    // image's managers, and PyPI is not among them.
+    const pipFromApt = !limited && systemPython && !installable.includes("pip") && installable.includes("apt")
+      ? ` For Python libraries run apt-get install -y python3-pip once, then ${installCommand("pip", true)}.`
+      : "";
     lines.push(
-      `If a library or tool is missing, install it and continue: ${commands}. A missing package is not a reason to stop, and the three-failures rule does not apply to installing it. Tell the user which packages you installed, so they can add them to the environment.`,
+      `If a library or tool is missing, install it and continue: ${commands}.${pipFromApt} A missing package is not a reason to stop, and the three-failures rule does not apply to installing it. Tell the user which packages you installed, so they can add them to the environment.`,
     );
   } else {
     lines.push(

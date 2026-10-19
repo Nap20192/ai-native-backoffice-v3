@@ -2,7 +2,7 @@
 name: pdf
 description: "Create PDF reports with Russian text: DejaVu Sans font, tables, a page check after writing. Other helpers read, merge, split, stamp, secure PDFs and fill forms."
 display_title: PDF
-version: 1.2.0
+version: 1.3.0
 author: Nous Research
 license: MIT
 platforms: [linux, macos, windows]
@@ -84,6 +84,11 @@ python3 /workspace/.openma/skills/pdf/latest/pdf/scripts/pdf_page_image.py /mnt/
   `nnnnn` mean the font has no Cyrillic, see step 1.
 - Open the page PNG with `read`. Check the page count, the table header row, and
   that no text runs off the page.
+- poppler gives the same checks from the shell, for any PDF, also one you
+  got from the user: `pdftotext -layout file.pdf -` prints the text in page
+  order, `pdfinfo file.pdf` the page count, and
+  `pdftoppm -png -r 80 -f 1 -l 1 file.pdf /workspace/pages/page` a PNG of page 1.
+  poppler is in the images "Рабочее место агента" and "Рабочее место с LibreOffice".
 
 ## Other helpers
 

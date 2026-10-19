@@ -51,6 +51,7 @@ import type {
 import {
   buildEnvironmentSetupScript,
   environmentPackageLists,
+  environmentSetupFailure,
   PACKAGE_MANAGER_HOSTS,
   SandboxEnvironmentError,
 } from "@open-managed-agents/sandbox";
@@ -691,13 +692,19 @@ export class LiteBoxSandbox implements SandboxExecutor, SandboxDuplexProcessPort
       timeoutSecs: SETUP_TIMEOUT_SECS,
     });
     if (setup.exitCode !== 0) {
-      const output = `${setup.stdout}\n${stripRuntimeNoise(setup.stderr)}`.trim();
+      const separator = setup.stdout.endsWith("\n") ? "" : "\n";
+      const output = `${setup.stdout}${separator}${stripRuntimeNoise(setup.stderr)}`.trim();
       const hint = networking?.type === "limited" && !networking.allowPackageManagers
         ? " (networking is limited and package managers are not allowed)"
         : "";
-      throw new Error(
+      const failure = environmentSetupFailure(output, setup.exitCode);
+      // The host tells the user which manager failed from `packages`; the
+      // message stays English for the server log.
+      throw new SandboxEnvironmentError(
+        "packages_failed",
         `LiteBoxSandbox: environment packages failed to install (exit ${setup.exitCode})${hint}: ` +
-        output.slice(-600),
+        failure.outputTail,
+        failure,
       );
     }
     this.logger.log(`environment packages installed in ${Date.now() - startedAt} ms`);

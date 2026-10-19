@@ -492,3 +492,191 @@ def test_read_prints_cyrillic_as_is(workdir):
         assert "\\u04" not in proc.stdout
     outline = run("pptx_read.py", str(out), "--outline")
     assert "Квартальный обзор" in outline["slides"][0]["texts"]
+
+
+# --- OpenMA port: subtitle on a bullet slide, spec check ---------------------
+
+def test_subtitle_survives_bullets_on_title_content(workdir):
+    spec_path = workdir / "subtitle_spec.json"
+    write_json(spec_path, {"slides": [
+        {"layout": "title_content", "title": "Продукты и клиенты",
+         "subtitle": "Ключевые показатели",
+         "bullets": ["Новых клиентов: 37", "Отток: 5 клиентов"]}]})
+    out = workdir / "subtitle.pptx"
+    run("pptx_create.py", str(spec_path), str(out))
+    texts = run("pptx_read.py", str(out), "--outline")["slides"][0]["texts"]
+    joined = "\n".join(texts)
+    assert "Ключевые показатели" in joined
+    assert "Новых клиентов: 37" in joined and "Отток: 5 клиентов" in joined
+    assert "Продукты и клиенты" in joined
+
+
+def test_subtitle_on_title_layout_uses_subtitle_placeholder(workdir):
+    from pptx import Presentation
+    from pptx.enum.shapes import PP_PLACEHOLDER
+    spec_path = workdir / "title_sub_spec.json"
+    write_json(spec_path, {"slides": [
+        {"layout": "title", "title": "Обзор", "subtitle": "Итоги года"}]})
+    out = workdir / "title_sub.pptx"
+    run("pptx_create.py", str(spec_path), str(out))
+    slide = Presentation(str(out)).slides[0]
+    subs = [ph for ph in slide.placeholders
+            if ph.placeholder_format.type == PP_PLACEHOLDER.SUBTITLE]
+    assert [ph.text for ph in subs] == ["Итоги года"]
+
+
+@pytest.mark.parametrize("spec, needle", [
+    ({"slides": [{"layout": "title", "title": "A", "subtitel": "x"}]},
+     "'subtitel'"),
+    ({"slides": [{"layout": "title"}], "theme": "dark"}, "'theme'"),
+    ({"slides": [{"layout": "nope", "title": "A"}]}, "'nope'"),
+])
+def test_create_rejects_unknown_keys(workdir, spec, needle):
+    spec_path = workdir / "bad_spec.json"
+    write_json(spec_path, spec)
+    proc = run_raw("pptx_create.py", str(spec_path), str(workdir / "bad.pptx"))
+    assert proc.returncode == 1
+    assert needle in proc.stderr
+    assert "allowed" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert not (workdir / "bad.pptx").exists()
+
+
+# --- OpenMA port: LibreOffice lookup, profile, timeout, missing tools --------
+
+OFFICE_IMAGE = "Рабочее место с LibreOffice"
+
+
+def fake_tools(bin_dir, office_name="libreoffice", sleep=0):
+    """A fake LibreOffice that logs its argv and writes a PDF, plus a fake
+    pdftoppm that writes one PNG. Real tools stay out of PATH."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = bin_dir / "office.log"
+    office = bin_dir / office_name
+    office.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys, time\n"
+        f"open({str(log)!r}, 'a').write(repr(sys.argv[1:]) + '\\n')\n"
+        f"time.sleep({sleep})\n"
+        "args = sys.argv[1:]\n"
+        "out = args[args.index('--outdir') + 1]\n"
+        "src = args[-1]\n"
+        "name = os.path.splitext(os.path.basename(src))[0] + '.pdf'\n"
+        "open(os.path.join(out, name), 'wb').write(b'%PDF-1.4 fake')\n",
+        encoding="utf-8")
+    office.chmod(0o755)
+    splitter = bin_dir / "pdftoppm"
+    splitter.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "open(sys.argv[-1] + '-1.png', 'wb').write(b'\\x89PNG\\r\\n\\x1a\\n')\n",
+        encoding="utf-8")
+    splitter.chmod(0o755)
+    return log
+
+
+def run_with_path(path, script, *args):
+    env = dict(os.environ, LC_ALL="C", PYTHONIOENCODING="utf-8", PATH=str(path))
+    return subprocess.run(
+        [sys.executable, os.path.join(SCRIPTS, script), *args],
+        capture_output=True, text=True, encoding="utf-8", env=env, check=False)
+
+
+def test_render_without_soffice_names_the_office_image(workdir, deck, tmp_path):
+    proc = run_with_path(tmp_path, "pptx_render.py", deck,
+                         "--outdir", str(tmp_path / "r"))
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["rendered"] is False
+    assert "soffice" in result["missing"]
+    assert OFFICE_IMAGE in result["guidance"]
+    assert "apt-get install" not in result["guidance"]
+
+
+def test_render_finds_libreoffice_and_isolates_the_profile(workdir, deck, tmp_path):
+    log = fake_tools(tmp_path / "bin")
+    proc = run_with_path(tmp_path / "bin", "pptx_render.py", deck,
+                         "--outdir", str(tmp_path / "r"))
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["rendered"] is True and len(result["files"]) == 1
+    argv = log.read_text(encoding="utf-8")
+    assert "-env:UserInstallation=file://" in argv
+    assert "'--headless'" in argv
+
+
+def test_render_stops_on_timeout_with_a_clear_error(workdir, deck, tmp_path):
+    fake_tools(tmp_path / "bin", office_name="soffice", sleep=30)
+    proc = run_with_path(tmp_path / "bin", "pptx_render.py", deck,
+                         "--outdir", str(tmp_path / "r"), "--timeout", "2")
+    assert proc.returncode == 1
+    assert "LibreOffice timed out after 2 s" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def fake_launcher_soffice(bin_dir, pid_file):
+    """A fake soffice shaped like the Debian one: the launcher starts a
+    child (soffice.bin) that hangs. The child writes its PID first."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    child = (f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+             "time.sleep(120)")
+    office = bin_dir / "soffice"
+    office.write_text(
+        f"#!{sys.executable}\n"
+        "import subprocess, sys\n"
+        f"subprocess.run([{sys.executable!r}, '-c', {child!r}])\n",
+        encoding="utf-8")
+    office.chmod(0o755)
+
+
+def process_alive(pid):
+    """True while ``pid`` runs; a zombie waiting for its reaper counts as gone."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
+            return stat.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+def wait_until_gone(pid, seconds=5.0):
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not process_alive(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_render_timeout_also_stops_the_office_child(workdir, deck, tmp_path):
+    pid_file = tmp_path / "child.pid"
+    fake_tools(tmp_path / "bin")  # pdftoppm; the soffice below wins over libreoffice
+    fake_launcher_soffice(tmp_path / "bin", pid_file)
+    proc = run_with_path(tmp_path / "bin", "pptx_render.py", deck,
+                         "--outdir", str(tmp_path / "r"), "--timeout", "2")
+    assert proc.returncode == 1
+    assert "LibreOffice timed out after 2 s" in proc.stderr
+    child = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        assert wait_until_gone(child), "soffice.bin outlived the timeout"
+    finally:
+        if process_alive(child):
+            os.kill(child, 9)
+
+
+def test_render_default_resolution_is_80_dpi():
+    proc = run_raw("pptx_render.py", "--help")
+    assert "default: 80" in proc.stdout
+
+
+def test_subtitle_on_section_keeps_body_on_the_slide(workdir):
+    from pptx import Presentation
+    spec_path = workdir / "section_spec.json"
+    write_json(spec_path, {"slides": [
+        {"layout": "section", "title": "Раздел", "subtitle": "Подзаголовок",
+         "bullets": ["Пункт"]}]})
+    out = workdir / "section.pptx"
+    run("pptx_create.py", str(spec_path), str(out))
+    prs = Presentation(str(out))
+    for shape in prs.slides[0].shapes:
+        assert shape.top + shape.height <= prs.slide_height, shape.name

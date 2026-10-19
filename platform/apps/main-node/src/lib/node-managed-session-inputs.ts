@@ -12,12 +12,14 @@ import type {
 import type { SessionResourceSecretSource } from "@open-managed-agents/session-resource-store";
 import type { NodeManagedMemorySnapshotPort } from "./node-managed-memory-snapshots.js";
 import { resolveAppendablePrompts } from "@open-managed-agents/agent/runtime/appendable-prompts";
+import { composeSystemPrompt } from "@open-managed-agents/agent/harness/platform-guidance";
 import type { SkillMountDescriptor } from "@open-managed-agents/agent/harness/skills";
 import {
   resolveSkillAssemblyConfig,
   skillMountsShouldFetchBodies,
 } from "@open-managed-agents/agent/harness/assembly/skill-config";
 import { toLegacyHarnessAgentConfig } from "./node-managed-agent-codec.js";
+import { environmentReminderOfSandbox } from "./environment-prompt-reminder.js";
 
 type FileSource = Pick<FilesApplicationPort, "downloadFile">;
 type SkillVersionSource = Pick<
@@ -182,6 +184,36 @@ export function buildNodeManagedAppendablePromptReminders(
     source: `appendable:${prompt.id}`,
     text: prompt.content,
   }));
+}
+
+/**
+ * The system prompt of a turn: the agent's own prompt, the platform
+ * guidance and the platform reminders. The "Environment" block of the
+ * sandbox comes first (docs/plans/environments.md, 4.2), then the skill
+ * reminders (not for a harness that mounts skills itself) and the
+ * appendable prompts.
+ */
+export function buildNodeManagedTurnPrompt(input: {
+  session: Session;
+  sandbox: unknown;
+  tools: Readonly<Record<string, unknown>>;
+  assemblySkills: boolean;
+}): {
+  rawSystemPrompt: string;
+  platformReminders: Array<{ source: string; text: string }>;
+  systemPrompt: string;
+} {
+  const rawSystemPrompt = input.session.agent.system ?? "";
+  const platformReminders = [
+    environmentReminderOfSandbox(input.sandbox, input.tools),
+    ...(input.assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
+    ...buildNodeManagedAppendablePromptReminders(input.session),
+  ];
+  return {
+    rawSystemPrompt,
+    platformReminders,
+    systemPrompt: composeSystemPrompt(rawSystemPrompt, platformReminders),
+  };
 }
 
 function shellQuote(value: string): string {

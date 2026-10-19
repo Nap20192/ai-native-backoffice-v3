@@ -1,8 +1,8 @@
 ---
 name: docx
-description: Create, read, edit, template, and review Word .docx files.
+description: Read, edit, fill templates, review changes and comments in Word .docx files; convert to PDF and check pages with LibreOffice.
 display_title: Word (docx)
-version: 1.1.0
+version: 1.2.0
 author: Nous Research
 license: MIT
 platforms: [linux, macos, windows]
@@ -15,36 +15,35 @@ metadata:
 
 # Docx Skill
 
-Create, read, edit, and template Microsoft Word `.docx` files with
-python-docx via small CLIs. It handles text, styles, lists, tables,
-images, headers/footers, `{{token}}` templating, tracked changes
-(list/accept/reject), comments (list/add/delete), TOC and page-number
-fields, and package health checks. It does not render documents itself
-(PDF needs LibreOffice — see Converting to PDF) or edit legacy `.doc`.
+Read, edit, and template Microsoft Word `.docx` files with python-docx via
+small CLIs. It handles text, styles, tables, `{{token}}` templating,
+tracked changes (list/accept/reject), comments (list/add/delete), TOC and
+page-number fields, and package health checks. LibreOffice turns the
+document into PDF and page images; python-docx itself renders nothing.
 
 ## Platform notes (OpenMA)
 
 - This skill is mounted at `/workspace/.openma/skills/docx/latest/docx/`. Run helpers by full path, for example
-  `python3 /workspace/.openma/skills/docx/latest/docx/scripts/<script>.py --help`. Use `python3`: the sandbox
-  may have no `python` command.
+  `python3 /workspace/.openma/skills/docx/latest/docx/scripts/<script>.py --help`.
 - These paths are for an agent that takes the latest version. If the agent
   pins a version, the skill is at `/workspace/.openma/skills/docx/<version>/docx/`,
   the folder of this SKILL.md. Use that folder in place of
   `/workspace/.openma/skills/docx/latest/docx/` in every command.
 - Save every file the user should receive directly in `/mnt/session/outputs/`.
   Do not create subfolders there: the session file list shows top-level files
-  only. Keep JSON specs, drafts and intermediate files in `/workspace/`.
+  only. Keep JSON specs, drafts and page images in `/workspace/`.
 - Tools: write specs with `write`, read files with `read` (it also shows PNG
   images), run commands with `bash`.
-- Dependencies: check with `python3 -c "import docx"`. If it fails,
-  run `python3 -m pip install --break-system-packages python-docx`. If pip
-  itself is missing, run `apt-get update && apt-get install -y python3-pip`
-  first. An environment created from the "Документы" template installs
-  python-docx and the other document packages when the sandbox starts.
+- Programs. The environment image "Рабочее место с LibreOffice" has python-docx,
+  LibreOffice (`soffice`) and poppler (`pdftoppm`, `pdftotext`).
+  Check with `command -v soffice` and `python3 -c "import docx"`.
+- If `command -v soffice` prints nothing or the import fails, tell the user to pick the image
+  "Рабочее место с LibreOffice" on the environment card and start a new session.
+  Do not install LibreOffice with apt-get: it is too large for the sandbox.
+  Until then read, edit and check the text with `docx_read.py`.
 
 ## When to Use
 
-- The user asks to generate a Word document (report, letter, contract).
 - You need the text, outline, styles, or embedded images of a `.docx`.
 - You must change an existing `.docx`: replace text, edit table cells,
   insert/delete paragraphs, apply styles, merge fragmented runs.
@@ -53,15 +52,9 @@ fields, and package health checks. It does not render documents itself
 - You need to read reviewers' comments, or add/delete comments.
 - A `.docx` won't open or behaves oddly and you need corruption triage.
 - The document needs a table of contents or "Page X of Y" footers.
-- Not for: `.doc` (legacy), `.odt`, or WYSIWYG layout work.
-
-## Prerequisites
-
-- Python 3.10+ with `python-docx` installed:
-  `pip install python-docx` (import name is `docx`; lxml comes with it).
-- Comments `add` uses the native API on python-docx >= 1.2 and an XML
-  fallback on older versions — both are automatic.
-- For image blocks: the image files must exist locally (PNG/JPEG).
+- You need a PDF of the document or want to see its pages.
+- Not for: `.doc` (legacy) or `.odt`. Convert them first with
+  `timeout 180 soffice --headless --convert-to docx --outdir /workspace/ old.doc`.
 
 ## How to Run
 
@@ -69,12 +62,11 @@ All helpers live in `scripts/` next to this file. Run them with the
 `bash` tool; each supports `--help` and prints JSON to stdout.
 
 ```bash
-python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_create.py spec.json /mnt/session/outputs/out.docx
-python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_read.py out.docx --text
-python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_edit.py replace out.docx --find old --replace new
-python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_template.py tpl.docx values.json filled.docx
-python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_revisions.py list out.docx
-python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_comments.py list out.docx
+python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_read.py in.docx --text
+python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_edit.py replace in.docx --find old --replace new -o /mnt/session/outputs/out.docx
+python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_template.py tpl.docx values.json /mnt/session/outputs/filled.docx
+python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_revisions.py list in.docx
+python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_comments.py list in.docx
 python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_validate.py out.docx
 ```
 
@@ -82,7 +74,6 @@ python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_validate.py out.
 
 | Task | Command |
 | --- | --- |
-| Create from JSON spec | `docx_create.py spec.json out.docx` |
 | Full text (body+tables+headers/footers) | `docx_read.py f.docx --text` |
 | Heading outline + table shapes | `docx_read.py f.docx --structure` |
 | Styles actually used | `docx_read.py f.docx --styles` |
@@ -104,26 +95,16 @@ python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_validate.py out.
 | Add comment anchored to text | `docx_comments.py add f.docx --target "phrase" --text "note" --author You` |
 | Delete comment by id | `docx_comments.py delete f.docx --id 0` |
 | Health-check the package | `docx_validate.py f.docx` (exit 1 on errors) |
+| New document from a JSON spec (format in `--help`) | `docx_create.py spec.json out.docx` |
 
 ## Procedure
 
-1. **Create.** Write a JSON spec with `write`, then run
-   `scripts/docx_create.py`. The spec supports: `page` (size + margins in
-   mm), `header`/`footer` strings, `footer_page_numbers` (adds a
-   "Page X of Y" field footer), `styles` (custom paragraph styles with
-   font, size, bold/italic, hex `color`), and `blocks` — `heading`
-   (level 1-9), `paragraph` (either `text` or a `runs` list where each run
-   may set `bold`/`italic`/`underline`), `bullet_list`, `numbered_list`,
-   `table` (`header` row rendered bold, `rows`, optional built-in table
-   `style` such as `Table Grid`), `image` (`path`, optional `width_mm`),
-   `toc` (Table of Contents field), and `page_break`. The full spec
-   format is documented at the top of `scripts/docx_create.py`.
-2. **Read.** Use `scripts/docx_read.py` with exactly one mode flag.
+1. **Read.** Use `scripts/docx_read.py` with exactly one mode flag.
    `--text` returns body paragraphs, all table cell text, and
    header/footer text as JSON. `--structure` returns the heading outline
    plus paragraph/table/section counts. `--images DIR` copies every file
    under `word/media/` out of the package.
-3. **Edit.** Use `scripts/docx_edit.py`. `replace` walks body, tables
+2. **Edit.** Use `scripts/docx_edit.py`. `replace` walks body, tables
    (nested included), headers and footers, and preserves run formatting;
    add `--body-only` to skip headers/footers. Pass `-o out.docx` to keep
    the original; omit it to edit in place. Paragraph indices for
@@ -131,37 +112,53 @@ python3 /workspace/.openma/skills/docx/latest/docx/scripts/docx_validate.py out.
    order. Run `normalize` first on documents that came out of heavy Word
    editing — it merges adjacent runs with identical formatting so later
    find-replace matches reliably.
-4. **Review revisions.** `docx_revisions.py list` reports every `w:ins`
+3. **Review revisions.** `docx_revisions.py list` reports every `w:ins`
    and `w:del` (id, author, date, affected text) anywhere in body,
    tables, headers, or footers. `accept-all` / `reject-all` resolve them
    in bulk; `accept`/`reject --id N` handles a single revision. Accept
    keeps insertions and drops deleted text; reject does the reverse.
-5. **Comments.** `docx_comments.py list` returns each comment's id,
+4. **Comments.** `docx_comments.py list` returns each comment's id,
    author, date, body text, and the document text it is anchored to.
    `add --target "some phrase"` anchors a new comment to the first
    occurrence of that phrase (runs are split as needed; formatting is
    preserved). `delete --id N` removes the comment and its markers
    without touching document text.
-6. **Template.** Put `{{name}}`-style tokens in the document. Run
+5. **Template.** Put `{{name}}`-style tokens in the document. Run
    `scripts/docx_template.py` with a JSON object of values. Use
    `--strict` to fail when tokens remain unfilled; the JSON output lists
    `filled` counts and `unfilled_tokens` either way.
-7. **Verify** (always): re-read the output with `--text` or
+6. **Verify** (always): re-read the output with `--text` or
    `--structure`, and run `docx_validate.py` on anything you produced
-   via revision/comment surgery.
+   via revision/comment surgery. When layout matters (tables, page
+   breaks, headers), render the pages and look at them, see Visual check.
 
 ## Converting to PDF
 
-No script needed. When LibreOffice is installed, convert headlessly:
-
 ```bash
-soffice --headless --convert-to pdf --outdir /mnt/session/outputs/ file.docx
+timeout 180 soffice --headless --convert-to pdf --outdir /mnt/session/outputs/ file.docx
 ```
 
-Check availability first (`command -v soffice || command -v
-libreoffice`). If neither exists, tell the user PDF conversion is
-unavailable in this environment rather than improvising — python-docx
-cannot render PDFs, and layout fidelity requires a real renderer.
+The PDF lands at `/mnt/session/outputs/file.pdf`. If the command prints
+nothing and no PDF appears, another LibreOffice holds the default profile: add
+`-env:UserInstallation=file:///tmp/lo-profile` right after `soffice`. If
+`soffice` is missing, say so and name the image from Platform notes;
+python-docx cannot render PDFs.
+
+## Visual check
+
+Convert to PDF in `/workspace/`, then turn pages into PNG and look at them
+with `read`:
+
+```bash
+timeout 180 soffice --headless --convert-to pdf --outdir /workspace/pages /mnt/session/outputs/file.docx
+pdftoppm -png -r 80 /workspace/pages/file.pdf /workspace/pages/page
+pdftotext -layout /workspace/pages/file.pdf -
+```
+
+80 dpi is enough to see broken tables, cut text and wrong page breaks.
+`pdftotext` shows the text in page order, a quick check that nothing went
+missing. Fonts that are not installed are substituted, so the pages can
+differ a little from Word.
 
 ## Pitfalls
 

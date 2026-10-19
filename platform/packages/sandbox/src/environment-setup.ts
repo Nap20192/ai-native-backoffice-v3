@@ -108,19 +108,47 @@ export interface SandboxEnvironmentSnapshot {
   vm: { readyAt: string; readyMs: number } | null;
 }
 
-export type SandboxEnvironmentErrorCode = "image_changed_on_disk" | "image_unavailable";
+export type SandboxEnvironmentErrorCode = "image_changed_on_disk" | "image_unavailable" | "packages_failed";
 
-/** The sandbox cannot get the image its environment names. No VM was created. */
+/** The install of the environment packages that failed, read from the output
+ *  of {@link buildEnvironmentSetupScript}. */
+export interface SandboxPackagesFailure {
+  /** The manager whose section failed; null when the output names none. */
+  manager: SandboxPackageManager | null;
+  /** Exit code of the install script; null when it did not exit. */
+  exitCode: number | null;
+  /** The end of the install output, at most {@link SETUP_OUTPUT_TAIL_LENGTH} characters. */
+  outputTail: string;
+}
+
+/**
+ * The sandbox cannot boot the VM its environment describes: the image is
+ * unknown or changed on disk (no VM was created), or the environment
+ * packages did not install (the VM was stopped). LiteBox fails every later
+ * call of that sandbox with the same error.
+ */
 export class SandboxEnvironmentError extends Error {
   override name = "SandboxEnvironmentError";
 
   constructor(
     readonly code: SandboxEnvironmentErrorCode,
     message: string,
+    /** Set for `packages_failed`. */
+    readonly packages: SandboxPackagesFailure | null = null,
   ) {
     super(message);
   }
 }
+
+/** True for a {@link SandboxEnvironmentError}, also one from another copy of this package. */
+export function isSandboxEnvironmentError(value: unknown): value is SandboxEnvironmentError {
+  if (value instanceof SandboxEnvironmentError) return true;
+  return value instanceof Error
+    && value.name === "SandboxEnvironmentError"
+    && typeof (value as { code?: unknown }).code === "string";
+}
+
+export const SETUP_OUTPUT_TAIL_LENGTH = 600;
 
 /** Registry hosts opened when networking is limited and the environment
  * allows package managers. The apt entry also covers Ubuntu and Alpine
@@ -178,6 +206,19 @@ export function buildEnvironmentSetupScript(
   }
   lines.push(`echo "[oma-setup] done"`);
   return lines.join("\n");
+}
+
+/**
+ * The failure of a setup script run, from its combined output. The manager
+ * is the one of the `[oma-setup] <manager> failed` line; without that line
+ * (the run was killed or timed out) it is the last section that started.
+ */
+export function environmentSetupFailure(output: string, exitCode: number | null): SandboxPackagesFailure {
+  const managers = MANAGER_ORDER.join("|");
+  const failed = [...output.matchAll(new RegExp(`\\[oma-setup\\] (${managers}) failed \\(exit -?\\d+\\)`, "g"))].at(-1);
+  const started = [...output.matchAll(new RegExp(`\\[oma-setup\\] (${managers}): \\d+ package\\(s\\)`, "g"))].at(-1);
+  const manager = (failed?.[1] ?? started?.[1] ?? null) as SandboxPackageManager | null;
+  return { manager, exitCode, outputTail: output.slice(-SETUP_OUTPUT_TAIL_LENGTH) };
 }
 
 function installCommand(manager: SandboxPackageManager, names: string[]): string {

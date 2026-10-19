@@ -68,6 +68,17 @@ describe("withSandboxExecutionGuard", () => {
     expect(process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("reads the environment snapshot synchronously, also after the parent execution stopped", () => {
+    const { sandbox } = sandboxFixture();
+    const snapshot = { workingDirectory: "/workspace" };
+    const withSnapshot = Object.assign(sandbox, { environmentSnapshot: vi.fn(() => snapshot) });
+    const controller = new AbortController();
+    const guarded = withSandboxExecutionGuard(withSnapshot, { signal: controller.signal });
+    expect(guarded.environmentSnapshot()).toBe(snapshot);
+    controller.abort();
+    expect(guarded.environmentSnapshot()).toBe(snapshot);
+  });
+
   it("does not guard local registration helpers", () => {
     const { sandbox } = sandboxFixture();
     const controller = new AbortController();

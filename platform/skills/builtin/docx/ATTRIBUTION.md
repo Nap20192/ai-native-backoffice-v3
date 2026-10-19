@@ -17,3 +17,10 @@
 - `scripts/docx_validate.py`. Ссылка на неописанные встроенные стили `CommentReference` и `CommentText` теперь предупреждение, а не ошибка. python-docx 1.2 ставит их при добавлении комментария, Word и LibreOffice такой файл открывают.
 - `scripts/docx_common.py`, функция `replace_in_paragraph`. В источнике цикл искал старый текст и в уже вставленной замене. Если новый текст содержит старый (`Acme` на `Acme Ltd`), цикл не кончался, `docx_edit.py replace` и `docx_template.py` зависали. Теперь совпадения ищутся один раз в исходном тексте и заменяются справа налево.
 - `tests/test_docx_skill.py`. В конец добавлен класс `TestPlatformPort` с проверками этих правок.
+
+## Правка 2026-10-19: LibreOffice и урезанный SKILL.md
+
+- `SKILL.md` урезан по плану `docs/plans/environment-programs.md`, срез Н2. Ушли шаг создания документа в «Procedure» и строка создания в «How to Run». `docx_create.py` остался в `scripts/` и занимает одну строку в Quick Reference. Остались чтение, правка, шаблоны, рецензирование, комментарии, перевод в PDF и проверка страниц. Описание во frontmatter говорит о том же, версия 1.2.0.
+- `SKILL.md`, «Platform notes». Вместо установки через `pip --break-system-packages` и шаблона «Документы» названы образ окружения «Рабочее место с LibreOffice» и проверка `command -v soffice`. Если LibreOffice нет, агент просит пользователя выбрать этот образ на карточке окружения и не ставит LibreOffice через apt-get.
+- `SKILL.md`, новый раздел «Visual check»: `soffice --headless --convert-to pdf`, затем `pdftoppm -png -r 80` и `pdftotext -layout`.
+- Скрипты не менялись.
